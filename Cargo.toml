@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "contracts/poker-table",
+    "contracts/zk-verifier",
+    "contracts/committee-registry",
+    "contracts/game-hub",
+    "stellar-zk-cards",
+    "services/coordinator",
+    "services/node",
+]
+
+[workspace.dependencies]
+soroban-sdk = { git = "https://github.com/stellar/rs-soroban-sdk.git", rev = "acffbbd45be6a0a551146eebfc268d6f95078246" }
+stellar-zk-cards = { path = "stellar-zk-cards" }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
