@@ -1,7 +1,5 @@
-FROM rust:1.79-slim AS builder
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+FROM rust:1.79 AS builder
 WORKDIR /app
-# Copy full workspace so cargo can resolve all members
 COPY Cargo.toml Cargo.lock ./
 COPY contracts/ ./contracts/
 COPY stellar-zk-cards/ ./stellar-zk-cards/
@@ -9,9 +7,8 @@ COPY services/ ./services/
 COPY vendor/ ./vendor/
 RUN cargo build --release -p coordinator
 
-# Build co-noir from source
-FROM rust:1.79-slim AS conoir-builder
-RUN apt-get update && apt-get install -y git pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+# Build co-noir from source (rust:1.79 has all deps)
+FROM rust:1.79 AS conoir-builder
 RUN cargo install --git https://github.com/TaceoLabs/co-snarks --branch main co-noir
 
 FROM debian:bookworm-slim
