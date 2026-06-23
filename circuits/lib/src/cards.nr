@@ -46,20 +46,29 @@ pub fn assert_valid_deck(deck: [Field; 52]) {
 // Input: 7 cards (2 hole + 5 board), each as u32 value [0, 51].
 // Output: score (u32) where higher = better.
 pub fn evaluate_hand_rank(cards: [u32; 7]) -> u32 {
+    let mut ranks: [u32; 7] = [0; 7];
+    let mut suits: [u32; 7] = [0; 7];
+    for i in 0..7 {
+        ranks[i] = cards[i] % NUM_RANKS;
+        suits[i] = cards[i] / NUM_RANKS;
+    }
+
     let mut best_score: u32 = 0;
 
     // Check all C(7,5) = 21 combinations by choosing which 2 to skip
     for skip1 in 0..7 {
         for skip2 in (skip1 + 1)..7 {
-            let mut hand: [u32; 5] = [0; 5];
+            let mut hand_ranks: [u32; 5] = [0; 5];
+            let mut hand_suits: [u32; 5] = [0; 5];
             let mut idx: u32 = 0;
             for k in 0..7 {
                 if (k != skip1) & (k != skip2) {
-                    hand[idx] = cards[k];
+                    hand_ranks[idx] = ranks[k];
+                    hand_suits[idx] = suits[k];
                     idx += 1;
                 }
             }
-            let score = score_five(hand);
+            let score = score_five(hand_ranks, hand_suits);
             if score > best_score {
                 best_score = score;
             }
@@ -70,14 +79,7 @@ pub fn evaluate_hand_rank(cards: [u32; 7]) -> u32 {
 }
 
 // Score exactly 5 cards. Returns category << 20 | tiebreaker.
-fn score_five(cards: [u32; 5]) -> u32 {
-    let mut ranks: [u32; 5] = [0; 5];
-    let mut suits: [u32; 5] = [0; 5];
-    for i in 0..5 {
-        ranks[i] = cards[i] % NUM_RANKS;
-        suits[i] = cards[i] / NUM_RANKS;
-    }
-
+fn score_five(mut ranks: [u32; 5], suits: [u32; 5]) -> u32 {
     // Sort ranks descending (bubble sort for 5 elements)
     for i in 0..4 {
         for j in 0..(4 - i) {
@@ -105,37 +107,26 @@ fn score_five(cards: [u32; 5]) -> u32 {
         & (ranks[3] == 1)
         & (ranks[4] == 0);
 
-    // Count frequencies
-    let mut freq: [u32; 13] = [0; 13];
-    for i in 0..5 {
-        freq[ranks[i]] += 1;
-    }
+    let eq0 = ranks[0] == ranks[1];
+    let eq1 = ranks[1] == ranks[2];
+    let eq2 = ranks[2] == ranks[3];
+    let eq3 = ranks[3] == ranks[4];
 
-    let mut has_four = false;
-    let mut has_three = false;
-    let mut pair_count: u32 = 0;
-    let mut four_rank: u32 = 0;
-    let mut three_rank: u32 = 0;
-    let mut pair_rank_hi: u32 = 0;
-    let mut pair_rank_lo: u32 = 0;
+    let has_four = (eq0 & eq1 & eq2) | (eq1 & eq2 & eq3);
+    let four_rank = if eq0 & eq1 & eq2 { ranks[0] } else { ranks[4] };
 
-    for r_inv in 0..13 {
-        let r = 12 - r_inv;
-        if freq[r] == 4 {
-            has_four = true;
-            four_rank = r;
-        } else if freq[r] == 3 {
-            has_three = true;
-            three_rank = r;
-        } else if freq[r] == 2 {
-            if pair_count == 0 {
-                pair_rank_hi = r;
-            } else {
-                pair_rank_lo = r;
-            }
-            pair_count += 1;
-        }
-    }
+    let has_three = (eq0 & eq1) | (eq1 & eq2) | (eq2 & eq3);
+    let three_rank = if eq0 & eq1 { ranks[0] } else if eq1 & eq2 { ranks[1] } else { ranks[2] };
+
+    let is_full_house = ((eq0 & eq1) & eq3) | ((eq2 & eq3) & eq0);
+    let full_house_pair_rank = if eq0 & eq1 { ranks[4] } else { ranks[0] };
+
+    let has_two_pairs = ((eq0 & eq2) | (eq0 & eq3) | (eq1 & eq3)) & !has_four;
+    let pair_rank_hi = if eq0 { ranks[0] } else { ranks[1] };
+    let pair_rank_lo = if eq3 { ranks[4] } else { ranks[2] };
+
+    let has_pair = (eq0 | eq1 | eq2 | eq3) & !has_three & !has_two_pairs & !has_four;
+    let one_pair_rank = if eq0 { ranks[0] } else if eq1 { ranks[1] } else if eq2 { ranks[2] } else { ranks[3] };
 
     let tb = (ranks[0] << 16) | (ranks[1] << 12) | (ranks[2] << 8) | (ranks[3] << 4) | ranks[4];
 
@@ -157,8 +148,8 @@ fn score_five(cards: [u32; 5]) -> u32 {
         score = (7 << 20) | (four_rank << 16);
         categorized = true;
     }
-    if !categorized & has_three & (pair_count >= 1) {
-        score = (6 << 20) | (three_rank << 8) | pair_rank_hi;
+    if !categorized & is_full_house {
+        score = (6 << 20) | (three_rank << 8) | full_house_pair_rank;
         categorized = true;
     }
     if !categorized & is_flush {
@@ -174,12 +165,12 @@ fn score_five(cards: [u32; 5]) -> u32 {
         score = (3 << 20) | (three_rank << 16);
         categorized = true;
     }
-    if !categorized & (pair_count == 2) {
+    if !categorized & has_two_pairs {
         score = (2 << 20) | (pair_rank_hi << 12) | (pair_rank_lo << 8);
         categorized = true;
     }
-    if !categorized & (pair_count == 1) {
-        score = (1 << 20) | (pair_rank_hi << 16);
+    if !categorized & has_pair {
+        score = (1 << 20) | (one_pair_rank << 16);
         categorized = true;
     }
     if !categorized {
@@ -213,3 +204,4 @@ fn test_hand_ranking_pair_beats_high_card() {
     let high_card = evaluate_hand_rank([11, 23, 0, 1, 3, 5, 7]);
     assert(pair_hand > high_card);
 }
+

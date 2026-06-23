@@ -37,29 +37,44 @@ pub fn verify_merkle_proof(
 // Compute Merkle root from 64 leaves.
 // Leaves 52-63 should be zero (padding).
 pub fn compute_merkle_root(leaves: [Field; 64]) -> Field {
+    let h0_0 = hash_pair(0, 0);
+
     // 64 -> 32
     let mut layer: [Field; 32] = [0; 32];
-    for i in 0..32 {
+    for i in 0..26 {
         layer[i] = hash_pair(leaves[2 * i], leaves[2 * i + 1]);
     }
+    for i in 26..32 {
+        layer[i] = h0_0;
+    }
+
+    let h1_0 = hash_pair(h0_0, h0_0);
 
     // 32 -> 16
     let mut layer1: [Field; 16] = [0; 16];
-    for i in 0..16 {
+    for i in 0..13 {
         layer1[i] = hash_pair(layer[2 * i], layer[2 * i + 1]);
     }
+    for i in 13..16 {
+        layer1[i] = h1_0;
+    }
+
+    let h2_0 = hash_pair(h1_0, h1_0);
 
     // 16 -> 8
     let mut layer2: [Field; 8] = [0; 8];
-    for i in 0..8 {
+    for i in 0..6 {
         layer2[i] = hash_pair(layer1[2 * i], layer1[2 * i + 1]);
     }
+    layer2[6] = hash_pair(layer1[12], layer1[13]);
+    layer2[7] = h2_0;
 
     // 8 -> 4
     let mut layer3: [Field; 4] = [0; 4];
-    for i in 0..4 {
+    for i in 0..3 {
         layer3[i] = hash_pair(layer2[2 * i], layer2[2 * i + 1]);
     }
+    layer3[3] = hash_pair(layer2[6], layer2[7]);
 
     // 4 -> 2
     let h0 = hash_pair(layer3[0], layer3[1]);

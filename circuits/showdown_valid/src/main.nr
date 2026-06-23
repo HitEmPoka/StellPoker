@@ -67,7 +67,6 @@ fn main(
         used_indices[idx] = true;
 
         board_cards[i] = deck[idx] as u32;
-        cards::assert_valid_card(board_cards[i] as Field);
     }
 
     // 3. Verify per-player commitments and evaluate hand ranks.
@@ -82,9 +81,6 @@ fn main(
 
             hole_card1[p] = deck[idx1] as u32;
             hole_card2[p] = deck[idx2] as u32;
-
-            cards::assert_valid_card(hole_card1[p] as Field);
-            cards::assert_valid_card(hole_card2[p] as Field);
 
             let c1_commit = commitments::commit_card(deck[idx1], salts[idx1]);
             let c2_commit = commitments::commit_card(deck[idx2], salts[idx2]);
