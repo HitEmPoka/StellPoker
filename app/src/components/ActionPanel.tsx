@@ -17,6 +17,8 @@ interface ActionPanelProps {
   statusHint?: string | null;
   loading?: boolean;
   isSolo?: boolean;
+  betAmount: number;
+  setBetAmount: (amount: number) => void;
 }
 
 export function ActionPanel({
@@ -32,8 +34,9 @@ export function ActionPanel({
   statusHint = null,
   loading = false,
   isSolo = false,
+  betAmount,
+  setBetAmount,
 }: ActionPanelProps) {
-  const [betAmount, setBetAmount] = useState(0);
 
   const callAmount = Math.max(currentBet - myBet, 0);
   const minBet = Math.max(currentBet * 2, 1);
@@ -125,7 +128,7 @@ export function ActionPanel({
         <button
           onClick={() => onAction("fold")}
           disabled={disabled}
-          className="pixel-btn text-[10px]"
+          className="pixel-btn text-[10px] has-tooltip"
           style={{
             padding: "6px 14px",
             background: !disabled ? "#7b241c" : "#4a4a4a",
@@ -135,13 +138,14 @@ export function ActionPanel({
           }}
         >
           FOLD
+          <span className="tooltip">Shortcut: F</span>
         </button>
 
         {/* CHECK / CALL */}
         <button
           onClick={() => onAction(callAmount === 0 ? "check" : "call", callAmount)}
           disabled={disabled}
-          className="pixel-btn text-[10px]"
+          className="pixel-btn text-[10px] has-tooltip"
           style={{
             padding: "6px 14px",
             background: !disabled ? "#1a5276" : "#4a4a4a",
@@ -151,13 +155,14 @@ export function ActionPanel({
           }}
         >
           {callAmount === 0 ? "CHECK" : `CALL ${callAmount}`}
+          <span className="tooltip">Shortcut: {callAmount === 0 ? "C" : "B"}</span>
         </button>
 
         {/* BET / RAISE */}
         <button
           onClick={() => onAction(currentBet === 0 ? "bet" : "raise", betAmount || minBet)}
           disabled={disabled || myStack <= callAmount}
-          className="pixel-btn text-[10px]"
+          className="pixel-btn text-[10px] has-tooltip"
           style={{
             padding: "6px 14px",
             background: !disabled && myStack > callAmount ? "#7d6608" : "#4a4a4a",
@@ -167,13 +172,14 @@ export function ActionPanel({
           }}
         >
           {currentBet === 0 ? "BET" : "RAISE"} {betAmount || minBet}
+          <span className="tooltip">Shortcut: {currentBet === 0 ? "B" : "R"}</span>
         </button>
 
         {/* ALL IN */}
         <button
           onClick={() => onAction("allin", myStack)}
           disabled={disabled || myStack <= 0}
-          className="pixel-btn text-[10px]"
+          className="pixel-btn text-[10px] has-tooltip"
           style={{
             padding: "6px 14px",
             background: !disabled && myStack > 0 ? "#d4ac0d" : "#4a4a4a",
@@ -184,6 +190,7 @@ export function ActionPanel({
           }}
         >
           ALL IN
+          <span className="tooltip">Shortcut: A</span>
         </button>
       </div>
 

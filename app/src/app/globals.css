@@ -285,3 +285,38 @@ input[type="text"]:focus {
   outline: none;
   border-color: #f1c40f;
 }
+
+/* Custom Tooltip styling */
+.has-tooltip {
+  position: relative;
+}
+.tooltip {
+  visibility: hidden;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #0c0a18;
+  color: #f5e6c8;
+  text-align: center;
+  padding: 6px 10px;
+  border: 2px solid #8b6914;
+  font-size: 8px;
+  white-space: nowrap;
+  z-index: 100;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.4);
+}
+.has-tooltip:hover .tooltip {
+  visibility: visible;
+}
+
+/* Emote bubble floating animation */
+@keyframes floatUp {
+  0% { transform: translateY(0) scale(0.8); opacity: 0; }
+  10% { transform: translateY(-10px) scale(1.1); opacity: 1; }
+  90% { transform: translateY(-30px) scale(1); opacity: 1; }
+  100% { transform: translateY(-40px) scale(0.9); opacity: 0; }
+}
+.animate-float-up {
+  animation: floatUp 3s ease-out forwards;
+}

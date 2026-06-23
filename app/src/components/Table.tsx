@@ -103,6 +103,8 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   );
   const [elapsed, setElapsed] = useState(0);
   const [, bumpAliasTick] = useState(0);
+  const [betAmount, setBetAmount] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const autoStreetRef = useRef<string>("");
   const inferredModeRef = useRef(false);
   const streetLogRef = useRef<{ handNumber: number; streets: { street: Street; pot: number; boardCards: number[] }[] }>({
@@ -445,6 +447,102 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     lobby,
   });
 
+  // Keyboard shortcuts listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === "?" || e.key === "/") {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      const disabled = !isMyTurn || loading;
+      if (disabled) return;
+
+      const activeBetting = ["preflop", "flop", "turn", "river"].includes(game.phase);
+      if (!activeBetting) return;
+
+      const callAmount = Math.max(displayCurrentBet - displayMyBet, 0);
+      const minBet = Math.max(displayCurrentBet * 2, 1);
+
+      switch (e.key.toLowerCase()) {
+        case "f":
+          e.preventDefault();
+          handleAction("fold");
+          break;
+        case "c":
+          if (callAmount === 0) {
+            e.preventDefault();
+            handleAction("check");
+          }
+          break;
+        case "b":
+          e.preventDefault();
+          if (callAmount > 0) {
+            handleAction("call", callAmount);
+          } else {
+            handleAction("bet", betAmount || minBet);
+          }
+          break;
+        case "r":
+          if (displayCurrentBet > 0 && displayMyStack > callAmount) {
+            e.preventDefault();
+            handleAction("raise", betAmount || minBet);
+          }
+          break;
+        case "a":
+          if (displayMyStack > 0) {
+            e.preventDefault();
+            handleAction("allin", displayMyStack);
+          }
+          break;
+        case "1":
+        case "2":
+        case "3":
+        case "4":
+        case "5":
+          e.preventDefault();
+          if (displayMyStack > callAmount) {
+            const pot = displayPot;
+            let sizeMultiplier = 0.5;
+            if (e.key === "2") sizeMultiplier = 2/3;
+            else if (e.key === "3") sizeMultiplier = 0.75;
+            else if (e.key === "4") sizeMultiplier = 1.0;
+            else if (e.key === "5") sizeMultiplier = 2.0;
+
+            const calculated = Math.floor(pot * sizeMultiplier);
+            const clamped = Math.max(minBet, Math.min(calculated, displayMyStack));
+            setBetAmount(clamped);
+          }
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isMyTurn,
+    loading,
+    game.phase,
+    displayCurrentBet,
+    displayMyBet,
+    displayMyStack,
+    displayPot,
+    betAmount,
+    handleAction,
+  ]);
+
   return (
     <PixelWorld>
       <div className="min-h-screen flex flex-col items-center gap-4 p-4 pt-6 relative z-[10]">
@@ -475,7 +573,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             <GameBoyButton onClick={() => setGameboyOpen(true)} />
             <button
               onClick={() => setHistoryOpen(true)}
-              className="text-[9px]"
+              className="text-[9px] mr-2"
               style={{
                 background: "none",
                 border: "none",
@@ -487,6 +585,21 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               title="Hand History"
             >
               HISTORY
+            </button>
+            <button
+              onClick={() => setShortcutsOpen(true)}
+              className="text-[9px]"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#ffc078",
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+              }}
+              title="Keyboard Shortcuts"
+            >
+              KEYS [?]
             </button>
           </div>
 
@@ -691,6 +804,8 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   statusHint={seatStatusHint}
                   loading={loading}
                   isSolo={playMode === "single"}
+                  betAmount={betAmount}
+                  setBetAmount={setBetAmount}
                 />
               </div>
             </div>
@@ -789,6 +904,51 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         onClose={() => setHistoryOpen(false)}
         entries={historyEntries}
       />
+
+      {shortcutsOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000] p-4"
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            className="pixel-border max-w-sm w-full p-6 text-left relative"
+            style={{ background: "#1a120c" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShortcutsOpen(false)}
+              className="absolute top-3 right-3 text-[12px]"
+              style={{ background: "none", border: "none", color: "#f5e6c8", cursor: "pointer" }}
+            >
+              ✕
+            </button>
+            <h2 className="text-[11px] mb-4 text-[#f1c40f] text-center" style={{ fontFamily: "'Press Start 2P', monospace" }}>KEYBOARD SHORTCUTS</h2>
+            <div className="flex flex-col gap-3 text-[8px] leading-relaxed" style={{ fontFamily: "'Press Start 2P', monospace" }}>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[F]</span> <span style={{ color: "#bdc3c7" }}>Fold</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[C]</span> <span style={{ color: "#bdc3c7" }}>Check</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[B]</span> <span style={{ color: "#bdc3c7" }}>Bet / Call</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[R]</span> <span style={{ color: "#bdc3c7" }}>Raise</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[A]</span> <span style={{ color: "#bdc3c7" }}>All-in</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[1] - [5]</span> <span style={{ color: "#bdc3c7" }}>Quick Bet: 1/2, 2/3, 3/4, pot, 2x pot</span>
+              </div>
+              <div className="flex justify-between border-b border-gray-800 pb-1">
+                <span>[?]</span> <span style={{ color: "#bdc3c7" }}>Toggle Help Overlay</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </PixelWorld>
   );
 }
