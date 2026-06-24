@@ -1,0 +1,17 @@
+{
+  "name": "stellpoker-db-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "generate-types": "tsx generate-types.ts",
+    "migrate": "sqlx migrate run --source ../../services/coordinator/migrations",
+    "migrate:revert": "sqlx migrate revert --source ../../services/coordinator/migrations",
+    "migrate:info": "sqlx migrate info --source ../../services/coordinator/migrations",
+    "seed": "psql \"$DATABASE_URL\" -f ../../services/coordinator/seeds/001_dev_data.sql"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "pg": "^8.12.0",
+    "tsx": "^4.19.0"
+  }
+}

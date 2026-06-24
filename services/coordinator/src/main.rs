@@ -35,6 +35,7 @@ use tower_http::cors::CorsLayer;
 use serde::Serialize;
 
 mod api;
+mod db;
 #[path = "middleware.rs"]
 mod request_log;
 mod mpc;
@@ -97,6 +98,8 @@ struct AppState {
     chat_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     mpc_sessions: session_gc::SessionStore,
     stats: stats::StatsStore,
+    // Present when DATABASE_URL is set; None falls back to in-memory only.
+    db_pool: Option<sqlx::PgPool>,
 }
 
 #[derive(Clone)]
@@ -234,6 +237,26 @@ async fn main() {
         tracing::info!("Stats indexer started (poll={}s)", poll_secs);
     }
 
+    let db_pool = match std::env::var("DATABASE_URL") {
+        Ok(url) => match db::connect(&url).await {
+            Ok(pool) => {
+                match db::run_migrations(&pool).await {
+                    Ok(()) => tracing::info!("Database migrations applied"),
+                    Err(e) => tracing::warn!("Migration error: {}", e),
+                }
+                Some(pool)
+            }
+            Err(e) => {
+                tracing::warn!("Database connection failed, running in-memory only: {}", e);
+                None
+            }
+        },
+        Err(_) => {
+            tracing::info!("DATABASE_URL not set — running without persistent storage");
+            None
+        }
+    };
+
     let state = AppState {
         tables: Arc::new(RwLock::new(HashMap::new())),
         lobby_assignments: Arc::new(RwLock::new(HashMap::new())),
@@ -245,6 +268,7 @@ async fn main() {
         chat_channels: Arc::new(Mutex::new(HashMap::new())),
         mpc_sessions,
         stats: stats_store,
+        db_pool,
     };
 
     // Spawn background node health check task
