@@ -1,0 +1,57 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "coordinator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coordinator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "coordinator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow the frontend to reach the coordinator API.
+    - from:
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.ingressFromFrontend.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow ingress controllers (nginx, traefik, etc.) labelled accordingly.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+
+  egress:
+    # Reach the three MPC nodes on their HTTP port.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mpc-node
+      ports:
+        - protocol: TCP
+          port: 8101
+    # Reach the Soroban RPC proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: soroban-rpc-proxy
+      ports:
+        - protocol: TCP
+          port: 8000
+    # DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

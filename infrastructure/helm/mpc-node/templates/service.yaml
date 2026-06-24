@@ -1,0 +1,23 @@
+# Headless service — gives each pod a stable DNS name:
+# <pod-name>.<headless-svc>.<namespace>.svc.cluster.local
+# Used by the coordinator to reach specific nodes and for inter-node MPC TCP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mpc-node.headlessServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mpc-node.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mpc-node.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+    - name: mpc
+      protocol: TCP
+      port: {{ .Values.service.headless.mpcPort }}
+      targetPort: mpc

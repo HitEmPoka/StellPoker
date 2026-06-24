@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mpc-node.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mpc-node.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mpc-node.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Coordinator reaches nodes on the HTTP port for session orchestration.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: coordinator
+      ports:
+        - protocol: TCP
+          port: 8101
+    # Peer MPC nodes exchange shares over the MPC TCP port.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mpc-node
+      ports:
+        - protocol: TCP
+          port: 10000
+
+  egress:
+    # Allow outbound MPC TCP to peer nodes.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mpc-node
+      ports:
+        - protocol: TCP
+          port: 10000
+    # DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

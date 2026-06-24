@@ -1,0 +1,117 @@
+# The MPC protocol requires exactly 3 nodes (REP3). Do not change replicas
+# without a corresponding party-config update and re-key ceremony.
+replicaCount: 3
+
+image:
+  repository: ghcr.io/hitempoka/stellpoker/mpc-node
+  pullPolicy: IfNotPresent
+  tag: ""  # defaults to Chart.appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+service:
+  # ClusterIP service for HTTP health / API traffic (coordinator -> nodes).
+  type: ClusterIP
+  httpPort: 8101
+  # Headless service for stable DNS names used by inter-node MPC (TCP).
+  headless:
+    mpcPort: 10000
+
+env:
+  PORT: "8101"
+  MPC_PORT: "10000"
+  CIRCUIT_DIR: "/app/circuits"
+  CRS_DIR: "/app/crs"
+  REQUEST_LOG_FORMAT: "json"
+
+# partyConfigs holds the content of each node's TOML party config.
+# These are stored in a ConfigMap. If configs contain secrets (private keys),
+# set useSecret: true and create a Secret named <release>-mpc-node-party-configs
+# with keys party_0.toml, party_1.toml, party_2.toml.
+partyConfigs:
+  useSecret: false
+  configs:
+    party_0.toml: |
+      # Replace with actual party_0.toml content
+    party_1.toml: |
+      # Replace with actual party_1.toml content
+    party_2.toml: |
+      # Replace with actual party_2.toml content
+
+volumes:
+  circuits:
+    existingClaim: ""
+    mountPath: /app/circuits
+  crs:
+    existingClaim: ""
+    mountPath: /app/crs
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    # Proof generation is memory-intensive; raise if OOMKilled during proves.
+    memory: 2Gi
+
+# HPA is disabled by default: the 3-party MPC protocol requires a fixed
+# committee size. Enable only if the protocol is updated to support N > 3.
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8101
+  initialDelaySeconds: 20
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8101
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  failureThreshold: 3
+
+networkPolicy:
+  enabled: true
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  # Spread MPC nodes across availability zones for fault tolerance.
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: mpc-node
+          topologyKey: topology.kubernetes.io/zone

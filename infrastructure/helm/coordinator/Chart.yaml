@@ -1,0 +1,11 @@
+apiVersion: v2
+name: coordinator
+description: StellPoker MPC Coordinator — orchestrates the MPC committee and serves the REST/WebSocket API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - stellpoker
+  - mpc
+  - coordinator
+home: https://github.com/HitEmPoka/StellPoker

@@ -1,0 +1,103 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/hitempoka/stellpoker/coordinator
+  pullPolicy: IfNotPresent
+  tag: ""  # defaults to Chart.appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+service:
+  type: ClusterIP
+  port: 8080
+
+env:
+  BIND_ADDR: "0.0.0.0:8080"
+  CIRCUIT_DIR: "/app/circuits"
+  CRS_DIR: "/app/crs"
+  REQUEST_LOG_FORMAT: "json"
+
+# MPC node endpoints — override when deploying alongside the mpc-node chart.
+# Format: http://<mpc-node-release>-mpc-node-<ordinal>.<mpc-node-release>-mpc-node-headless.<namespace>.svc.cluster.local:8101
+mpcNodes:
+  node0: "http://mpc-node-0.mpc-node-headless:8101"
+  node1: "http://mpc-node-1.mpc-node-headless:8101"
+  node2: "http://mpc-node-2.mpc-node-headless:8101"
+
+sorobanRpc: "http://soroban-rpc-proxy:8000/soroban/rpc"
+
+# Existing secret name that holds COMMITTEE_SECRET (key: committee-secret).
+existingSecret: ""
+
+volumes:
+  circuits:
+    # Use an existing PVC pre-populated with compiled circuit artifacts.
+    existingClaim: ""
+    mountPath: /app/circuits
+  crs:
+    existingClaim: ""
+    mountPath: /app/crs
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 8080
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+
+networkPolicy:
+  enabled: true
+  # Labels on the frontend / ingress pods allowed to reach the coordinator API.
+  ingressFromFrontend:
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: frontend
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

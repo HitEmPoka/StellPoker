@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coordinator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "coordinator.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "coordinator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "coordinator.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "coordinator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: coordinator
+          image: {{ include "coordinator.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: MPC_NODE_0
+              value: {{ .Values.mpcNodes.node0 | quote }}
+            - name: MPC_NODE_1
+              value: {{ .Values.mpcNodes.node1 | quote }}
+            - name: MPC_NODE_2
+              value: {{ .Values.mpcNodes.node2 | quote }}
+            - name: SOROBAN_RPC
+              value: {{ .Values.sorobanRpc | quote }}
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret }}
+            - name: COMMITTEE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: committee-secret
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: circuits
+              mountPath: {{ .Values.volumes.circuits.mountPath }}
+              readOnly: true
+            - name: crs
+              mountPath: {{ .Values.volumes.crs.mountPath }}
+              readOnly: true
+      volumes:
+        - name: circuits
+          {{- if .Values.volumes.circuits.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.circuits.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: crs
+          {{- if .Values.volumes.crs.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.crs.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
