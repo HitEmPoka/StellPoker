@@ -1,0 +1,23 @@
+{
+  "rust-analyzer.cargo.features": ["all"],
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.checkOnSave.extraArgs": ["--all-targets", "--", "-D", "warnings"],
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  },
+  "debug.internalConsoleOptions": "neverOpen",
+  "debug.console.fontSize": 12,
+  "editor.inlayHints.enabled": true,
+  "editor.semanticHighlighting.enabled": true,
+  "files.exclude": {
+    "**/target": true,
+    "**/.turbo": true,
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/target": true,
+    "**/.git": true
+  }
+}

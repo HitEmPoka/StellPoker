@@ -1,0 +1,176 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Coordinator Debug",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=coordinator",
+          "--package=coordinator",
+          "--release"
+        ],
+        "filter": {
+          "name": "coordinator",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/services/coordinator",
+      "env": {
+        "RUST_LOG": "debug",
+        "MPC_NODE_0": "http://localhost:8101",
+        "MPC_NODE_1": "http://localhost:8102",
+        "MPC_NODE_2": "http://localhost:8103",
+        "SOROBAN_RPC": "http://localhost:8000/soroban/rpc",
+        "CIRCUIT_DIR": "${workspaceFolder}/circuits",
+        "CRS_DIR": "${workspaceFolder}/crs",
+        "BIND_ADDR": "127.0.0.1:8080"
+      },
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "coordinator-build"
+    },
+    {
+      "name": "MPC Node 0 Debug",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mpc-node",
+          "--package=mpc-node",
+          "--release"
+        ],
+        "filter": {
+          "name": "mpc-node",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/services/node",
+      "env": {
+        "RUST_LOG": "debug",
+        "NODE_ID": "0",
+        "PORT": "8101",
+        "MPC_PORT": "10000",
+        "PARTY_CONFIG": "${workspaceFolder}/services/node/config/party_0.toml",
+        "CIRCUIT_DIR": "${workspaceFolder}/circuits",
+        "CRS_DIR": "${workspaceFolder}/crs"
+      },
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "mpc-node-build"
+    },
+    {
+      "name": "MPC Node 1 Debug",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mpc-node",
+          "--package=mpc-node",
+          "--release"
+        ],
+        "filter": {
+          "name": "mpc-node",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/services/node",
+      "env": {
+        "RUST_LOG": "debug",
+        "NODE_ID": "1",
+        "PORT": "8102",
+        "MPC_PORT": "10001",
+        "PARTY_CONFIG": "${workspaceFolder}/services/node/config/party_1.toml",
+        "CIRCUIT_DIR": "${workspaceFolder}/circuits",
+        "CRS_DIR": "${workspaceFolder}/crs"
+      },
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "mpc-node-build"
+    },
+    {
+      "name": "MPC Node 2 Debug",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mpc-node",
+          "--package=mpc-node",
+          "--release"
+        ],
+        "filter": {
+          "name": "mpc-node",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/services/node",
+      "env": {
+        "RUST_LOG": "debug",
+        "NODE_ID": "2",
+        "PORT": "8103",
+        "MPC_PORT": "10002",
+        "PARTY_CONFIG": "${workspaceFolder}/services/node/config/party_2.toml",
+        "CIRCUIT_DIR": "${workspaceFolder}/circuits",
+        "CRS_DIR": "${workspaceFolder}/crs"
+      },
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "mpc-node-build"
+    },
+    {
+      "name": "Frontend Debug (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/app",
+      "sourceMapPathOverride": {
+        "${webRoot}/*": "${workspaceFolder}/app/*"
+      },
+      "preLaunchTask": "frontend-dev-server",
+      "postDebugTask": "terminate-frontend-server",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Contract Tests Debug",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--package=poker-table",
+          "--lib",
+          "--",
+          "--nocapture"
+        ],
+        "filter": {
+          "name": "poker-table",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "debug",
+        "RUST_BACKTRACE": "1"
+      },
+      "sourceLanguages": ["rust"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack Debug",
+      "configurations": [
+        "Coordinator Debug",
+        "MPC Node 0 Debug",
+        "MPC Node 1 Debug",
+        "MPC Node 2 Debug",
+        "Frontend Debug (Chrome)"
+      ]
+    }
+  ]
+}

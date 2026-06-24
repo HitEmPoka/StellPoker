@@ -1,0 +1,131 @@
+name: Docker Image Vulnerability Scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/coordinator/Dockerfile'
+      - 'services/node/Dockerfile'
+      - 'app/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/coordinator/Dockerfile'
+      - 'services/node/Dockerfile'
+      - 'app/**'
+  schedule:
+    - cron: '0 2 * * 0'
+
+jobs:
+  scan-images:
+    name: Scan Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: coordinator
+            dockerfile: services/coordinator/Dockerfile
+            context: .
+          - name: mpc-node
+            dockerfile: services/node/Dockerfile
+            context: .
+          - name: frontend
+            dockerfile: app/Dockerfile
+            context: app
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image for scanning
+        run: |
+          docker build \
+            -f ${{ matrix.image.dockerfile }} \
+            -t ${{ matrix.image.name }}:latest \
+            ${{ matrix.image.context }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image.name }}:latest
+          format: 'sarif'
+          output: '${{ matrix.image.name }}-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: '${{ matrix.image.name }}-trivy-results.sarif'
+          category: 'trivy-${{ matrix.image.name }}'
+
+      - name: Run Trivy vulnerability scan (table format)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image.name }}:latest
+          format: 'table'
+          output: '${{ matrix.image.name }}-trivy-results.txt'
+
+      - name: Comment PR with scan results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const resultsFile = '${{ matrix.image.name }}-trivy-results.txt';
+            if (fs.existsSync(resultsFile)) {
+              const results = fs.readFileSync(resultsFile, 'utf8');
+              const comment = `## Docker Image Scan: ${{ matrix.image.name }}
+
+              \`\`\`
+              ${results}
+              \`\`\``;
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+      - name: Fail on critical/high vulnerabilities
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            ${{ matrix.image.name }}:latest
+
+      - name: Upload scan results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-results
+          path: '*-trivy-results.*'
+          retention-days: 30
+
+  scan-summary:
+    name: Vulnerability Scan Summary
+    runs-on: ubuntu-latest
+    needs: scan-images
+    if: always()
+    steps:
+      - name: Download all scan results
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-scan-results
+
+      - name: Generate scan summary
+        run: |
+          echo "## Docker Vulnerability Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All Docker images have been scanned for vulnerabilities." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if ls *-trivy-results.sarif 1> /dev/null 2>&1; then
+            echo "**Scanned Images:**" >> $GITHUB_STEP_SUMMARY
+            ls -1 *-trivy-results.sarif | sed 's/-trivy-results.sarif//' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Results are available in the Security tab." >> $GITHUB_STEP_SUMMARY
+          fi

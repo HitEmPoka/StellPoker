@@ -1,0 +1,22 @@
+# Snyk vulnerability scanning configuration
+version: v1.25.0
+
+# Ignore patterns and rules
+ignore: {}
+
+# Custom rules for Snyk
+severityThreshold: high
+
+# Docker scanning options
+docker:
+  # Fail on high and critical vulnerabilities
+  severity: high
+  # Include dev dependencies in scan
+  includeDev: true
+
+# Dependency scanning options
+dependencies:
+  # Scan all transitive dependencies
+  maxDepth: null
+  # Use lock files for accurate scanning
+  useLockFile: true
