@@ -3,6 +3,8 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
+mod constant_time;
+
 /// Committee Registry contract.
 ///
 /// Manages MPC committee membership, staking bonds, and slashing hooks.
@@ -203,7 +205,7 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(admin == stored_admin, "not admin");
+        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
         env.storage().instance().set(&RegistryKey::Paused, &true);
         env.events()
             .publish((Symbol::new(&env, "registry_paused"),), admin);
@@ -218,7 +220,7 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(admin == stored_admin, "not admin");
+        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
         env.storage().instance().set(&RegistryKey::Paused, &false);
         env.events()
             .publish((Symbol::new(&env, "registry_unpaused"),), admin);
@@ -296,7 +298,7 @@ impl CommitteeRegistryContract {
         if let Some(epoch) = Self::get_current_epoch(env.clone()) {
             for i in 0..epoch.members.len() {
                 assert!(
-                    epoch.members.get(i).unwrap() != member,
+                    constant_time::address_ne(&env, &epoch.members.get(i).unwrap(), &member),
                     "cannot deregister during active epoch"
                 );
             }
@@ -333,7 +335,7 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(admin == stored_admin, "not admin");
+        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
         assert!(
             !env.storage()
                 .instance()
@@ -461,7 +463,7 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(*admin == stored_admin, "not admin");
+        assert!(constant_time::address_eq(env, admin, &stored_admin), "not admin");
     }
 
     fn timeout_for_phase(config: &TimeoutConfig, phase: &GamePhase) -> u32 {

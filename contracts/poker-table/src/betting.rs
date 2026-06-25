@@ -1,5 +1,6 @@
 use soroban_sdk::{Address, Env, Symbol};
 
+use crate::constant_time;
 use crate::game;
 use crate::types::*;
 
@@ -11,8 +12,8 @@ pub fn process_action(
     action: &Action,
 ) -> Result<(), PokerTableError> {
     // Find the player
-    let seat = find_player_seat(table, player)?;
-    if seat != table.current_turn {
+    let seat = find_player_seat(env, table, player)?;
+    if constant_time::u32_ne(seat, table.current_turn) {
         return Err(PokerTableError::NotYourTurn);
     }
 
@@ -253,13 +254,17 @@ fn advance_to_next_phase(env: &Env, table: &mut TableState) -> Result<(), PokerT
     Ok(())
 }
 
-fn find_player_seat(table: &TableState, player: &Address) -> Result<u32, PokerTableError> {
+fn find_player_seat(
+    env: &Env,
+    table: &TableState,
+    player: &Address,
+) -> Result<u32, PokerTableError> {
     for i in 0..table.players.len() {
         let p = table
             .players
             .get(i)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if p.address == *player {
+        if constant_time::address_eq(env, &p.address, player) {
             return Ok(p.seat_index);
         }
     }
