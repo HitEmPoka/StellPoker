@@ -1,0 +1,51 @@
+name: Coordinator API Conformance
+
+# Run on every push and pull-request so spec regressions are caught early.
+on:
+  push:
+  pull_request:
+
+jobs:
+  api-conformance:
+    name: OpenAPI spec conformance
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-schemathesis-${{ hashFiles('**/check-api-spec.py') }}
+          restore-keys: ${{ runner.os }}-pip-schemathesis-
+
+      - name: Install dependencies
+        run: pip install schemathesis pyyaml
+
+      # ── Phase 1: offline spec validation ──────────────────────────────────
+      # Runs on every push without needing a live coordinator.
+      # Validates spec structure, broken $refs, and that schemathesis can
+      # parse the spec without errors.
+      - name: Offline spec validation
+        run: python3 scripts/check-api-spec.py
+
+      # ── Phase 2: live conformance (coordinator stack required) ────────────
+      # Only runs when the full Docker stack is available (e2e jobs).
+      # Enabled by setting the COORDINATOR_URL environment variable.
+      # Skipped automatically when the variable is absent.
+      - name: Install Rust (for live coordinator build)
+        if: ${{ env.COORDINATOR_URL != '' }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Live schema conformance against coordinator
+        if: ${{ env.COORDINATOR_URL != '' }}
+        env:
+          COORDINATOR_URL: ${{ env.COORDINATOR_URL }}
+        run: |
+          python3 scripts/check-api-spec.py

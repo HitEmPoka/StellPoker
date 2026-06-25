@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StellPoker Coordinator API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .topbar { display: none; }
+    .version-bar {
+      background: #1b1b1f;
+      color: #e8e8ed;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #2e2e32;
+    }
+    .version-bar h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-right: auto;
+    }
+    .version-bar a {
+      color: #69b4ff;
+      text-decoration: none;
+    }
+    .version-bar a:hover { text-decoration: underline; }
+    .version-bar select {
+      background: #2e2e32;
+      color: #e8e8ed;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .version-bar .badge {
+      background: #37373d;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    .version-bar .badge.current { background: #1a6d37; color: #fff; }
+    .breaking-banner {
+      background: #5c1a1a;
+      color: #ffb3b3;
+      padding: 10px 20px;
+      font-size: 14px;
+      display: none;
+    }
+    .breaking-banner a { color: #69b4ff; }
+    .changelog-link {
+      font-size: 13px;
+      padding: 6px 14px;
+      background: #2e2e32;
+      border-radius: 6px;
+      color: #ccc;
+      text-decoration: none;
+      transition: background .2s;
+    }
+    .changelog-link:hover { background: #444; }
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 13px;
+      color: #666;
+    }
+    footer a { color: #69b4ff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="version-bar">
+    <h1><a href="https://github.com/HitEmPoka/StellPoker">StellPoker</a> Coordinator API</h1>
+    <span class="badge current" id="currentBadge">latest</span>
+    <select id="versionSelect" onchange="switchVersion(this.value)"></select>
+    <a id="changelogLink" class="changelog-link" href="#">Changelog</a>
+    <a href="https://github.com/HitEmPoka/StellPoker" target="_blank" style="font-size:13px;color:#aaa;">GitHub</a>
+  </div>
+  <div id="breakingBanner" class="breaking-banner"></div>
+  <div id="swagger-ui"></div>
+  <footer>
+    Generated from <a href="https://github.com/HitEmPoka/StellPoker" target="_blank">HitEmPoka/StellPoker</a>.
+    See the <a id="footerChangelog" href="#">changelog</a> for version history.
+  </footer>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    let versionsData = null;
+
+    function getBaseUrl() {
+      const path = window.location.pathname;
+      if (path.endsWith('/index.html')) return path.replace(/\/index\.html$/, '');
+      if (path.endsWith('/')) return path.slice(0, -1);
+      return path;
+    }
+
+    function getVersionFromUrl() {
+      const match = window.location.pathname.match(/\/api\/docs\/([^/]+)\//);
+      return match ? match[1] : null;
+    }
+
+    function loadSpec(version) {
+      const base = getBaseUrl();
+      const specUrl = `${base}/${version}/openapi.yaml`;
+      const ui = SwaggerUIBundle({
+        url: specUrl,
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIBundle.SwaggerUIStandalonePreset
+        ],
+        layout: 'BaseLayout',
+        defaultModelsExpandDepth: -1,
+        defaultModelExpandDepth: 2,
+        docExpansion: 'list',
+        filter: true,
+        tryItOutEnabled: false
+      });
+      window.ui = ui;
+    }
+
+    function updateBreakingBanner(version) {
+      const banner = document.getElementById('breakingBanner');
+      if (!versionsData || !versionsData.versions) { banner.style.display = 'none'; return; }
+      const v = versionsData.versions.find(v => v.tag === version);
+      if (v && v.breaking_changes && v.breaking_changes.length > 0) {
+        banner.style.display = 'block';
+        banner.innerHTML = '<strong>&#9888;&#65039; Breaking Changes:</strong> ' +
+          v.breaking_changes.join('; ') +
+          '. See the <a href="' + (v.changelog || '#') + '">changelog</a> for migration details.';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    function updateChangelogLink(version) {
+      const link = document.getElementById('changelogLink');
+      const footerLink = document.getElementById('footerChangelog');
+      if (!versionsData || !versionsData.versions) return;
+      const v = versionsData.versions.find(v => v.tag === version);
+      const href = v && v.changelog ? v.changelog : '#';
+      link.href = footerLink.href = href;
+      link.style.display = href !== '#' ? 'inline-block' : 'none';
+    }
+
+    function switchVersion(version) {
+      const base = getBaseUrl();
+      const newPath = `${base}/${version}/`;
+      window.history.pushState({ version }, '', newPath);
+      loadSpec(version);
+      updateBreakingBanner(version);
+      updateChangelogLink(version);
+      document.getElementById('currentBadge').textContent = version;
+      document.getElementById('versionSelect').value = version;
+    }
+
+    function populateVersions(data) {
+      versionsData = data;
+      const sel = document.getElementById('versionSelect');
+      sel.innerHTML = '';
+      let latest = data.latest || (data.versions && data.versions.length > 0 ? data.versions[data.versions.length - 1].tag : null);
+
+      data.versions.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.tag;
+        opt.textContent = v.tag + (v.tag === latest ? ' (latest)' : '') + (v.breaking ? ' ⚠' : '');
+        sel.appendChild(opt);
+      });
+
+      const urlVersion = getVersionFromUrl();
+      const initialVersion = urlVersion && data.versions.find(v => v.tag === urlVersion)
+        ? urlVersion : latest;
+
+      sel.value = initialVersion;
+      loadSpec(initialVersion);
+      updateBreakingBanner(initialVersion);
+      updateChangelogLink(initialVersion);
+      document.getElementById('currentBadge').textContent = initialVersion;
+    }
+
+    fetch('versions.json')
+      .then(r => r.json())
+      .then(populateVersions)
+      .catch(() => {
+        loadSpec('');
+        document.getElementById('versionSelect').style.display = 'none';
+      });
+  </script>
+</body>
+</html>

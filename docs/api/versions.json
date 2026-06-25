@@ -1,0 +1,13 @@
+{
+  "latest": "v0.1.0",
+  "versions": [
+    {
+      "tag": "v0.1.0",
+      "date": "2026-05-16",
+      "breaking": false,
+      "breaking_changes": [],
+      "summary": "Initial release — coordinator service, MPC orchestration, Soroban smart contracts, Noir ZK circuits, and Next.js frontend.",
+      "changelog": "v0.1.0/changelog.md"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+name: "StellPoker CodeQL Configuration"
+
+# Run the built-in Rust security queries plus our custom contract-specific rules.
+# Custom queries live in .github/codeql/queries/rust/
+queries:
+  - uses: security-and-quality
+  - uses: ./.github/codeql/queries/rust
+
+# Only scan Rust source that belongs to the on-chain contracts and shared libs.
+# Off-chain services (coordinator/node) are included too because they interact
+# with on-chain state and can introduce similar vulnerability classes.
+paths:
+  - contracts
+  - stellar-zk-cards
+  - services
+
+paths-ignore:
+  - "**/*.md"
+  - "**/testdata/**"
+  - "**/target/**"
+  - "**/vendor/**"

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { GameState, GamePhase } from "@/lib/game-state";
 import * as api from "@/lib/api";
 import { joinTableOnChain, playerActionOnChain } from "@/lib/onchain";
-import type { WalletSession } from "@/lib/freighter";
+import type { WalletSession } from "@/lib/wallet";
 import { computeSoloBet } from "./use-solo-betting";
 
 type PlayMode = "single" | "headsup" | "multi";
