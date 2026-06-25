@@ -20,6 +20,7 @@ pub struct SorobanConfig {
     pub rpc_url: String,
     pub secret_key: String,
     pub poker_table_contract: String,
+    pub committee_registry_contract: String,
     pub network_passphrase: String,
     pub onchain_table_id: Option<u32>,
     pub player_identities: Vec<(String, String)>,
@@ -47,6 +48,8 @@ impl SorobanConfig {
             secret_key: std::env::var("COMMITTEE_SECRET")
                 .unwrap_or_else(|_| "test_secret".to_string()),
             poker_table_contract: std::env::var("POKER_TABLE_CONTRACT")
+                .unwrap_or_else(|_| String::new()),
+            committee_registry_contract: std::env::var("COMMITTEE_REGISTRY_CONTRACT")
                 .unwrap_or_else(|_| String::new()),
             network_passphrase: std::env::var("NETWORK_PASSPHRASE")
                 .unwrap_or_else(|_| "Test SDF Network ; September 2015".to_string()),
@@ -236,6 +239,56 @@ pub(crate) fn parse_i128_value(value: &serde_json::Value) -> Option<i128> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitteeMember {
+    pub address: String,
+    pub stake: i128,
+    pub endpoint: String,
+    pub region: String,
+    pub active: bool,
+    pub slash_count: u32,
+}
+
+/// Fetch all active committee members from the CommitteeRegistry contract.
+pub async fn fetch_active_nodes_from_registry(
+    config: &SorobanConfig,
+) -> Result<Vec<CommitteeMember>, String> {
+    if config.committee_registry_contract.is_empty() {
+        return Err("Committee Registry contract address not configured".to_string());
+    }
+
+    let mut args: Vec<String> = vec![
+        "contract".to_string(),
+        "invoke".to_string(),
+        "--id".to_string(),
+        config.committee_registry_contract.clone(),
+        "--source".to_string(),
+        config.secret_key.clone(),
+        "--rpc-url".to_string(),
+        config.rpc_url.clone(),
+        "--network-passphrase".to_string(),
+        config.network_passphrase.clone(),
+        "--".to_string(),
+        "get_active_members".to_string(),
+    ];
+
+    let output = Command::new("stellar")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to invoke stellar CLI: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to fetch active members: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse members JSON: {}. Stdout: {}", e, stdout))
+}
+
 pub(crate) fn parse_u32_value(value: &serde_json::Value) -> Option<u32> {
     match value {
         serde_json::Value::String(s) => s.parse::<u32>().ok(),
@@ -306,6 +359,7 @@ mod error_handling_tests {
             rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
             secret_key: "test_secret".to_string(),
             poker_table_contract: String::new(),
+            committee_registry_contract: String::new(),
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
             onchain_table_id: None,
             player_identities: Vec::new(),

@@ -44,6 +44,12 @@ env:
   CIRCUIT_DIR: "/app/circuits"
   CRS_DIR: "/app/crs"
   REQUEST_LOG_FORMAT: "json"
+  # Resource-exhaustion protection (see issue #315). Reject session floods and
+  # cap each proof-generation subprocess. Keep memory below the pod limit below.
+  MAX_CONCURRENT_SESSIONS: "64"
+  SESSION_MAX_MEMORY_MB: "1536"
+  SESSION_MAX_CPU_SECONDS: "300"
+  SESSION_MAX_WALL_SECONDS: "600"
 
 # partyConfigs holds the content of each node's TOML party config.
 # These are stored in a ConfigMap. If configs contain secrets (private keys),

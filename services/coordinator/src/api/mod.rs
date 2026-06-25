@@ -27,7 +27,7 @@ use parsing::{
 };
 use session::{
     ensure_session_exists, fetch_onchain_table_view, is_identity_missing_error,
-    next_proof_session_id, resolve_deal_players_from_lobby, validate_players,
+    next_proof_session_id, resolve_deal_players_from_lobby, select_mpc_nodes, validate_players,
     validate_reveal_phase, validate_table_id,
 };
 
@@ -157,12 +157,36 @@ pub async fn create_table(
             .insert(auth.address, creator_seat);
     }
 
+    let selected_node_endpoints = select_mpc_nodes(&state, req.region).await?;
+
     let table_view = fetch_onchain_table_view(&state.soroban_config, table_id)
         .await
         .map_err(|e| {
             tracing::error!("create_table fetch failed: {}", e);
             StatusCode::BAD_GATEWAY
         })?;
+
+    let session = TableSession {
+        table_id,
+        deck_root: String::new(),
+        hand_commitments: Vec::new(),
+        player_order: Vec::new(),
+        dealt_indices: Vec::new(),
+        player_card_positions: Vec::new(),
+        board_indices: Vec::new(),
+        phase: "waiting".to_string(),
+        deal_session_id: String::new(),
+        deal_tx_hash: None,
+        reveal_tx_hashes: HashMap::new(),
+        reveal_session_ids: HashMap::new(),
+        revealed_cards_by_phase: HashMap::new(),
+        selected_node_endpoints,
+        showdown_tx_hash: None,
+        showdown_session_id: None,
+        showdown_result: None,
+        proof_nonce: 0,
+    };
+    state.tables.write().await.insert(table_id, session);
 
     Ok(Json(CreateTableResponse {
         table_id,
@@ -330,12 +354,46 @@ pub async fn request_deal(
         }
     }
 
-    if state.mpc_config.node_endpoints.is_empty() {
+    let mut tables = state.tables.write().await;
+    let session = if let Some(existing) = tables.get_mut(&table_id) {
+        if existing.phase != "waiting" && existing.phase != "settlement" {
+            return Err(StatusCode::CONFLICT);
+        }
+        existing
+    } else {
+        // This case shouldn't happen if create_table was called, but for robustness:
+        let selected_node_endpoints = select_mpc_nodes(&state, None).await?;
+        let new_session = TableSession {
+            table_id,
+            deck_root: String::new(),
+            hand_commitments: Vec::new(),
+            player_order: Vec::new(),
+            dealt_indices: Vec::new(),
+            player_card_positions: Vec::new(),
+            board_indices: Vec::new(),
+            phase: "waiting".to_string(),
+            deal_session_id: String::new(),
+            deal_tx_hash: None,
+            reveal_tx_hashes: HashMap::new(),
+            reveal_session_ids: HashMap::new(),
+            revealed_cards_by_phase: HashMap::new(),
+            selected_node_endpoints,
+            showdown_tx_hash: None,
+            showdown_session_id: None,
+            showdown_result: None,
+            proof_nonce: 0,
+        };
+        tables.insert(table_id, new_session);
+        tables.get_mut(&table_id).unwrap()
+    };
+
+    let node_endpoints = session.selected_node_endpoints.clone();
+    if node_endpoints.is_empty() {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
     let prepared_deal = mpc::prepare_deal_from_nodes(
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
         &players,
@@ -354,7 +412,7 @@ pub async fn request_deal(
         &proof_session_id,
         "deal_valid",
         &state.mpc_config.circuit_dir,
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
     )
     .await
     .map_err(|e| {
@@ -399,27 +457,22 @@ pub async fn request_deal(
         })
         .collect();
 
-    let session = TableSession {
-        table_id,
-        deck_root: parsed_deal.deck_root.clone(),
-        hand_commitments: parsed_deal.hand_commitments.clone(),
-        player_order: players,
-        dealt_indices: parsed_deal.dealt_indices,
-        player_card_positions,
-        board_indices: Vec::new(),
-        phase: "preflop".to_string(),
-        deal_session_id: deal_proof.session_id.clone(),
-        deal_tx_hash: tx_hash.clone(),
-        reveal_tx_hashes: HashMap::new(),
-        reveal_session_ids: HashMap::new(),
-        revealed_cards_by_phase: HashMap::new(),
-        showdown_tx_hash: None,
-        showdown_session_id: None,
-        showdown_result: None,
-        proof_nonce: 0,
-    };
-
-    state.tables.write().await.insert(table_id, session);
+    session.deck_root = parsed_deal.deck_root.clone();
+    session.hand_commitments = parsed_deal.hand_commitments.clone();
+    session.player_order = players;
+    session.dealt_indices = parsed_deal.dealt_indices;
+    session.player_card_positions = player_card_positions;
+    session.board_indices = Vec::new();
+    session.phase = "preflop".to_string();
+    session.deal_session_id = deal_proof.session_id.clone();
+    session.deal_tx_hash = tx_hash.clone();
+    session.reveal_tx_hashes = HashMap::new();
+    session.reveal_session_ids = HashMap::new();
+    session.revealed_cards_by_phase = HashMap::new();
+    session.showdown_tx_hash = None;
+    session.showdown_session_id = None;
+    session.showdown_result = None;
+    session.proof_nonce = 0;
 
     Ok(Json(DealResponse {
         status: "dealt".to_string(),
@@ -443,14 +496,15 @@ pub async fn request_reveal(
     let action = format!("request_reveal:{}", phase);
     enforce_rate_limit(&state, &headers, table_id, &action).await?;
 
-    if state.mpc_config.node_endpoints.is_empty() {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
     ensure_session_exists(&state, table_id).await?;
 
     let mut tables = state.tables.write().await;
     let session = tables.get_mut(&table_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    if session.selected_node_endpoints.is_empty() {
+        session.selected_node_endpoints = select_mpc_nodes(&state, None).await?;
+    }
+    let node_endpoints = session.selected_node_endpoints.clone();
 
     // Any caller may trigger reveal progression.
     // Private card data remains protected by get_player_cards auth checks.
@@ -508,7 +562,7 @@ pub async fn request_reveal(
     }
 
     let prepared_reveal = mpc::prepare_reveal_from_nodes(
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
         &phase,
@@ -529,7 +583,7 @@ pub async fn request_reveal(
         &proof_session_id,
         "reveal_board_valid",
         &state.mpc_config.circuit_dir,
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
     )
     .await
     .map_err(|e| {
@@ -607,14 +661,15 @@ pub async fn request_showdown(
 
     enforce_rate_limit(&state, &headers, table_id, "request_showdown").await?;
 
-    if state.mpc_config.node_endpoints.is_empty() {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
     ensure_session_exists(&state, table_id).await?;
 
     let mut tables = state.tables.write().await;
     let session = tables.get_mut(&table_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    if session.selected_node_endpoints.is_empty() {
+        session.selected_node_endpoints = select_mpc_nodes(&state, None).await?;
+    }
+    let node_endpoints = session.selected_node_endpoints.clone();
 
     // Any caller may trigger showdown progression.
 
@@ -658,7 +713,7 @@ pub async fn request_showdown(
     }
 
     let prepared_showdown = mpc::prepare_showdown_from_nodes(
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
         &state.mpc_config.circuit_dir,
         table_id,
         &session.board_indices,
@@ -680,7 +735,7 @@ pub async fn request_showdown(
         &proof_session_id,
         "showdown_valid",
         &state.mpc_config.circuit_dir,
-        &state.mpc_config.node_endpoints,
+        &node_endpoints,
     )
     .await
     .map_err(|e| {
@@ -925,7 +980,10 @@ pub async fn get_player_cards(
         .get(player_index)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let node_endpoints = state.mpc_config.node_endpoints.clone();
+    let mut node_endpoints = session.selected_node_endpoints.clone();
+    if node_endpoints.is_empty() {
+        node_endpoints = select_mpc_nodes(&state, None).await?;
+    }
     let positions = vec![*pos1, *pos2];
     drop(tables); // release read lock before async call
 
@@ -965,10 +1023,12 @@ pub async fn get_table_state(
 
 /// GET /api/committee/status
 pub async fn committee_status(State(state): State<AppState>) -> Json<CommitteeStatusResponse> {
-    let healthy = mpc::check_node_health(&state.mpc_config.node_endpoints).await;
+    let healths = state.metrics.node_healths.lock().await;
+    let nodes = healths.len();
+    let healthy = healths.iter().map(|h| h.connected).collect();
 
     Json(CommitteeStatusResponse {
-        nodes: state.mpc_config.node_endpoints.len(),
+        nodes,
         healthy,
         status: "active".to_string(),
     })
@@ -1235,71 +1295,3 @@ pub async fn get_mpc_session_status(
     })))
 }
 
-/// POST /api/wallet/challenge
-pub async fn get_wallet_challenge(
-    State(state): State<AppState>,
-    Json(req): Json<WalletChallengeRequest>,
-) -> Result<Json<WalletChallengeResponse>, StatusCode> {
-    let address = req.address.trim().to_string();
-    if !is_valid_stellar_address(&address) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let challenge = format!(
-        "stellar-poker-challenge|{}|{}",
-        Uuid::new_v4(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    );
-
-    let mut guard = state.wallet_challenges.write().await;
-    let now = std::time::Instant::now();
-    guard.retain(|_, (_, created_at)| {
-        now.duration_since(*created_at) < std::time::Duration::from_secs(300)
-    });
-    guard.insert(address, (challenge.clone(), now));
-
-    Ok(Json(WalletChallengeResponse { challenge }))
-}
-
-/// POST /api/wallet/verify
-pub async fn verify_wallet(
-    State(state): State<AppState>,
-    Json(req): Json<WalletVerifyRequest>,
-) -> Result<Json<WalletVerifyResponse>, StatusCode> {
-    let address = req.address.trim().to_string();
-    let challenge = req.challenge;
-    let signature = req.signature;
-
-    if !is_valid_stellar_address(&address) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let mut guard = state.wallet_challenges.write().await;
-    let now = std::time::Instant::now();
-    guard.retain(|_, (_, created_at)| {
-        now.duration_since(*created_at) < std::time::Duration::from_secs(300)
-    });
-
-    let Some((stored_challenge, created_at)) = guard.get(&address) else {
-        return Ok(Json(WalletVerifyResponse { verified: false }));
-    };
-
-    if stored_challenge != &challenge {
-        return Ok(Json(WalletVerifyResponse { verified: false }));
-    }
-
-    if now.duration_since(*created_at) >= std::time::Duration::from_secs(300) {
-        guard.remove(&address);
-        return Ok(Json(WalletVerifyResponse { verified: false }));
-    }
-
-    if verify_signature(&address, &challenge, &signature).is_ok() {
-        guard.remove(&address);
-        Ok(Json(WalletVerifyResponse { verified: true }))
-    } else {
-        Ok(Json(WalletVerifyResponse { verified: false }))
-    }
-}

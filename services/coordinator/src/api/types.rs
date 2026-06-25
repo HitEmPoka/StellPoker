@@ -87,6 +87,7 @@ pub struct CreateTableRequest {
     pub max_players: Option<u32>,
     pub solo: Option<bool>,
     pub buy_in: Option<String>,
+    pub region: Option<String>,
 }
 
 #[derive(Serialize)]

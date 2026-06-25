@@ -252,6 +252,27 @@ pub async fn post_shares(
         if let Some(existing) = sessions.get(&session_id) {
             existing.clone()
         } else {
+            // Reject new sessions once the node is saturated, to prevent DoS via
+            // session flooding (issue #315). Existing sessions are never rejected.
+            let max = state.limits.max_concurrent_sessions;
+            if max > 0 {
+                let active = crate::limits::count_active_sessions(&sessions).await;
+                if active >= max {
+                    tracing::warn!(
+                        "rejecting session {}: node at capacity ({} active, limit {})",
+                        session_id,
+                        active,
+                        max
+                    );
+                    return Err((
+                        StatusCode::TOO_MANY_REQUESTS,
+                        format!(
+                            "node at capacity: {} concurrent sessions (limit {})",
+                            active, max
+                        ),
+                    ));
+                }
+            }
             let work_dir = tempfile::tempdir()
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("tmpdir: {}", e)))?;
             let work_path = work_dir.keep();
@@ -318,12 +339,14 @@ pub async fn post_generate(
     let node_id = state.node_id;
     let party_config = state.party_config_path.clone();
     let crs_path = req.crs_path.clone();
+    let limits = state.limits.clone();
+    let wall_seconds = limits.max_session_wall_seconds;
 
     let session_lock_bg = session_lock.clone();
     drop(session); // release write lock before spawning
 
     tokio::spawn(async move {
-        let result = session::run_proof_generation(
+        let proof_future = session::run_proof_generation(
             sid.clone(),
             circuit_dir,
             circuit_name,
@@ -333,8 +356,25 @@ pub async fn post_generate(
             expected_total_parties,
             party_config,
             crs_path,
-        )
-        .await;
+            limits,
+        );
+
+        // Enforce a per-session wall-clock budget so a hung proof generation can't
+        // pin node resources indefinitely (issue #315). On timeout the subprocess
+        // future is dropped, which kills the co-noir child (kill_on_drop).
+        let result = if wall_seconds > 0 {
+            match tokio::time::timeout(std::time::Duration::from_secs(wall_seconds), proof_future)
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(format!(
+                    "proof generation exceeded wall-clock limit of {}s",
+                    wall_seconds
+                )),
+            }
+        } else {
+            proof_future.await
+        };
 
         let mut session = session_lock_bg.write().await;
         match result {

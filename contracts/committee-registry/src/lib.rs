@@ -22,6 +22,7 @@ pub struct CommitteeMember {
     pub address: Address,
     pub stake: i128,
     pub endpoint: soroban_sdk::String, // MPC node endpoint URL
+    pub region: soroban_sdk::String,   // Geographic region (e.g., us-east-1)
     pub active: bool,
     pub slash_count: u32,
 }
@@ -75,6 +76,7 @@ pub enum RegistryKey {
     TimeoutConfig,
     Game(u32),
     Paused,
+    AllMembers,
 }
 
 #[contractimpl]
@@ -235,8 +237,14 @@ impl CommitteeRegistryContract {
             .unwrap_or(false)
     }
 
-    /// Register as a committee member with a stake.
-    pub fn register_member(env: Env, member: Address, stake: i128, endpoint: soroban_sdk::String) {
+    /// Register as a committee member with a stake and region metadata.
+    pub fn register_member(
+        env: Env,
+        member: Address,
+        stake: i128,
+        endpoint: soroban_sdk::String,
+        region: soroban_sdk::String,
+    ) {
         member.require_auth();
         assert!(
             !env.storage()
@@ -266,6 +274,7 @@ impl CommitteeRegistryContract {
             address: member.clone(),
             stake,
             endpoint,
+            region,
             active: true,
             slash_count: 0,
         };
@@ -273,6 +282,27 @@ impl CommitteeRegistryContract {
         env.storage()
             .persistent()
             .set(&RegistryKey::Member(member.clone()), &member_state);
+
+        // Maintain list of all members for discovery
+        let mut all_members: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&RegistryKey::AllMembers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut exists = false;
+        for i in 0..all_members.len() {
+            if all_members.get(i).unwrap() == member {
+                exists = true;
+                break;
+            }
+        }
+        if !exists {
+            all_members.push_back(member.clone());
+            env.storage()
+                .instance()
+                .set(&RegistryKey::AllMembers, &all_members);
+        }
 
         env.events()
             .publish((Symbol::new(&env, "member_registered"),), member);
@@ -417,6 +447,29 @@ impl CommitteeRegistryContract {
         // For v1, any address can report (admin will adjudicate)
 
         Self::slash_member_record(&env, &member, reason);
+    }
+
+    /// Return all registered members that are currently active.
+    pub fn get_active_members(env: Env) -> Vec<CommitteeMember> {
+        let all_addresses: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&RegistryKey::AllMembers)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut active_members = Vec::new(&env);
+        for i in 0..all_addresses.len() {
+            let addr = all_addresses.get(i).unwrap();
+            let m: CommitteeMember = env
+                .storage()
+                .persistent()
+                .get(&RegistryKey::Member(addr))
+                .expect("member state missing");
+            if m.active {
+                active_members.push_back(m);
+            }
+        }
+        active_members
     }
 
     /// View the current epoch.
@@ -580,7 +633,8 @@ mod test {
         client.register_member(
             &member,
             &1_000,
-            &String::from_str(&env, "node-0"),
+            &soroban_sdk::String::from_str(&env, "node-0"),
+            &soroban_sdk::String::from_str(&env, "us-east-1"),
         );
 
         Setup {
@@ -606,6 +660,35 @@ mod test {
         let admin = Address::generate(&env);
         client.initialize(&admin, &sac.address(), &100);
         (env, client, admin)
+    }
+
+    #[test]
+    fn get_active_members_returns_all_registered() {
+        let s = setup();
+        let env = &s.env;
+
+        let member2 = Address::generate(env);
+        let token_admin = StellarAssetClient::new(env, &s.token.address);
+        token_admin.mint(&member2, &2_000);
+
+        s.client.register_member(
+            &member2,
+            &1_000,
+            &soroban_sdk::String::from_str(env, "node-1"),
+            &soroban_sdk::String::from_str(env, "eu-west-1"),
+        );
+
+        let active = s.client.get_active_members();
+        assert_eq!(active.len(), 2);
+
+        let m1 = active.get(0).unwrap();
+        let m2 = active.get(1).unwrap();
+
+        assert_eq!(m1.address, s.member);
+        assert_eq!(m1.region, soroban_sdk::String::from_str(env, "us-east-1"));
+
+        assert_eq!(m2.address, member2);
+        assert_eq!(m2.region, soroban_sdk::String::from_str(env, "eu-west-1"));
     }
 
     #[test]
@@ -663,6 +746,43 @@ mod test {
 
         s.client.report_timeout(&7, &s.member);
     }
+}
+
+#[cfg(test)]
+mod test_paused {
+    use super::*;
+    use soroban_sdk::{
+        testutils::Address as _,
+        token::{StellarAssetClient, TokenClient},
+        Address, Env, String, Vec,
+    };
+
+    fn setup() -> (
+        Env,
+        CommitteeRegistryContractClient<'static>,
+        Address,
+        TokenClient<'static>,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CommitteeRegistryContract, ());
+        let client = CommitteeRegistryContractClient::new(&env, &contract_id);
+
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token = TokenClient::new(&env, &sac.address());
+        let token_sac = StellarAssetClient::new(&env, &sac.address());
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &sac.address(), &100);
+
+        // Mint tokens for a member
+        let member = Address::generate(&env);
+        token_sac.mint(&member, &1000);
+        let _ = member; // avoid unused warning; caller mints their own
+
+        (env, client, admin, token)
+    }
 
     #[test]
     fn test_pause_and_unpause() {
@@ -682,7 +802,8 @@ mod test {
 
         let member = Address::generate(&env);
         let endpoint = String::from_str(&env, "http://node0:8101");
-        client.register_member(&member, &500, &endpoint);
+        let region = String::from_str(&env, "us-east-1");
+        client.register_member(&member, &500, &endpoint, &region);
     }
 
     #[test]
@@ -723,7 +844,8 @@ mod test {
         client2.unpause(&admin2);
 
         let endpoint = String::from_str(&env, "http://node0:8101");
-        client2.register_member(&member, &500, &endpoint);
+        let region = String::from_str(&env, "us-east-1");
+        client2.register_member(&member, &500, &endpoint, &region);
         let m = client2.get_member(&member);
         assert!(m.active);
     }

@@ -125,6 +125,7 @@ pub async fn run_proof_generation(
     expected_total_parties: u32,
     party_config_path: String,
     crs_path: String,
+    limits: crate::limits::ResourceLimits,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
     let circuit_path = format!(
         "{}/{}/target/{}.json",
@@ -169,6 +170,7 @@ pub async fn run_proof_generation(
         merge_cmd.arg("--inputs").arg(path);
     }
     merge_cmd.arg("--out").arg(&share_path);
+    limits.apply_to_command(&mut merge_cmd);
 
     let merge_output = merge_cmd
         .output()
@@ -192,7 +194,8 @@ pub async fn run_proof_generation(
     );
 
     // Step 1: Generate witness in MPC
-    let witness_output = Command::new("co-noir")
+    let mut witness_cmd = Command::new("co-noir");
+    witness_cmd
         .arg("generate-witness")
         .arg("--circuit")
         .arg(&circuit_path)
@@ -203,7 +206,9 @@ pub async fn run_proof_generation(
         .arg("--config")
         .arg(&party_config_path)
         .arg("--out")
-        .arg(&witness_path)
+        .arg(&witness_path);
+    limits.apply_to_command(&mut witness_cmd);
+    let witness_output = witness_cmd
         .output()
         .await
         .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
@@ -227,7 +232,8 @@ pub async fn run_proof_generation(
     let vk_path = format!("{}/{}/target/vk_keccak", circuit_dir, circuit_name);
     let mut last_proof_output: Option<std::process::Output> = None;
     for attempt in 1..=3 {
-        let proof_output = Command::new("co-noir")
+        let mut proof_cmd = Command::new("co-noir");
+        proof_cmd
             .arg("build-and-generate-proof")
             .arg("--circuit")
             .arg(&circuit_path)
@@ -247,7 +253,9 @@ pub async fn run_proof_generation(
             .arg(&proof_path)
             .arg("--public-input")
             .arg(&public_inputs_path)
-            .arg("--fields-as-json")
+            .arg("--fields-as-json");
+        limits.apply_to_command(&mut proof_cmd);
+        let proof_output = proof_cmd
             .output()
             .await
             .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;

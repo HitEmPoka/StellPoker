@@ -262,6 +262,7 @@ fn build_session_from_onchain_state(
         reveal_tx_hashes: HashMap::new(),
         reveal_session_ids: HashMap::new(),
         revealed_cards_by_phase,
+        selected_node_endpoints: Vec::new(), // Will be populated on first MPC call if needed
         showdown_tx_hash: None,
         showdown_session_id: None,
         showdown_result: None,
@@ -304,6 +305,68 @@ pub(crate) fn validate_reveal_phase(phase: &str) -> Result<(), StatusCode> {
         "flop" | "turn" | "river" => Ok(()),
         _ => Err(StatusCode::BAD_REQUEST),
     }
+}
+
+/// Select 3 healthy MPC nodes, prioritizing those in the requested region.
+pub(crate) async fn select_mpc_nodes(
+    state: &AppState,
+    requested_region: Option<String>,
+) -> Result<Vec<String>, StatusCode> {
+    let all_nodes = if state.soroban_config.committee_registry_contract.is_empty() {
+        // Fallback to static config if registry not configured
+        state
+            .mpc_config
+            .node_endpoints
+            .iter()
+            .map(|ep| soroban::CommitteeMember {
+                address: String::new(),
+                stake: 0,
+                endpoint: ep.clone(),
+                region: "unknown".to_string(),
+                active: true,
+                slash_count: 0,
+            })
+            .collect()
+    } else {
+        soroban::fetch_active_nodes_from_registry(&state.soroban_config)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch nodes from registry: {}", e);
+                StatusCode::SERVICE_UNAVAILABLE
+            })?
+    };
+
+    let healths = state.metrics.node_healths.lock().await;
+    let mut healthy_members: Vec<soroban::CommitteeMember> = all_nodes
+        .into_iter()
+        .filter(|m| {
+            healths
+                .iter()
+                .find(|h| h.endpoint == m.endpoint)
+                .map(|h| h.connected)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if healthy_members.len() < 3 {
+        tracing::warn!(
+            "Not enough healthy MPC nodes: found {}",
+            healthy_members.len()
+        );
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // Sort by region match
+    if let Some(ref region) = requested_region {
+        healthy_members.sort_by_key(|m| m.region != *region);
+    }
+
+    let selected = healthy_members
+        .into_iter()
+        .take(3)
+        .map(|m| m.endpoint)
+        .collect();
+    Ok(selected)
 }
 
 pub(crate) fn is_identity_missing_error(error: &str) -> bool {

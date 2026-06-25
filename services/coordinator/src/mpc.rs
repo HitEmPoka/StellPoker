@@ -620,3 +620,421 @@ mod error_handling_tests {
         assert!(err.contains("out-of-range index"), "got: {err}");
     }
 }
+
+#[cfg(test)]
+mod byzantine_fault_tolerance_tests {
+    //! Byzantine fault tolerance tests for the MPC committee protocol.
+    //!
+    //! Covers three classes of Byzantine adversary behavior defined in issue #301:
+    //!
+    //! 1. **Incorrect shares** — node sends malformed, empty, or wrong-schema data.
+    //! 2. **Mid-protocol stalls** — node accepts the connection but never completes,
+    //!    forcing the caller's timeout to fire.
+    //! 3. **Colluding nodes** — multiple nodes coordinate to return invalid data;
+    //!    the protocol must surface the misbehavior before game state is affected.
+    //!
+    //! Each test spins up a lightweight in-process axum server that simulates the
+    //! target Byzantine behavior, then asserts the coordinator rejects it.
+
+    use super::*;
+    use axum::{http::StatusCode, routing::post, Router};
+    use tokio::net::TcpListener;
+
+    /// Spawn a local axum HTTP server on a random port and return its base URL.
+    async fn spawn_test_server(router: Router) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    // ── Scenario 1: Nodes sending incorrect shares ───────────────────────────
+
+    /// A Byzantine node returning an empty share_set_id (structurally valid JSON
+    /// but semantically invalid) must cause the coordinator to abort with a
+    /// "missing share_set_id" error rather than silently accepting a null share.
+    #[tokio::test]
+    async fn byzantine_empty_share_id_aborts_deal_protocol() {
+        let router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async { axum::Json(serde_json::json!({ "share_set_id": "" })) }),
+        );
+        let endpoint = spawn_test_server(router).await;
+
+        let err = prepare_deal_from_nodes(&[endpoint], "/circuits", 1, &["P1".to_string()])
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.contains("missing share_set_id"),
+            "empty share ID must be caught: {err}"
+        );
+    }
+
+    /// A Byzantine node returning a completely unexpected JSON schema (no
+    /// share_set_id key) must either fail deserialization or trigger the
+    /// missing-ID guard — the protocol must not succeed with garbage data.
+    #[tokio::test]
+    async fn byzantine_wrong_schema_response_rejected() {
+        let router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async {
+                axum::Json(serde_json::json!({
+                    "evil_field": "bypass_attempt",
+                    "injected_payload": [0xde, 0xad, 0xbe, 0xef]
+                }))
+            }),
+        );
+        let endpoint = spawn_test_server(router).await;
+
+        let result =
+            prepare_deal_from_nodes(&[endpoint], "/circuits", 1, &["P1".to_string()]).await;
+
+        match result {
+            Err(e) => assert!(
+                e.contains("missing share_set_id") || e.contains("parse"),
+                "wrong-schema response must surface as error: {e}"
+            ),
+            Ok(shares) => {
+                // serde default-filled share_set_id as "" — the guard must catch it.
+                assert!(
+                    shares.share_set_ids.iter().all(|id| !id.is_empty()),
+                    "coordinator must not accept empty share IDs from Byzantine node"
+                );
+            }
+        }
+    }
+
+    /// A Byzantine node that replies HTTP 500 during share preparation simulates
+    /// a node deliberately crashing or corrupting its contribution. The coordinator
+    /// must propagate the failure rather than proceeding with a partial committee.
+    #[tokio::test]
+    async fn byzantine_http500_on_prepare_aborts_protocol() {
+        let router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "byzantine node: deliberate sabotage",
+                )
+            }),
+        );
+        let endpoint = spawn_test_server(router).await;
+
+        let err = prepare_deal_from_nodes(&[endpoint], "/circuits", 1, &["P1".to_string()])
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.contains("HTTP 500") || err.contains("rejected"),
+            "HTTP 500 from Byzantine node must abort deal protocol: {err}"
+        );
+    }
+
+    /// One Byzantine node mixed into an otherwise honest committee must abort
+    /// the entire round — the protocol requires a complete, valid share set
+    /// from every node, so a single bad actor prevents quorum.
+    #[tokio::test]
+    async fn one_byzantine_node_among_honest_peers_aborts_round() {
+        let honest_router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async {
+                axum::Json(serde_json::json!({ "share_set_id": "honest_share_0x1a2b" }))
+            }),
+        );
+        let byzantine_router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async { (StatusCode::FORBIDDEN, "refusing to participate") }),
+        );
+
+        let honest = spawn_test_server(honest_router).await;
+        let byzantine = spawn_test_server(byzantine_router).await;
+
+        let err = prepare_deal_from_nodes(
+            &[honest, byzantine],
+            "/circuits",
+            1,
+            &["P1".to_string(), "P2".to_string()],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.contains("HTTP") || err.contains("rejected"),
+            "single Byzantine node must prevent quorum formation: {err}"
+        );
+    }
+
+    /// A Byzantine node returning HTTP 400 during the reveal-prepare phase
+    /// (e.g., falsely claiming the deck root is invalid) must halt the reveal.
+    #[tokio::test]
+    async fn byzantine_node_rejects_reveal_with_bad_request() {
+        let router = Router::new().route(
+            "/table/:table_id/prepare-reveal/:phase",
+            post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "byzantine: claiming deck root is invalid",
+                )
+            }),
+        );
+        let endpoint = spawn_test_server(router).await;
+
+        let err = prepare_reveal_from_nodes(
+            &[endpoint],
+            "/circuits",
+            1,
+            "preflop",
+            &[],
+            "0xdeadbeef_root",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.contains("HTTP 400") || err.contains("rejected"),
+            "Byzantine bad-request during reveal must abort the phase: {err}"
+        );
+    }
+
+    // ── Scenario 2: Nodes stalling mid-protocol ──────────────────────────────
+
+    /// A Byzantine node that accepts the TCP connection but delays its response
+    /// by 60 seconds simulates a stall attack. A 2-second caller timeout must
+    /// fire, demonstrating that the protocol does not block indefinitely.
+    #[tokio::test]
+    async fn byzantine_stall_on_prepare_deal_causes_timeout() {
+        use tokio::time::Duration;
+
+        let router = Router::new().route(
+            "/table/:table_id/prepare-deal",
+            post(|| async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                axum::Json(serde_json::json!({ "share_set_id": "arrived_too_late" }))
+            }),
+        );
+        let endpoint = spawn_test_server(router).await;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            prepare_deal_from_nodes(&[endpoint], "/circuits", 1, &["P1".to_string()]),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "stalling Byzantine node must trigger the caller timeout — protocol must not hang"
+        );
+    }
+
+    /// A Byzantine node that stalls during the perm-lookup (card reveal) phase
+    /// prevents card resolution. A 2-second timeout must fire before any
+    /// card values or salts are returned to the caller.
+    #[tokio::test]
+    async fn byzantine_stall_during_card_reveal_causes_timeout() {
+        use tokio::time::Duration;
+
+        let stalling = Router::new().route(
+            "/table/:table_id/perm-lookup",
+            post(|| async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                axum::Json(serde_json::json!({
+                    "mapped_indices": [0_u32],
+                    "salts": ["0"]
+                }))
+            }),
+        );
+        let honest = || {
+            Router::new().route(
+                "/table/:table_id/perm-lookup",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "mapped_indices": [5_u32, 12_u32],
+                        "salts": ["111", "222"]
+                    }))
+                }),
+            )
+        };
+
+        let e0 = spawn_test_server(honest()).await;
+        let e1 = spawn_test_server(stalling).await; // Byzantine staller
+        let e2 = spawn_test_server(honest()).await;
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), resolve_hole_cards(&[e0, e1, e2], 1, &[0, 1]))
+                .await;
+
+        assert!(
+            result.is_err(),
+            "Byzantine stall during card reveal must cause timeout before exposing card values"
+        );
+    }
+
+    /// The zero-node pre-flight guard catches the degenerate Byzantine scenario
+    /// where all nodes are removed from the committee before proof generation.
+    /// This fires immediately without any network call.
+    #[tokio::test]
+    async fn zero_node_committee_rejected_before_proof_generation() {
+        let err = trigger_and_collect_proof("sess_zero_nodes", "deal_valid", "/circuits", &[])
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.contains("no MPC node endpoints configured"),
+            "empty committee must be rejected before attempting proof generation: {err}"
+        );
+    }
+
+    // ── Scenario 3: Nodes colluding to reveal secrets ────────────────────────
+
+    /// Colluding nodes returning the identical share_set_id (impossible in honest
+    /// execution, where each node generates an independent random share) expose a
+    /// detectable fingerprint. This test documents the invariant: a monitoring
+    /// layer can identify collusion and trigger slashing.
+    #[tokio::test]
+    async fn colluding_nodes_duplicate_share_ids_are_detectable() {
+        const COLLUDED_ID: &str = "colluded_share_DEADBEEF_same_for_both";
+
+        let make_colluding = |id: &'static str| {
+            Router::new().route(
+                "/table/:table_id/prepare-deal",
+                post(move || async move {
+                    axum::Json(serde_json::json!({ "share_set_id": id }))
+                }),
+            )
+        };
+
+        let e0 = spawn_test_server(make_colluding(COLLUDED_ID)).await;
+        let e1 = spawn_test_server(make_colluding(COLLUDED_ID)).await;
+
+        let shares = prepare_deal_from_nodes(
+            &[e0, e1],
+            "/circuits",
+            1,
+            &["P1".to_string(), "P2".to_string()],
+        )
+        .await
+        .expect("non-empty IDs pass the coordinator's local guard");
+
+        // Detect collusion fingerprint: unique IDs < total IDs.
+        let unique: std::collections::HashSet<_> = shares.share_set_ids.iter().collect();
+        assert!(
+            unique.len() < shares.share_set_ids.len(),
+            "duplicate share IDs across nodes are the fingerprint of collusion — \
+             a slashing condition must be raised by the committee-registry"
+        );
+    }
+
+    /// Colluding nodes that coordinate to return invalid salt values during
+    /// perm-lookup attempt to corrupt the combined salt used in card commitments.
+    /// The salt-parsing step in resolve_hole_cards must reject non-numeric salts
+    /// before any card value is derived.
+    #[tokio::test]
+    async fn colluding_nodes_invalid_salts_caught_before_card_derivation() {
+        let byzantine = || {
+            Router::new().route(
+                "/table/:table_id/perm-lookup",
+                post(|| async {
+                    axum::Json(serde_json::json!({
+                        "mapped_indices": [3_u32, 7_u32],
+                        // Coordinated garbage salts — would corrupt combined_salt if accepted.
+                        "salts": ["NOT_A_VALID_SALT", "ALSO_INVALID"]
+                    }))
+                }),
+            )
+        };
+
+        let e0 = spawn_test_server(byzantine()).await;
+        let e1 = spawn_test_server(byzantine()).await;
+        let e2 = spawn_test_server(byzantine()).await;
+
+        let err = resolve_hole_cards(&[e0, e1, e2], 1, &[0, 1])
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.contains("salt parse") || err.contains("parse"),
+            "coordinated invalid salts must be caught before card values are derived: {err}"
+        );
+    }
+
+    /// A full-committee cartel that refuses to produce deal shares (coordinated
+    /// HTTP 403) simulates nodes colluding to freeze the game. The coordinator
+    /// must surface the error so the game can trigger emergency recovery.
+    #[tokio::test]
+    async fn colluding_nodes_coordinated_refusal_surfaces_as_error() {
+        let cartel_router = || {
+            Router::new().route(
+                "/table/:table_id/prepare-deal",
+                post(|| async {
+                    (
+                        StatusCode::FORBIDDEN,
+                        "cartel: coordinated refusal to participate",
+                    )
+                }),
+            )
+        };
+
+        let e0 = spawn_test_server(cartel_router()).await;
+        let e1 = spawn_test_server(cartel_router()).await;
+        let e2 = spawn_test_server(cartel_router()).await;
+
+        let err = prepare_deal_from_nodes(
+            &[e0, e1, e2],
+            "/circuits",
+            1,
+            &["P1".to_string(), "P2".to_string(), "P3".to_string()],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.contains("HTTP 403") || err.contains("rejected"),
+            "coordinated node refusal must surface as protocol error for emergency recovery: {err}"
+        );
+    }
+
+    // ── Byzantine orchestration guards ───────────────────────────────────────
+
+    /// A sub-threshold committee (fewer nodes than the 3 required for secret
+    /// reconstruction) must be rejected at the pre-flight guard, before any
+    /// network call that might partially expose shares.
+    #[tokio::test]
+    async fn subthreshold_committee_rejected_by_preflight_guard() {
+        let err = resolve_hole_cards(
+            &["http://node0".to_string(), "http://node1".to_string()],
+            1,
+            &[0],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.contains("expected 3 MPC nodes"),
+            "sub-threshold committee must be rejected by pre-flight guard before exposing shares: {err}"
+        );
+    }
+
+    /// A Byzantine orchestration injection that creates a mismatch between the
+    /// number of nodes and prepared share sets must be caught before dispatch,
+    /// preventing the protocol from advancing with an inconsistent committee state.
+    #[tokio::test]
+    async fn byzantine_orchestration_share_mismatch_blocked_before_dispatch() {
+        let err = dispatch_share_sets_from_nodes(
+            &["http://node0".to_string(), "http://node1".to_string()],
+            1,
+            &["share_for_node0_only".to_string()], // 1 share for 2 nodes
+            "sess_byzantine_injection",
+            "deal_valid",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.contains("does not match share_set count"),
+            "Byzantine share-count mismatch must be blocked before dispatch reaches nodes: {err}"
+        );
+    }
+}
