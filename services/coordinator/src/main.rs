@@ -38,6 +38,7 @@ use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::CorsLayer;
 
 mod api;
+mod archiver;
 mod audit_log;
 mod cors_db;
 mod db;
@@ -127,6 +128,8 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
+    pub archive_store: archiver::ArchiveStore,
+    pub archive_config: archiver::ArchiveConfig,
 }
 
 #[derive(Clone)]
@@ -427,6 +430,10 @@ async fn main() {
         );
     }
 
+    let archive_config = archiver::ArchiveConfig::from_env();
+    let archive_store = archiver::new_store();
+    archiver::load_existing_archives(&archive_store, &archive_config).await;
+
     let state = AppState {
         tables: Arc::clone(&tables),
         lobby_assignments: Arc::clone(&lobby_assignments),
@@ -444,11 +451,20 @@ async fn main() {
         db_pool,
         instance_id,
         plugin_loader,
+        archive_store: archive_store.clone(),
+        archive_config: archive_config.clone(),
     };
 
     if let Some(path) = hot_reload_snapshot {
         hot_reload::spawn_snapshot_task(path, tables, lobby_assignments);
     }
+
+    archiver::spawn_archive_task(
+        state.mpc_sessions.clone(),
+        Arc::clone(&state.tables),
+        archive_store.clone(),
+        archive_config,
+    );
 
     // Spawn background node health check task
     let node_healths = state.metrics.node_healths.clone();
@@ -603,6 +619,19 @@ async fn main() {
         .route(
             "/api/admin/migrations/:id/cancel",
             post(api::admin_cancel_migration),
+        )
+        // Session archiving endpoints (Issue #259)
+        .route(
+            "/api/admin/archives",
+            get(api::admin_list_archives),
+        )
+        .route(
+            "/api/admin/archives/:archive_id",
+            get(api::admin_get_archive),
+        )
+        .route(
+            "/api/admin/archives/purge",
+            post(api::admin_purge_archives),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

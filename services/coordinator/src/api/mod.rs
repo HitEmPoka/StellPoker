@@ -13,7 +13,7 @@ pub use admin_extended::*;
 pub use types::*;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
@@ -1293,5 +1293,117 @@ pub async fn get_mpc_session_status(
         "cancel_reason": session.cancel_reason,
         "elapsed_secs": session.started_at.elapsed().as_secs(),
     })))
+}
+
+/// GET /api/admin/archives
+///
+/// Query archived sessions by ID, table ID, or time range.
+/// Requires operator or higher.
+pub async fn admin_list_archives(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ArchiveQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let auth = admin::validate_admin_request(
+        &state,
+        &headers,
+        "admin_list_archives",
+        &state.admin_state,
+    )
+    .await?;
+    admin::require_role(&auth, admin::AdminRole::Operator)?;
+
+    let from_ts = query
+        .from_timestamp
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+    let to_ts = query
+        .to_timestamp
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+
+    let archives = crate::archiver::query_archives(
+        &state.archive_store,
+        query.session_id.as_deref(),
+        query.table_id,
+        from_ts,
+        to_ts,
+        limit,
+        offset,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "archives": archives,
+        "count": archives.len(),
+        "limit": limit,
+        "offset": offset,
+    })))
+}
+
+/// GET /api/admin/archives/:archive_id
+///
+/// Retrieve a single archived session by archive ID.
+/// Requires operator or higher.
+pub async fn admin_get_archive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(archive_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let auth = admin::validate_admin_request(
+        &state,
+        &headers,
+        "admin_get_archive",
+        &state.admin_state,
+    )
+    .await?;
+    admin::require_role(&auth, admin::AdminRole::Operator)?;
+
+    match crate::archiver::restore_archived_session(&state.archive_store, &archive_id).await {
+        Some(archived) => Ok(Json(serde_json::json!(archived))),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// POST /api/admin/archives/purge
+///
+/// Manually trigger purge of archives that exceed the purge TTL.
+/// Requires operator or higher.
+pub async fn admin_purge_archives(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let auth = admin::validate_admin_request(
+        &state,
+        &headers,
+        "admin_purge_archives",
+        &state.admin_state,
+    )
+    .await?;
+    admin::require_role(&auth, admin::AdminRole::Operator)?;
+
+    let purged = crate::archiver::purge_old_archives(&state.archive_store, &state.archive_config).await;
+
+    Ok(Json(serde_json::json!({
+        "purged": purged,
+        "action_by": auth.address,
+        "role": auth.role.as_str(),
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ArchiveQuery {
+    pub session_id: Option<String>,
+    pub table_id: Option<u32>,
+    pub from_timestamp: Option<String>,
+    pub to_timestamp: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
