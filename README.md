@@ -183,6 +183,8 @@ NETWORK=mainnet ./scripts/deploy.sh
 | `SOROBAN_NETWORK_PASSPHRASE` | auto | Stellar network passphrase (auto-selected per network) |
 | `DEPLOYER_SECRET` | — | **Required for mainnet.** Secret key (`S...`) of the funded deployer account. |
 
+For production infrastructure, including a self-hosted Soroban RPC stack with Stellar Core, Horizon, tuning, and monitoring guidance, see [docs/soroban-rpc-node.md](docs/soroban-rpc-node.md).
+
 ### Mainnet contract addresses
 
 > Mainnet deployment has not been performed yet. This table will be updated once contracts are deployed to the Stellar public network.

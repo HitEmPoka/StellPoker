@@ -46,6 +46,10 @@ infrastructure/
 - Google Cloud SDK (for GCP deployment)
 - Docker (for building container images)
 
+## Additional Guides
+
+- [Self-hosted Soroban RPC node](../docs/soroban-rpc-node.md)
+
 ### Deploy to AWS
 
 ```bash
