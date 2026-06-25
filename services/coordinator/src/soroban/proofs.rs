@@ -444,6 +444,7 @@ mod error_handling_tests {
             rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
             secret_key: "test_secret".to_string(),
             poker_table_contract: String::new(),
+            committee_registry_contract: String::new(),
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
             onchain_table_id: None,
             player_identities: Vec::new(),

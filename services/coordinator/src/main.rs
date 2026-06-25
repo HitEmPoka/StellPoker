@@ -169,6 +169,8 @@ struct TableSession {
     reveal_session_ids: HashMap<String, String>,
     /// Revealed cards by phase.
     revealed_cards_by_phase: HashMap<String, Vec<u32>>,
+    /// Selected MPC node endpoints for this table.
+    selected_node_endpoints: Vec<String>,
     /// Latest showdown tx hash, if submitted.
     showdown_tx_hash: Option<String>,
     /// Last showdown proof session ID, if submitted.
@@ -421,11 +423,24 @@ async fn main() {
     };
 
     // Spawn background node health check task
-    let node_endpoints = state.mpc_config.node_endpoints.clone();
     let node_healths = state.metrics.node_healths.clone();
+    let soroban_config = state.soroban_config.clone();
+    let default_endpoints = state.mpc_config.node_endpoints.clone();
     tokio::spawn(async move {
         loop {
-            for (idx, endpoint) in node_endpoints.iter().enumerate() {
+            let endpoints = if soroban_config.committee_registry_contract.is_empty() {
+                default_endpoints.clone()
+            } else {
+                match soroban::fetch_active_nodes_from_registry(&soroban_config).await {
+                    Ok(members) => members.into_iter().map(|m| m.endpoint).collect(),
+                    Err(e) => {
+                        tracing::warn!("Failed to fetch nodes from registry for health check: {}", e);
+                        default_endpoints.clone()
+                    }
+                }
+            };
+
+            for endpoint in endpoints {
                 let url = format!("{}/health", endpoint);
                 let is_healthy = reqwest::get(&url)
                     .await
@@ -433,17 +448,24 @@ async fn main() {
                     .unwrap_or(false);
 
                 let mut guard = node_healths.lock().await;
-                if idx < guard.len() {
-                    let prev_connected = guard[idx].connected;
+                if let Some(node) = guard.iter_mut().find(|n| n.endpoint == endpoint) {
+                    let prev_connected = node.connected;
                     if is_healthy {
-                        guard[idx].connected = true;
-                        guard[idx].last_heartbeat = Some(SystemTime::now());
+                        node.connected = true;
+                        node.last_heartbeat = Some(SystemTime::now());
                     } else {
                         if prev_connected {
-                            tracing::warn!("MPC Node {} ({}) went offline", idx, endpoint);
+                            tracing::warn!("MPC Node ({}) went offline", endpoint);
                         }
-                        guard[idx].connected = false;
+                        node.connected = false;
                     }
+                } else {
+                    // New node discovered
+                    guard.push(MpcNodeHealth {
+                        endpoint,
+                        connected: is_healthy,
+                        last_heartbeat: if is_healthy { Some(SystemTime::now()) } else { None },
+                    });
                 }
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;

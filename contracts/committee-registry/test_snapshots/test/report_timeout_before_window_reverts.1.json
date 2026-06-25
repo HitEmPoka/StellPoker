@@ -89,6 +89,9 @@
                 },
                 {
                   "string": "node-0"
+                },
+                {
+                  "string": "us-east-1"
                 }
               ]
             }
@@ -357,6 +360,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "region"
+                    },
+                    "val": {
+                      "string": "us-east-1"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "slash_count"
                     },
                     "val": {
@@ -404,6 +415,22 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "AllMembers"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                          }
+                        ]
                       }
                     },
                     {

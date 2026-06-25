@@ -215,7 +215,8 @@ for i in 0 1 2; do
     port=$((8101 + i))
     endpoint="http://localhost:${port}"
     
-    echo "  Registering Node $i ($addr) at $endpoint..."
+    region="us-east-1"
+    echo "  Registering Node $i ($addr) at $endpoint (region: $region)..."
     # Invoke as the member node itself to satisfy require_auth
     stellar contract invoke \
         --id "$COMMITTEE_REGISTRY_CONTRACT" \
@@ -225,7 +226,8 @@ for i in 0 1 2; do
         -- register_member \
         --member "$addr" \
         --stake "$MIN_STAKE" \
-        --endpoint "$endpoint" >/dev/null
+        --endpoint "$endpoint" \
+        --region "$region" >/dev/null
 done
 
 # 8. Create Epoch
