@@ -21,9 +21,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 mod api;
+mod limits;
 mod private_table;
 mod session;
 
+use limits::ResourceLimits;
 use private_table::PrivateTableState;
 use session::MpcSessionState;
 
@@ -34,6 +36,8 @@ pub struct NodeState {
     pub tables: Arc<RwLock<HashMap<u32, PrivateTableState>>>,
     pub party_config_path: String,
     pub peer_http_endpoints: Vec<String>,
+    /// Per-node resource ceilings guarding against exhaustion / session flooding.
+    pub limits: ResourceLimits,
 }
 
 #[tokio::main]
@@ -72,9 +76,18 @@ async fn main() {
             ]
         });
 
+    let limits = ResourceLimits::from_env();
+
     tracing::info!("MPC Node {} starting on port {}", node_id, port);
     tracing::info!("Party config: {}", party_config_path);
     tracing::info!("Peer HTTP endpoints: {:?}", peer_http_endpoints);
+    tracing::info!(
+        "Resource limits: max_concurrent_sessions={}, max_session_memory_bytes={}, max_session_cpu_seconds={}, max_session_wall_seconds={}",
+        limits.max_concurrent_sessions,
+        limits.max_session_memory_bytes,
+        limits.max_session_cpu_seconds,
+        limits.max_session_wall_seconds,
+    );
 
     let state = NodeState {
         node_id,
@@ -82,6 +95,7 @@ async fn main() {
         tables: Arc::new(RwLock::new(HashMap::new())),
         party_config_path,
         peer_http_endpoints,
+        limits,
     };
 
     let app = Router::new()
