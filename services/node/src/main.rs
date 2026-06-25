@@ -38,7 +38,12 @@ pub struct NodeState {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    let log_format = std::env::var("REQUEST_LOG_FORMAT").unwrap_or_default();
+    if log_format.eq_ignore_ascii_case("json") {
+        tracing_subscriber::fmt().json().init();
+    } else {
+        tracing_subscriber::fmt().init();
+    }
 
     let node_id: u32 = std::env::var("NODE_ID")
         .unwrap_or_else(|_| "0".to_string())

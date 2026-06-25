@@ -1,0 +1,42 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "frontend.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frontend.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "frontend.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Accept traffic from the ingress controller and from any pod (browser clients).
+    - ports:
+        - protocol: TCP
+          port: 3000
+
+  egress:
+    # Call the coordinator API.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: coordinator
+      ports:
+        - protocol: TCP
+          port: 8080
+    # DNS resolution.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # External HTTPS for Stellar horizon, Soroban RPC, etc.
+    - ports:
+        - protocol: TCP
+          port: 443
+{{- end }}

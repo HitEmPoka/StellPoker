@@ -1,0 +1,11 @@
+apiVersion: v2
+name: mpc-node
+description: StellPoker MPC Node — REP3 co-Noir participant. Runs as a StatefulSet of exactly 3 replicas.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - stellpoker
+  - mpc
+  - co-noir
+home: https://github.com/HitEmPoka/StellPoker

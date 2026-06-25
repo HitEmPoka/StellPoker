@@ -183,6 +183,8 @@ NETWORK=mainnet ./scripts/deploy.sh
 | `SOROBAN_NETWORK_PASSPHRASE` | auto | Stellar network passphrase (auto-selected per network) |
 | `DEPLOYER_SECRET` | — | **Required for mainnet.** Secret key (`S...`) of the funded deployer account. |
 
+For production infrastructure, including a self-hosted Soroban RPC stack with Stellar Core, Horizon, tuning, and monitoring guidance, see [docs/soroban-rpc-node.md](docs/soroban-rpc-node.md).
+
 ### Mainnet contract addresses
 
 > Mainnet deployment has not been performed yet. This table will be updated once contracts are deployed to the Stellar public network.
@@ -247,3 +249,81 @@ The technical patterns in this project are directly applicable to real-world use
 ## License
 
 [MIT](LICENSE)
+
+## Feature Flags
+
+StellPoker includes a built-in feature-flag system for gradual rollouts. No
+third-party service is required — flags are stored in memory and controlled
+through environment variables and a runtime admin API.
+
+### Available flags
+
+| Flag key            | Env variable                      | Purpose                                  |
+|---------------------|-----------------------------------|------------------------------------------|
+| `new_circuits`      | `FEATURE_FLAG_NEW_CIRCUITS`       | Enable experimental ZK circuit versions  |
+| `contract_upgrade`  | `FEATURE_FLAG_CONTRACT_UPGRADE`   | Gate new Soroban contract function calls |
+| `experimental_ui`   | `FEATURE_FLAG_EXPERIMENTAL_UI`    | Signal the frontend to use new UI        |
+| `chat_enabled`      | `FEATURE_FLAG_CHAT_ENABLED`       | Enable in-table WebSocket chat           |
+| `solo_mode`         | `FEATURE_FLAG_SOLO_MODE`          | Allow solo / bot-opponent table creation |
+
+### Setting flags at startup
+
+Set any flag via an environment variable before starting the coordinator:
+
+```bash
+FEATURE_FLAG_SOLO_MODE=1 FEATURE_FLAG_CHAT_ENABLED=1 cargo run -p coordinator
+```
+
+Accepted truthy values: `1`, `true`, `yes`, `on`. Everything else is `false`.
+
+### Per-table and per-player overrides
+
+Append `_TABLE_<id>` or `_PLAYER_<stellar-address>` to scope an override:
+
+```bash
+# Enable chat only on table 3
+FEATURE_FLAG_CHAT_ENABLED_TABLE_3=1
+
+# Give one specific player access to experimental UI
+FEATURE_FLAG_EXPERIMENTAL_UI_PLAYER_GABC...=1
+```
+
+Resolution order: **per-player → per-table → global** (most-specific wins).
+
+### Runtime API
+
+The coordinator exposes two endpoints for live flag management without a restart:
+
+| Method | Path                  | Description                                |
+|--------|-----------------------|--------------------------------------------|
+| `GET`  | `/api/flags`          | List all current flag values               |
+| `POST` | `/api/flags/:key`     | Set a flag (`{"enabled": true\|false}`) |
+
+```bash
+# Check current flags
+curl http://localhost:8080/api/flags
+
+# Enable solo_mode at runtime
+curl -X POST http://localhost:8080/api/flags/solo_mode \
+     -H 'Content-Type: application/json' \
+     -d '{"enabled": true}'
+
+# Enable chat only for table 5 (scoped key)
+curl -X POST http://localhost:8080/api/flags/chat_enabled.table.5 \
+     -H 'Content-Type: application/json' \
+     -d '{"enabled": true}'
+```
+
+### Frontend usage
+
+```tsx
+import { useFeatureFlags, isFlagEnabled } from "@/lib/use-feature-flags";
+
+export function CreateTableButton() {
+  const { flags, loading } = useFeatureFlags();
+
+  if (loading || !isFlagEnabled(flags, "solo_mode")) return null;
+
+  return <button>Create Solo Table</button>;
+}
+```

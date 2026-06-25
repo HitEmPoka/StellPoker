@@ -200,3 +200,104 @@ pub(crate) fn map_onchain_phase_to_local(phase: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod error_handling_tests {
+    //! Coverage for the **malformed request** error path: every parser that
+    //! turns untrusted request/proof-output data into typed values must reject
+    //! malformed input with a descriptive `Err` instead of panicking or
+    //! silently producing garbage.
+    use super::*;
+
+    #[test]
+    fn buy_in_rejects_empty_negative_and_non_numeric() {
+        assert!(parse_requested_buy_in("").unwrap_err().contains("empty"));
+        assert!(parse_requested_buy_in("abc")
+            .unwrap_err()
+            .contains("invalid buy_in"));
+        assert!(parse_requested_buy_in("-10")
+            .unwrap_err()
+            .contains("must be > 0"));
+        assert!(parse_requested_buy_in("0").unwrap_err().contains("must be > 0"));
+        // Surrounding whitespace is tolerated for an otherwise valid value.
+        assert_eq!(parse_requested_buy_in(" 250 ").unwrap(), 250);
+    }
+
+    #[test]
+    fn deal_outputs_reject_short_vector() {
+        let err = parse_deal_outputs(&[], 2).err().unwrap();
+        assert!(err.contains("too short"), "got: {err}");
+    }
+
+    #[test]
+    fn deal_outputs_reject_too_many_players() {
+        let pi = vec!["0".to_string(); 1 + MAX_PLAYERS * 3];
+        let err = parse_deal_outputs(&pi, MAX_PLAYERS + 1).err().unwrap();
+        assert!(err.contains("exceeds MAX_PLAYERS"), "got: {err}");
+    }
+
+    #[test]
+    fn deal_outputs_parse_minimal_valid_vector() {
+        let pi = vec!["0".to_string(); 1 + MAX_PLAYERS * 3];
+        let parsed = parse_deal_outputs(&pi, 2).unwrap();
+        assert_eq!(parsed.hand_commitments.len(), 2);
+        assert_eq!(parsed.dealt_indices.len(), 4); // 2 cards per player
+    }
+
+    #[test]
+    fn reveal_outputs_reject_short_and_overlong() {
+        assert!(parse_reveal_outputs(&[], 1)
+            .err().unwrap()
+            .contains("too short"));
+        let pi = vec!["0".to_string(); 6];
+        assert!(parse_reveal_outputs(&pi, 4)
+            .err().unwrap()
+            .contains("exceeds MAX_REVEAL"));
+    }
+
+    #[test]
+    fn showdown_outputs_reject_short_vector() {
+        let err = parse_showdown_outputs(&[], 2).err().unwrap();
+        assert!(err.contains("too short"), "got: {err}");
+    }
+
+    #[test]
+    fn showdown_outputs_reject_non_numeric_field() {
+        // A correctly-sized vector whose winner-index slot is not a u32 must
+        // surface a parse error rather than panicking.
+        let mut pi = vec!["0".to_string(); MAX_PLAYERS * 2 + 2];
+        pi[MAX_PLAYERS * 2] = "not-a-number".to_string();
+        let err = parse_showdown_outputs(&pi, 1).err().unwrap();
+        assert!(err.contains("failed to parse"), "got: {err}");
+    }
+
+    #[test]
+    fn normalize_field_value_rejects_malformed_strings() {
+        assert!(normalize_field_value("").unwrap_err().contains("empty"));
+        assert!(normalize_field_value("xyz!!")
+            .unwrap_err()
+            .contains("invalid field"));
+        assert!(normalize_field_value("0xabc")
+            .unwrap_err()
+            .contains("odd length"));
+        // Valid decimal and hex inputs are normalized to a decimal field string.
+        assert_eq!(normalize_field_value("42").unwrap(), "42");
+        assert_eq!(normalize_field_value("0x00ff").unwrap(), "255");
+    }
+
+    #[test]
+    fn unknown_onchain_phase_maps_to_none() {
+        assert_eq!(map_onchain_phase_to_local("Waiting"), Some("waiting"));
+        assert_eq!(map_onchain_phase_to_local("Bogus"), None);
+        assert_eq!(map_onchain_phase_to_local(""), None);
+    }
+
+    #[test]
+    fn parse_u32_value_handles_numbers_strings_and_rejects_junk() {
+        assert_eq!(parse_u32_value(&serde_json::json!(7)), Some(7));
+        assert_eq!(parse_u32_value(&serde_json::json!("8")), Some(8));
+        assert_eq!(parse_u32_value(&serde_json::json!("nope")), None);
+        assert_eq!(parse_u32_value(&serde_json::json!(-3)), None);
+        assert_eq!(parse_u32_value(&serde_json::json!(true)), None);
+    }
+}

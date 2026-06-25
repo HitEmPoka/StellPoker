@@ -1,5 +1,12 @@
 version: '3.8'
 
+x-json-logging: &json-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "100m"
+      max-file: "3"
+
 services:
   # Soroban local network (stellar quickstart)
   soroban:
@@ -12,6 +19,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+    <<: *json-logging
 
   # MPC Node 0
   mpc-node-0:
@@ -25,6 +33,7 @@ services:
       PARTY_CONFIG: "/app/config/party_0.toml"
       CIRCUIT_DIR: "/app/circuits"
       CRS_DIR: "/app/crs"
+      REQUEST_LOG_FORMAT: "json"
     ports:
       - "8101:8101"
       - "10000:10000"
@@ -38,6 +47,7 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    <<: *json-logging
 
   # MPC Node 1
   mpc-node-1:
@@ -51,6 +61,7 @@ services:
       PARTY_CONFIG: "/app/config/party_1.toml"
       CIRCUIT_DIR: "/app/circuits"
       CRS_DIR: "/app/crs"
+      REQUEST_LOG_FORMAT: "json"
     ports:
       - "8102:8102"
       - "10001:10001"
@@ -64,6 +75,7 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    <<: *json-logging
 
   # MPC Node 2
   mpc-node-2:
@@ -77,6 +89,7 @@ services:
       PARTY_CONFIG: "/app/config/party_2.toml"
       CIRCUIT_DIR: "/app/circuits"
       CRS_DIR: "/app/crs"
+      REQUEST_LOG_FORMAT: "json"
     ports:
       - "8103:8103"
       - "10002:10002"
@@ -90,6 +103,7 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    <<: *json-logging
 
   # Coordinator (orchestrates MPC + serves API to web app)
   coordinator:
@@ -107,6 +121,7 @@ services:
       CIRCUIT_DIR: "/app/circuits"
       CRS_DIR: "/app/crs"
       BIND_ADDR: "0.0.0.0:8080"
+      REQUEST_LOG_FORMAT: "json"
     ports:
       - "8080:8080"
     volumes:
@@ -127,6 +142,7 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+    <<: *json-logging
 
   # Web app
   # app is deployed on Vercel — run locally with: cd app && npm run dev

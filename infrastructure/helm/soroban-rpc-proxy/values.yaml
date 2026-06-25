@@ -1,0 +1,74 @@
+replicaCount: 1
+
+image:
+  repository: stellar/quickstart
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Stellar network: local | testnet | mainnet
+stellarNetwork: testnet
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+service:
+  type: ClusterIP
+  port: 8000
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 20Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 8000
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 15
+  failureThreshold: 5
+
+networkPolicy:
+  enabled: true
+  # Labels on pods allowed to query the RPC endpoint.
+  ingressFromCoordinator:
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: coordinator
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

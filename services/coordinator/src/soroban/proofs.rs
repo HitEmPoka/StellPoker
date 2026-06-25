@@ -428,3 +428,105 @@ fn public_inputs_to_hex(public_inputs: &[String]) -> Result<String, String> {
     }
     Ok(hex::encode(all_bytes))
 }
+
+#[cfg(test)]
+mod error_handling_tests {
+    //! Coverage for the **invalid proof submission** error path: the proof
+    //! converter and field encoders must reject structurally invalid proofs
+    //! and unparseable field elements with a descriptive `Err` before anything
+    //! is ever sent on-chain. We also assert that when Soroban is not
+    //! configured, submission is *skipped* (returns an empty tx hash) rather
+    //! than erroring or attempting a malformed invoke.
+    use super::*;
+
+    fn unconfigured() -> SorobanConfig {
+        SorobanConfig {
+            rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
+            secret_key: "test_secret".to_string(),
+            poker_table_contract: String::new(),
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            onchain_table_id: None,
+            player_identities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_unaligned_proof_bytes() {
+        let err = convert_keccak_proof_to_soroban(&[0u8; 33]).unwrap_err();
+        assert!(err.contains("32-byte aligned"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_proof_with_underivable_log_n() {
+        // 100 fields => (100 - 75) is not divisible by 11 => log_n underivable.
+        let err = convert_keccak_proof_to_soroban(&vec![0u8; 100 * 32]).unwrap_err();
+        assert!(err.contains("cannot derive log_n"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_proof_with_out_of_range_log_n() {
+        // 174 fields => log_n = 9, below the supported [10, 25] range.
+        let err = convert_keccak_proof_to_soroban(&vec![0u8; 174 * 32]).unwrap_err();
+        assert!(err.contains("out of reasonable range"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_empty_proof() {
+        let err = convert_keccak_proof_to_soroban(&[]).unwrap_err();
+        // 0 fields => log_n_calc = -75 <= 0.
+        assert!(err.contains("cannot derive log_n"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_non_numeric_field_element() {
+        let err = field_to_bytes32_hex("deadbeef_not_decimal").unwrap_err();
+        assert!(err.contains("failed to parse field element"), "got: {err}");
+    }
+
+    #[test]
+    fn encodes_valid_field_element_to_32_bytes() {
+        let hex = field_to_bytes32_hex("1").unwrap();
+        assert_eq!(hex.len(), 64); // 32 bytes, big-endian, zero-padded
+        assert!(hex.ends_with('1'));
+    }
+
+    #[test]
+    fn rejects_invalid_public_input() {
+        let err = public_inputs_to_hex(&["definitely-not-a-field".to_string()]).unwrap_err();
+        assert!(err.contains("failed to parse public input"), "got: {err}");
+    }
+
+    #[test]
+    fn fields_json_rejects_invalid_entry() {
+        let err =
+            fields_to_bytes32_json(&["12".to_string(), "bad-field".to_string()]).unwrap_err();
+        assert!(err.contains("failed to parse field element"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn submit_deal_proof_skips_when_unconfigured() {
+        let res = submit_deal_proof(&unconfigured(), 1, &[], &[], "0", &[])
+            .await
+            .unwrap();
+        assert!(
+            res.is_empty(),
+            "unconfigured submission must be skipped, not errored"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_reveal_proof_skips_when_unconfigured() {
+        let res = submit_reveal_proof(&unconfigured(), 1, &[], &[], &[], &[])
+            .await
+            .unwrap();
+        assert!(res.is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_showdown_proof_skips_when_unconfigured() {
+        let res = submit_showdown_proof(&unconfigured(), 1, &[], &[], &[])
+            .await
+            .unwrap();
+        assert!(res.is_empty());
+    }
+}

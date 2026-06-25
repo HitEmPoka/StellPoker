@@ -1,0 +1,74 @@
+name: Docker Build & Push (GHCR)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: coordinator
+            dockerfile: services/coordinator/Dockerfile
+            context: .
+          - image: mpc-node
+            dockerfile: services/node/Dockerfile
+            context: .
+          - image: frontend
+            dockerfile: app/Dockerfile
+            context: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version tags
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Extract semantic version from git tags like vX.Y.Z.
+          # If no matching tag exists, fall back to repo short SHA.
+          SEMVER="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)"
+          if [ -z "$SEMVER" ]; then
+            SEMVER="v0.0.0"
+          fi
+          # strip leading v for tag usage
+          SEMVER_STRIPPED="${SEMVER#v}"
+
+          SHA_SHORT="$(git rev-parse --short=7 HEAD)"
+          echo "semver=$SEMVER_STRIPPED" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA_SHORT" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.meta.outputs.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.meta.outputs.semver }}
+          # Cache to speed up rebuilds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+

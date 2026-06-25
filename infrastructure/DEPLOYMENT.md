@@ -2,6 +2,8 @@
 
 This document provides comprehensive instructions for deploying StellPoker using Terraform on AWS and GCP.
 
+For production Soroban data-plane operations, including self-hosted Stellar Core, Horizon, and Soroban RPC guidance, see [../docs/soroban-rpc-node.md](../docs/soroban-rpc-node.md).
+
 ## Prerequisites
 
 ### Required Tools

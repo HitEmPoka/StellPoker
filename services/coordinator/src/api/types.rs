@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Request body for `POST /api/flags/:key`.
+#[derive(Deserialize)]
+pub struct SetFlagBody {
+    pub enabled: bool,
+}
+
 #[derive(Deserialize)]
 pub struct DealRequest {
     pub players: Vec<String>,

@@ -537,3 +537,86 @@ async fn trigger_and_collect_proof(
         session_id, max_polls
     ))
 }
+
+#[cfg(test)]
+mod error_handling_tests {
+    //! Coverage for the **MPC node timeout / unreachable node** error path.
+    //!
+    //! A node that is unreachable exercises the same `Err(String)` path as a
+    //! node that times out mid-request: the failing `reqwest` future is mapped
+    //! into a descriptive error string that the API layer turns into a
+    //! 502/503 response. We point requests at a closed local port so the
+    //! connection fails fast and deterministically. We also cover the
+    //! pre-flight guards that reject inconsistent orchestration state before
+    //! any network call is made.
+    use super::*;
+
+    // Nothing listens on port 1: connections are refused immediately.
+    const DEAD_NODE: &str = "http://127.0.0.1:1";
+
+    #[tokio::test]
+    async fn prepare_deal_errors_when_node_unreachable() {
+        let endpoints = vec![DEAD_NODE.to_string()];
+        let err = prepare_deal_from_nodes(&endpoints, "/circuits", 1, &["P1".to_string()])
+            .await
+            .unwrap_err();
+        assert!(err.contains("prepare-deal"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn check_node_health_reports_unreachable_as_unhealthy() {
+        let health = check_node_health(&[DEAD_NODE.to_string()]).await;
+        assert_eq!(health, vec![false]);
+    }
+
+    #[tokio::test]
+    async fn resolve_hole_cards_requires_three_nodes() {
+        let err = resolve_hole_cards(&["a".to_string(), "b".to_string()], 1, &[0])
+            .await
+            .unwrap_err();
+        assert!(err.contains("expected 3 MPC nodes"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_node_share_count_mismatch() {
+        // 2 nodes but only 1 prepared share set => orchestration inconsistency.
+        let err = dispatch_share_sets_from_nodes(
+            &["n0".to_string(), "n1".to_string()],
+            1,
+            &["share0".to_string()],
+            "sess",
+            "deal_valid",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("does not match share_set count"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn trigger_proof_requires_node_endpoints() {
+        let err = trigger_and_collect_proof("sess", "deal_valid", "/circuits", &[])
+            .await
+            .unwrap_err();
+        assert!(err.contains("no MPC node endpoints configured"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn collect_prepared_share_sets_detects_missing_id() {
+        // A node "succeeded" but returned an empty share-set id.
+        let handle = tokio::spawn(async { Ok::<(usize, String), String>((0, String::new())) });
+        let err = collect_prepared_share_sets(vec![handle], 1)
+            .await
+            .unwrap_err();
+        assert!(err.contains("missing share_set_id"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn collect_prepared_share_sets_detects_out_of_range_index() {
+        let handle =
+            tokio::spawn(async { Ok::<(usize, String), String>((5, "id".to_string())) });
+        let err = collect_prepared_share_sets(vec![handle], 1)
+            .await
+            .unwrap_err();
+        assert!(err.contains("out-of-range index"), "got: {err}");
+    }
+}
