@@ -1,12 +1,15 @@
 //! REST API handlers for the coordinator service.
 
-mod auth;
 pub mod admin;
-mod parsing;
-mod session;
+mod admin_extended;
+mod auth;
 pub mod flags;
+mod parsing;
+pub mod plugins;
+mod session;
 pub mod types;
 
+pub use admin_extended::*;
 pub use types::*;
 
 use axum::{
@@ -44,7 +47,8 @@ impl SessionGuard {
 
 impl Drop for SessionGuard {
     fn drop(&mut self) {
-        self.counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        self.counter
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -86,7 +90,10 @@ pub async fn create_table(
     if solo_mode
         && !state
             .feature_flags
-            .is_enabled(feature_flags::keys::SOLO_MODE, &feature_flags::FlagScope::Global)
+            .is_enabled(
+                feature_flags::keys::SOLO_MODE,
+                &feature_flags::FlagScope::Global,
+            )
             .await
     {
         tracing::warn!("create_table: solo_mode requested but feature flag is disabled");
@@ -977,19 +984,19 @@ pub async fn cancel_mpc_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "cancel_session",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "cancel_session", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
     let cancelled = session_gc::cancel_session(
         &state.mpc_sessions,
         &session_id,
-        &format!("manual admin cancel by {} ({})", auth.address, auth.role.as_str()),
+        &format!(
+            "manual admin cancel by {} ({})",
+            auth.address,
+            auth.role.as_str()
+        ),
         false,
     )
     .await;
@@ -1010,18 +1017,16 @@ pub async fn admin_health(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_health",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_health", &state.admin_state).await?;
     admin::require_role(&auth, admin::AdminRole::ReadOnly)?;
 
     let uptime_seconds = state.metrics.boot_time.elapsed().as_secs();
     let mpc_nodes = state.metrics.node_healths.lock().await.clone();
-    let active_mpc_sessions = state.metrics.active_mpc_sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let active_mpc_sessions = state
+        .metrics
+        .active_mpc_sessions
+        .load(std::sync::atomic::Ordering::SeqCst);
     let request_metrics = state.metrics.route_metrics.lock().await.clone();
 
     let session_count = state.mpc_sessions.read().await.len();
@@ -1048,13 +1053,9 @@ pub async fn admin_list_sessions(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_list_sessions",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_list_sessions", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
     let sessions = state.mpc_sessions.read().await;
@@ -1083,23 +1084,14 @@ pub async fn admin_cancel_session(
     headers: HeaderMap,
     Path(session_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_cancel_session",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_cancel_session", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
     let reason = format!("admin cancel by {} ({})", auth.address, auth.role.as_str());
-    let cancelled = session_gc::cancel_session(
-        &state.mpc_sessions,
-        &session_id,
-        &reason,
-        false,
-    )
-    .await;
+    let cancelled =
+        session_gc::cancel_session(&state.mpc_sessions, &session_id, &reason, false).await;
 
     Ok(Json(serde_json::json!({
         "session_id": session_id,
@@ -1161,17 +1153,15 @@ pub async fn admin_stats(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_stats",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_stats", &state.admin_state).await?;
     admin::require_role(&auth, admin::AdminRole::ReadOnly)?;
 
     let uptime = state.metrics.boot_time.elapsed().as_secs();
-    let active_sessions = state.metrics.active_mpc_sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let active_sessions = state
+        .metrics
+        .active_mpc_sessions
+        .load(std::sync::atomic::Ordering::SeqCst);
     let route_metrics = state.metrics.route_metrics.lock().await.clone();
     let node_healths = state.metrics.node_healths.lock().await.clone();
 
@@ -1203,13 +1193,9 @@ pub async fn admin_reload_config(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_reload_config",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_reload_config", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::SuperAdmin)?;
 
     let new_config = admin::AdminConfig::from_env();
@@ -1270,7 +1256,9 @@ pub async fn get_wallet_challenge(
 
     let mut guard = state.wallet_challenges.write().await;
     let now = std::time::Instant::now();
-    guard.retain(|_, (_, created_at)| now.duration_since(*created_at) < std::time::Duration::from_secs(300));
+    guard.retain(|_, (_, created_at)| {
+        now.duration_since(*created_at) < std::time::Duration::from_secs(300)
+    });
     guard.insert(address, (challenge.clone(), now));
 
     Ok(Json(WalletChallengeResponse { challenge }))
@@ -1291,7 +1279,9 @@ pub async fn verify_wallet(
 
     let mut guard = state.wallet_challenges.write().await;
     let now = std::time::Instant::now();
-    guard.retain(|_, (_, created_at)| now.duration_since(*created_at) < std::time::Duration::from_secs(300));
+    guard.retain(|_, (_, created_at)| {
+        now.duration_since(*created_at) < std::time::Duration::from_secs(300)
+    });
 
     let Some((stored_challenge, created_at)) = guard.get(&address) else {
         return Ok(Json(WalletVerifyResponse { verified: false }));

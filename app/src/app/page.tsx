@@ -9,10 +9,13 @@ import { PixelChip } from "@/components/PixelChip";
 import * as api from "@/lib/api";
 import { joinTableOnChain } from "@/lib/onchain";
 import {
-  connectFreighterWallet,
+  detectInstalledWallets,
+  connectWallet,
   trySilentReconnect,
+  getWalletDisplayName,
   type WalletSession,
-} from "@/lib/freighter";
+  type WalletType,
+} from "@/lib/wallet";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -43,7 +46,8 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("splash");
   const [showContent, setShowContent] = useState(false);
   const [wallet, setWallet] = useState<WalletSession | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] = useState<WalletType | null>(null);
+  const [availableWallets, setAvailableWallets] = useState<{ type: WalletType; name: string; isInstalled: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState(2);
   const [buyInXlm, setBuyInXlm] = useState(
@@ -65,6 +69,13 @@ export default function Home() {
     });
   }, []);
 
+  // Detect available wallets when connect screen is shown
+  useEffect(() => {
+    if (screen === "connect") {
+      setAvailableWallets(detectInstalledWallets());
+    }
+  }, [screen]);
+
   // Auto-advance from connect → menu when wallet connects
   useEffect(() => {
     if (screen === "connect" && wallet) {
@@ -72,16 +83,16 @@ export default function Home() {
     }
   }, [screen, wallet]);
 
-  const handleConnect = async () => {
-    setConnecting(true);
+  const handleConnect = async (type: WalletType) => {
+    setConnecting(type);
     setError(null);
     try {
-      const session = await connectFreighterWallet();
+      const session = await connectWallet(type);
       setWallet(session);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to connect wallet");
+      setError(e instanceof Error ? e.message : `Failed to connect ${type} wallet`);
     } finally {
-      setConnecting(false);
+      setConnecting(null);
     }
   };
 
@@ -163,6 +174,10 @@ export default function Home() {
 
   const shortAddr = wallet
     ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
+    : "";
+
+  const walletLabel = wallet
+    ? `${getWalletDisplayName(wallet)}: ${shortAddr}`
     : "";
 
   const playerOptions = [
@@ -362,14 +377,32 @@ export default function Home() {
               CONNECT WALLET
             </h2>
 
-            <button
-              onClick={() => void handleConnect()}
-              disabled={connecting}
-              className="pixel-btn pixel-btn-blue text-[12px]"
-              style={{ padding: "12px 32px" }}
-            >
-              {connecting ? "CONNECTING..." : "CONNECT FREIGHTER"}
-            </button>
+            {availableWallets.length === 0 ? (
+              <div className="text-[9px]" style={{ color: "#95a5a6" }}>
+                Scanning for wallets...
+              </div>
+            ) : (
+              availableWallets.map((w) => (
+                <button
+                  key={w.type}
+                  onClick={() => void handleConnect(w.type)}
+                  disabled={connecting !== null || !w.isInstalled}
+                  className="pixel-btn text-[12px] w-full"
+                  style={{
+                    padding: "12px 24px",
+                    opacity: !w.isInstalled || connecting !== null ? 0.5 : 1,
+                    background: w.type === "freighter" ? "#1a5276" : "#6c3483",
+                    color: "white",
+                  }}
+                >
+                  {connecting === w.type
+                    ? `CONNECTING ${w.name}...`
+                    : w.isInstalled
+                      ? `CONNECT ${w.name}`
+                      : `${w.name} NOT DETECTED`}
+                </button>
+              ))
+            )}
 
             <div
               className="pixel-border-thin w-full p-2 text-[9px]"
@@ -379,7 +412,7 @@ export default function Home() {
                 color: "#c8e6ff",
               }}
             >
-              OPEN FREIGHTER EXTENSION, UNLOCK IT, AND CLICK CONNECT.
+              OPEN YOUR WALLET EXTENSION, UNLOCK IT, AND CLICK THE BUTTON ABOVE.
             </div>
           </div>
         )}
@@ -598,7 +631,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Wallet status — centered below panel with dim pulse */}
+          {/* Wallet status — centered below panel with dim pulse */}
         {wallet ? (
           <div
             className="pixel-border-thin px-3 py-1"
@@ -609,7 +642,7 @@ export default function Home() {
               animation: "walletPulse 3s ease-in-out infinite",
             }}
           >
-            WALLET CONNECTED: {shortAddr}
+            {walletLabel}
           </div>
         ) : screen !== "connect" ? (
           <button

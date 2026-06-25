@@ -1,0 +1,156 @@
+name: Publish API Docs
+
+on:
+  push:
+    tags:
+      - "v*"                 # e.g. v0.1.0, v0.2.0, v1.0.0
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build versioned API docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for tag history and previous spec
+
+      - name: Install yq
+        run: |
+          sudo snap install yq
+
+      - name: Determine version tag
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Find previous version tag
+        id: prev
+        run: |
+          PREV=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -2 | tail -1 || true)
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Compare specs and generate changelog
+        id: compare
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV_TAG="${{ steps.prev.outputs.tag }}"
+
+          DOCS_DIR="docs/api/$TAG"
+          mkdir -p "$DOCS_DIR"
+
+          # Copy current OpenAPI spec
+          cp docs/api/openapi.yaml "$DOCS_DIR/openapi.yaml"
+
+          # Compare with previous version if it exists
+          CHANGELOG_FILE="$DOCS_DIR/changelog.md"
+          BREAKING_COUNT=0
+
+          if [ -n "$PREV_TAG" ] && [ -f "docs/api/$PREV_TAG/openapi.yaml" ]; then
+            echo "# Changelog — $TAG" > "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "Comparing with [$PREV_TAG](/api/docs/$PREV_TAG/)." >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+
+            # Run comparison script
+            COMPARE_OUTPUT=$(scripts/api-docs-compare.sh "docs/api/$PREV_TAG/openapi.yaml" "$DOCS_DIR/openapi.yaml" 2>&1 || true)
+            echo "$COMPARE_OUTPUT" >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+
+            # Extract breaking change count
+            BREAKING_COUNT=$(echo "$COMPARE_OUTPUT" | grep -oP '^\d+(?= breaking)' | tail -1 || echo "0")
+
+            # Detect breaking from the comparison output
+            if echo "$COMPARE_OUTPUT" | grep -q "BREAKING"; then
+              BREAKING="true"
+            else
+              BREAKING="false"
+            fi
+          else
+            # First release
+            echo "# Changelog — $TAG (Initial Release)" > "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "Initial published API documentation for the coordinator service." >> "$CHANGELOG_FILE"
+            BREAKING="false"
+          fi
+
+          echo "breaking=$BREAKING" >> "$GITHUB_OUTPUT"
+          echo "breaking_count=$BREAKING_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Update versions.json manifest
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          BREAKING="${{ steps.compare.outputs.breaking }}"
+          BREAKING_COUNT="${{ steps.compare.outputs.breaking_count }}"
+
+          # Read current versions.json or create from scratch
+          if [ -f docs/api/versions.json ]; then
+            # Use Python to safely update JSON
+            python3 -c "
+import json, datetime
+
+with open('docs/api/versions.json') as f:
+    data = json.load(f)
+
+tag = '$TAG'
+is_breaking = '$BREAKING' == 'true'
+breaking_changes = []
+if is_breaking:
+    breaking_changes = ['$BREAKING_COUNT breaking change(s) detected — review the changelog for details.']
+
+new_entry = {
+    'tag': tag,
+    'date': datetime.date.today().isoformat(),
+    'breaking': is_breaking,
+    'breaking_changes': breaking_changes,
+    'summary': 'See changelog for details.',
+    'changelog': f'{tag}/changelog.md'
+}
+
+# Replace or append
+for i, v in enumerate(data['versions']):
+    if v['tag'] == tag:
+        data['versions'][i] = new_entry
+        break
+else:
+    data['versions'].append(new_entry)
+
+data['latest'] = tag
+
+with open('docs/api/versions.json', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/api
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,107 @@
+name: CodeQL Analysis — Rust Contracts
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "stellar-zk-cards/**"
+      - "services/**"
+      - ".github/codeql/**"
+      - ".github/workflows/codeql-analysis.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "stellar-zk-cards/**"
+      - "services/**"
+      - ".github/codeql/**"
+      - ".github/workflows/codeql-analysis.yml"
+  # Weekly scheduled scan to catch newly-published vulnerability signatures
+  schedule:
+    - cron: "30 3 * * 1" # Every Monday at 03:30 UTC
+
+permissions:
+  contents: read
+  security-events: write # Required to upload SARIF results
+  actions: read # Required by CodeQL action
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job: analyze
+  # Runs the CodeQL Rust extractor, then executes both the built-in
+  # security-and-quality suite and our four custom contract queries.
+  # ─────────────────────────────────────────────────────────────────────────
+  analyze:
+    name: CodeQL — Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Rust toolchain ────────────────────────────────────────────────
+      # CodeQL's Rust extractor needs to compile the workspace to build a
+      # database.  We match the same toolchain used in ci.yml so all crates
+      # resolve without errors.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # ── 3. Cargo dependency cache ────────────────────────────────────────
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-codeql-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-codeql-cargo-
+
+      # ── 4. Initialise CodeQL ─────────────────────────────────────────────
+      # Point CodeQL at our custom config so it picks up the four queries in
+      # .github/codeql/queries/rust/ alongside the built-in security suite.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+          config-file: .github/codeql/codeql-config.yml
+          # Emit query results for all severities so custom warnings appear.
+          queries: security-and-quality
+
+      # ── 5. Build — let CodeQL trace the compilation ──────────────────────
+      # autobuild compiles the workspace; CodeQL intercepts the compiler
+      # invocations to build its database.
+      - name: Autobuild (CodeQL tracing)
+        uses: github/codeql-action/autobuild@v3
+
+      # ── 6. Run analysis ──────────────────────────────────────────────────
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:rust"
+          # Upload results to the GitHub Security tab (Code scanning alerts).
+          upload: true
+
+      # ── 7. Summary ───────────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## CodeQL Rust Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Custom query coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Query | ID | Severity |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Panic unwrap / expect | \`stellpoker/rust/panic-unwrap\` | ⚠ warning |" >> $GITHUB_STEP_SUMMARY
+          echo "| Arithmetic overflow | \`stellpoker/rust/arithmetic-overflow\` | ⚠ warning |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unchecked authorization | \`stellpoker/rust/unchecked-authorization\` | 🔴 error |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage key collision | \`stellpoker/rust/storage-key-collision\` | ⚠ warning |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Results are available in the **Security → Code scanning alerts** tab." >> $GITHUB_STEP_SUMMARY

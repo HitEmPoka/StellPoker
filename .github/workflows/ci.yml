@@ -111,6 +111,14 @@ jobs:
       - name: Run full hand lifecycle flow
         run: python3 scripts/test-flow.py
 
+      - name: Install schemathesis for conformance test
+        run: pip install schemathesis pyyaml
+
+      - name: Live API conformance against coordinator
+        env:
+          COORDINATOR_URL: http://localhost:8080
+        run: python3 scripts/check-api-spec.py
+
       - name: Dump Docker logs on failure
         if: failure()
         run: docker compose logs --no-color

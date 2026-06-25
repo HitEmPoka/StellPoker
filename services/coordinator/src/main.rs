@@ -13,36 +13,42 @@
 //! - Proofs are generated collaboratively and are identical to standard
 //!   Barretenberg/UltraHonk proofs
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::{
-    middleware,
-    routing::{get, post},
-    Router,
+    body::Body,
     extract::State,
-    Json,
+    http::Request,
+    middleware,
     middleware::Next,
     response::Response,
-    http::Request,
-    body::Body,
+    routing::{get, post},
+    Json, Router,
 };
-use axum::extract::ws::{WebSocketUpgrade, WebSocket, Message};
-use futures::{StreamExt, SinkExt};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
-use tower_http::cors::CorsLayer;
+use futures::{SinkExt, StreamExt};
+use prometheus::{
+    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
+};
 use serde::Serialize;
-use prometheus::{Encoder, TextEncoder, Registry, Opts, HistogramOpts, HistogramVec, IntCounterVec, Gauge};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
 use sysinfo::{get_current_pid, ProcessesToUpdate, System};
+use tokio::sync::{Mutex, RwLock};
+use tower_http::cors::CorsLayer;
 
 mod api;
+mod audit_log;
+mod cors_db;
 mod db;
-#[path = "middleware.rs"]
-mod request_log;
 mod feature_flags;
 mod mpc;
+mod plugin;
+mod rate_limit_db;
+#[path = "middleware.rs"]
+mod request_log;
 mod session_gc;
+mod session_migration;
 mod soroban;
 mod stats;
 
@@ -117,6 +123,9 @@ struct AppState {
     mpc_sessions: session_gc::SessionStore,
     stats: stats::StatsStore,
     feature_flags: feature_flags::FeatureFlagStore,
+    db_pool: Option<Arc<sqlx::PgPool>>,
+    instance_id: String,
+    pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
 }
 
 #[derive(Clone)]
@@ -213,7 +222,8 @@ async fn main() {
         tracing::warn!("Soroban not configured — on-chain submission disabled");
     }
 
-    let initial_node_healths = mpc_config.node_endpoints
+    let initial_node_healths = mpc_config
+        .node_endpoints
         .iter()
         .map(|ep| MpcNodeHealth {
             endpoint: ep.clone(),
@@ -229,7 +239,10 @@ async fn main() {
     )
     .unwrap();
     let request_errors = IntCounterVec::new(
-        Opts::new("coordinator_request_errors_total", "Total coordinator request errors."),
+        Opts::new(
+            "coordinator_request_errors_total",
+            "Total coordinator request errors.",
+        ),
         &["method", "route"],
     )
     .unwrap();
@@ -238,23 +251,21 @@ async fn main() {
             "coordinator_request_latency_seconds",
             "Request latency histogram in seconds.",
         )
-        .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+        .buckets(vec![
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+        ]),
         &["method", "route"],
     )
     .unwrap();
-    let process_cpu_percent = Gauge::with_opts(
-        Opts::new(
-            "coordinator_process_cpu_percent",
-            "Coordinator process CPU usage percentage.",
-        ),
-    )
+    let process_cpu_percent = Gauge::with_opts(Opts::new(
+        "coordinator_process_cpu_percent",
+        "Coordinator process CPU usage percentage.",
+    ))
     .unwrap();
-    let process_memory_bytes = Gauge::with_opts(
-        Opts::new(
-            "coordinator_process_memory_bytes",
-            "Coordinator process memory usage in bytes.",
-        ),
-    )
+    let process_memory_bytes = Gauge::with_opts(Opts::new(
+        "coordinator_process_memory_bytes",
+        "Coordinator process memory usage in bytes.",
+    ))
     .unwrap();
 
     prometheus_registry
@@ -343,6 +354,53 @@ async fn main() {
     let feature_flag_store = feature_flags::FeatureFlagStore::from_env();
     tracing::info!("Feature flags initialised");
 
+    // Connect to database if DATABASE_URL is provided
+    let db_pool = if let Ok(database_url) = std::env::var("DATABASE_URL") {
+        match db::connect(&database_url).await {
+            Ok(pool) => {
+                tracing::info!("Connected to PostgreSQL database");
+
+                // Run migrations
+                if let Err(e) = db::run_migrations(&pool).await {
+                    tracing::error!("Failed to run database migrations: {}", e);
+                } else {
+                    tracing::info!("Database migrations applied successfully");
+                }
+
+                Some(Arc::new(pool))
+            }
+            Err(e) => {
+                tracing::error!("Failed to connect to database: {}", e);
+                None
+            }
+        }
+    } else {
+        tracing::warn!("DATABASE_URL not set - running without database persistence");
+        None
+    };
+
+    let instance_id = session_migration::generate_instance_id();
+    tracing::info!("Coordinator instance ID: {}", instance_id);
+
+    let mut wasm_config = wasmtime::Config::new();
+    wasm_config
+        .consume_fuel(true)
+        .wasm_multi_value(true)
+        .wasm_memory64(false);
+    let plugin_engine = wasmtime::Engine::new(&wasm_config)
+        .expect("failed to create wasmtime engine");
+    let plugin_loader = plugin::PluginLoader::new(plugin_engine);
+    let plugin_loader = Arc::new(tokio::sync::RwLock::new(plugin_loader));
+    {
+        let loader = plugin_loader.read().await;
+        let loaded = loader.scan_plugin_directory(None).await;
+        if loaded.is_empty() {
+            tracing::info!("No Wasm plugins found in ./plugins directory");
+        } else {
+            tracing::info!("Auto-loaded {} Wasm plugin(s): {:?}", loaded.len(), loaded);
+        }
+    }
+
     let state = AppState {
         tables: Arc::new(RwLock::new(HashMap::new())),
         lobby_assignments: Arc::new(RwLock::new(HashMap::new())),
@@ -357,6 +415,9 @@ async fn main() {
         mpc_sessions,
         stats: stats_store,
         feature_flags: feature_flag_store,
+        db_pool,
+        instance_id,
+        plugin_loader,
     };
 
     // Spawn background node health check task
@@ -370,7 +431,7 @@ async fn main() {
                     .await
                     .map(|r| r.status().is_success())
                     .unwrap_or(false);
-                
+
                 let mut guard = node_healths.lock().await;
                 if idx < guard.len() {
                     let prev_connected = guard[idx].connected;
@@ -395,6 +456,23 @@ async fn main() {
         .route("/api/stats", get(get_stats))
         .route("/api/flags", get(api::flags::list_flags))
         .route("/api/flags/:key", post(api::flags::set_flag))
+        // Plugin management endpoints
+        .route("/api/plugins", get(api::plugins::list_plugins))
+        .route("/api/plugins/health", get(api::plugins::plugin_health))
+        .route("/api/plugins/load", post(api::plugins::load_plugin))
+        .route("/api/plugins/rescan", post(api::plugins::rescan_plugins))
+        .route(
+            "/api/plugins/:name",
+            get(api::plugins::get_plugin),
+        )
+        .route(
+            "/api/plugins/:name/unload",
+            post(api::plugins::unload_plugin),
+        )
+        .route(
+            "/api/plugins/:name/call",
+            post(api::plugins::call_plugin_function),
+        )
         .route("/api/tables/create", post(api::create_table))
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/chain-config", get(api::get_chain_config))
@@ -420,18 +498,64 @@ async fn main() {
         .route("/api/table/:table_id/state", get(api::get_table_state))
         .route("/api/committee/status", get(api::committee_status))
         .route("/api/table/:table_id/chat/ws", get(chat_ws_handler))
-        .route("/api/session/:session_id/cancel", post(api::cancel_mpc_session))
-        .route("/api/session/:session_id/status", get(api::get_mpc_session_status))
+        .route(
+            "/api/session/:session_id/cancel",
+            post(api::cancel_mpc_session),
+        )
+        .route(
+            "/api/session/:session_id/status",
+            get(api::get_mpc_session_status),
+        )
         // Admin endpoints (RBAC-protected)
         .route("/api/admin/health", get(api::admin_health))
         .route("/api/admin/sessions", get(api::admin_list_sessions))
-        .route("/api/admin/sessions/:session_id/cancel", post(api::admin_cancel_session))
-        .route("/api/admin/sessions/cleanup", post(api::admin_cleanup_sessions))
+        .route(
+            "/api/admin/sessions/:session_id/cancel",
+            post(api::admin_cancel_session),
+        )
+        .route(
+            "/api/admin/sessions/cleanup",
+            post(api::admin_cleanup_sessions),
+        )
         .route("/api/admin/stats", get(api::admin_stats))
         .route("/api/admin/config/reload", post(api::admin_reload_config))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), metrics_middleware))
+        // New admin endpoints for issues #267, #261, #264, #265
+        .route("/api/admin/rate-limits", get(api::admin_list_rate_limits))
+        .route("/api/admin/rate-limits", post(api::admin_upsert_rate_limit))
+        .route(
+            "/api/admin/rate-limits/:id",
+            axum::routing::delete(api::admin_delete_rate_limit),
+        )
+        .route("/api/admin/cors", get(api::admin_list_cors))
+        .route("/api/admin/cors", post(api::admin_upsert_cors))
+        .route(
+            "/api/admin/cors/:id",
+            axum::routing::delete(api::admin_delete_cors),
+        )
+        .route("/api/admin/audit-logs", get(api::admin_query_audit_logs))
+        .route(
+            "/api/admin/audit-logs/verify",
+            post(api::admin_verify_audit_chain),
+        )
+        .route("/api/admin/migrations", get(api::admin_list_migrations))
+        .route(
+            "/api/admin/migrations/initiate",
+            post(api::admin_initiate_migration),
+        )
+        .route(
+            "/api/admin/migrations/:id/complete",
+            post(api::admin_complete_migration),
+        )
+        .route(
+            "/api/admin/migrations/:id/cancel",
+            post(api::admin_cancel_migration),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            metrics_middleware,
+        ))
         .layer(middleware::from_fn(request_log::log_request))
-        .layer(CorsLayer::permissive())
+        .layer(build_cors_layer(state.db_pool.as_deref()).await)
         .with_state(state);
 
     let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -439,6 +563,38 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn build_cors_layer(db_pool: Option<&sqlx::PgPool>) -> CorsLayer {
+    let origins = cors_db::get_effective_cors_origins(db_pool).await;
+
+    if origins.contains(&"*".to_string()) {
+        tracing::warn!("CORS configured in permissive mode - all origins allowed");
+        return CorsLayer::permissive();
+    }
+
+    tracing::info!("CORS configured with {} allowed origin(s)", origins.len());
+    for origin in &origins {
+        tracing::debug!("  CORS allowed origin: {}", origin);
+    }
+
+    use axum::http::Method;
+    use tower_http::cors::AllowOrigin;
+
+    let allow_origins: Vec<axum::http::HeaderValue> =
+        origins.iter().filter_map(|o| o.parse().ok()).collect();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allow_origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers(tower_http::cors::Any)
+        .allow_credentials(true)
 }
 
 #[derive(Serialize)]
@@ -463,7 +619,7 @@ async fn check_soroban_connectivity(rpc_url: &str) -> bool {
         "id": 1,
         "method": "getLatestLedger"
     });
-    
+
     let resp = client.post(rpc_url).json(&body).send().await;
     match resp {
         Ok(r) => r.status().is_success() || r.status() == 200,
@@ -474,28 +630,34 @@ async fn check_soroban_connectivity(rpc_url: &str) -> bool {
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let uptime_seconds = state.metrics.boot_time.elapsed().as_secs();
     let mpc_nodes = state.metrics.node_healths.lock().await.clone();
-    
+
     // Check Soroban RPC connectivity
     let soroban_status = if check_soroban_connectivity(&state.soroban_config.rpc_url).await {
         "connected".to_string()
     } else {
-        tracing::warn!("Soroban RPC connectivity check failed for {}", state.soroban_config.rpc_url);
+        tracing::warn!(
+            "Soroban RPC connectivity check failed for {}",
+            state.soroban_config.rpc_url
+        );
         "disconnected".to_string()
     };
-    
+
     // Log health check failures at WARN level
     for node in &mpc_nodes {
         if !node.connected {
-            tracing::warn!("Health check warning: MPC Node {} is disconnected", node.endpoint);
+            tracing::warn!(
+                "Health check warning: MPC Node {} is disconnected",
+                node.endpoint
+            );
         }
     }
     if soroban_status == "disconnected" {
         tracing::warn!("Health check warning: Soroban RPC is disconnected");
     }
-    
+
     let active_mpc_sessions = state.metrics.active_mpc_sessions.load(Ordering::SeqCst);
     let request_metrics = state.metrics.route_metrics.lock().await.clone();
-    
+
     Json(HealthResponse {
         uptime_seconds,
         mpc_nodes,
@@ -614,19 +776,20 @@ async fn chat_ws_handler(
 
 async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
-    
+
     let tx = {
         let mut channels = state.chat_channels.lock().await;
-        channels.entry(table_id)
+        channels
+            .entry(table_id)
             .or_insert_with(|| {
                 let (tx, _) = tokio::sync::broadcast::channel(100);
                 tx
             })
             .clone()
     };
-    
+
     let mut rx = tx.subscribe();
-    
+
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg_str) = rx.recv().await {
             if ws_sender.send(Message::Text(msg_str.into())).await.is_err() {
@@ -634,7 +797,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
             }
         }
     });
-    
+
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             if let Ok(text) = msg.to_text() {
@@ -651,7 +814,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
                             *alias_val = serde_json::Value::String(sanitized);
                         }
                     }
-                    
+
                     if let Ok(broadcast_msg) = serde_json::to_string(&json_val) {
                         let _ = tx.send(broadcast_msg);
                     }
@@ -659,7 +822,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
             }
         }
     });
-    
+
     tokio::select! {
         _ = &mut send_task => recv_task.abort(),
         _ = &mut recv_task => send_task.abort(),

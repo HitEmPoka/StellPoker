@@ -1,4 +1,3 @@
-import { signTransaction as freighterSignTransaction } from "@stellar/freighter-api";
 import {
   Address,
   BASE_FEE,
@@ -8,8 +7,45 @@ import {
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { WalletSession } from "./freighter";
+import type { WalletSession } from "./wallet";
 import { getChainConfig } from "./api";
+
+type LobstrSignResult = {
+  signedTxXdr?: string;
+  signed_transaction?: string;
+  error?: { message: string } | string;
+};
+
+async function signWithWallet(
+  wallet: WalletSession,
+  txXdr: string,
+  opts: { networkPassphrase: string; address: string }
+): Promise<string> {
+  if (wallet.walletType === "lobstr") {
+    const api = typeof window !== "undefined" ? (window as unknown as { lobstr?: { signTransaction?: (xdr: string, opts: Record<string, unknown>) => Promise<LobstrSignResult> } }).lobstr : undefined;
+    if (!api?.signTransaction) {
+      throw new Error("Lobstr signTransaction API is unavailable");
+    }
+    const result = await api.signTransaction(txXdr, opts);
+    const signedXdr = result.signedTxXdr || result.signed_transaction;
+    if (!signedXdr) {
+      const msg = typeof result.error === "string" ? result.error : result.error?.message || "Lobstr failed to sign transaction";
+      throw new Error(msg);
+    }
+    return signedXdr;
+  }
+
+  const { signTransaction: freighterSignTransaction } = await import("@stellar/freighter-api");
+  const result = await freighterSignTransaction(txXdr, opts);
+  if (result.error || !result.signedTxXdr) {
+    const message =
+      typeof result.error?.message === "string"
+        ? result.error.message
+        : "Freighter failed to sign transaction";
+    throw new Error(message);
+  }
+  return result.signedTxXdr;
+}
 
 type BettingAction = "fold" | "check" | "call" | "bet" | "raise" | "allin" | "all_in";
 
@@ -95,20 +131,13 @@ async function submitWalletTx(
     .build();
 
   const prepared = await server.prepareTransaction(tx);
-  const signed = await freighterSignTransaction(prepared.toXDR(), {
+  const signedXdr = await signWithWallet(wallet, prepared.toXDR(), {
     networkPassphrase: cfg.networkPassphrase,
     address: wallet.address,
   });
-  if (signed.error || !signed.signedTxXdr) {
-    const message =
-      typeof signed.error?.message === "string"
-        ? signed.error.message
-        : "Freighter failed to sign transaction";
-    throw new Error(message);
-  }
 
   const signedTx = TransactionBuilder.fromXDR(
-    signed.signedTxXdr,
+    signedXdr,
     cfg.networkPassphrase
   );
   const sent = await server.sendTransaction(signedTx);

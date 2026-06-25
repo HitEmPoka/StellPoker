@@ -1,0 +1,1887 @@
+openapi: 3.0.3
+info:
+  title: StellPoker Coordinator API
+  description: |
+    REST API for the StellPoker MPC coordinator service.
+
+    The coordinator orchestrates a 3-node MPC committee running TACEO coNoir
+    to generate zero-knowledge proofs for private card operations (deal, reveal,
+    showdown) and submits them to Soroban smart contracts on the Stellar network.
+
+    ## Authentication
+
+    ### Player Auth (Wallet-based)
+    Most game endpoints require wallet-based authentication via signed messages:
+
+    1. `POST /api/wallet/challenge` — obtain a challenge string
+    2. Sign the challenge with your Stellar wallet (Freighter/Lobstr)
+    3. `POST /api/wallet/verify` — verify the signed challenge, receive a session
+    4. Include these headers in subsequent requests:
+       - `x-player-address` — your Stellar G... public key
+       - `x-auth-signature` — Ed25519 signature (hex or base64)
+       - `x-auth-nonce` — strictly increasing u64 (replay protection)
+       - `x-auth-timestamp` — unix epoch seconds (±300s skew)
+
+    Signed message format:
+    ```
+    stellar-poker|{address}|{table_id}|{action}|{nonce}|{timestamp}
+    ```
+
+    ### Admin Auth
+    Admin endpoints use a separate key-based auth under `x-admin-*` headers:
+       - `x-admin-address` — admin's Stellar public key
+       - `x-admin-signature` — Ed25519 signature
+       - `x-admin-nonce` — strictly increasing u64
+       - `x-admin-timestamp` — unix epoch seconds (±300s skew)
+
+    Signed message format:
+    ```
+    stellar-poker-admin|{address}|{action}|{nonce}|{timestamp}
+    ```
+
+    Admin roles: `read-only`, `operator`, `super-admin`.
+
+    > **Dev mode**: Set `ALLOW_INSECURE_DEV_AUTH=1` to skip signature verification.
+
+    ## Breaking Changes Policy
+    Breaking changes are documented per release. See the version changelog
+    accompanying each release tag for migration guides.
+
+  version: "0.1.0"
+  contact:
+    name: StellPoker Team
+    url: https://github.com/HitEmPoka/StellPoker
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: https://coordinator.stellpoker.example.com
+    description: Production coordinator
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Health
+    description: Health check and monitoring endpoints
+  - name: Chain
+    description: Stellar chain configuration
+  - name: Tables
+    description: Poker table lifecycle and game actions
+  - name: MPC Committee
+    description: MPC node committee status
+  - name: Flags
+    description: Runtime feature flags
+  - name: Sessions
+    description: MPC session management
+  - name: Wallet Auth
+    description: Wallet-based authentication
+  - name: Admin
+    description: Admin operations (requires RBAC)
+  - name: Metrics
+    description: Prometheus metrics
+
+paths:
+  # ──────────────────────────────────────────────
+  # Health
+  # ──────────────────────────────────────────────
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      description: |
+        Returns coordinator uptime, MPC node connectivity status,
+        Soroban RPC health, active session count, and per-route metrics.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Health information
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - uptime_seconds
+                  - mpc_nodes
+                  - soroban_rpc
+                  - active_mpc_sessions
+                  - request_metrics
+                properties:
+                  uptime_seconds:
+                    type: integer
+                    description: Seconds since coordinator started
+                  mpc_nodes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MpcNodeHealth"
+                  soroban_rpc:
+                    $ref: "#/components/schemas/SorobanHealth"
+                  active_mpc_sessions:
+                    type: integer
+                    description: Currently active MPC proof sessions
+                  request_metrics:
+                    type: object
+                    description: Per-route request metrics
+                    additionalProperties:
+                      $ref: "#/components/schemas/RouteMetric"
+
+  # ──────────────────────────────────────────────
+  # Chain Config
+  # ──────────────────────────────────────────────
+  /api/chain-config:
+    get:
+      tags: [Chain]
+      summary: Get chain configuration
+      description: |
+        Public Stellar network parameters used by the frontend for
+        wallet-signed on-chain transactions.
+      operationId: getChainConfig
+      responses:
+        "200":
+          description: Chain configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChainConfigResponse"
+        "503":
+          description: Soroban not configured
+
+  # ──────────────────────────────────────────────
+  # Stats
+  # ──────────────────────────────────────────────
+  /api/stats:
+    get:
+      tags: [Health]
+      summary: Global statistics
+      description: |
+        Returns in-memory cached global stats and top-10 leaderboard
+        with a 30-second TTL.
+      operationId: getStats
+      responses:
+        "200":
+          description: Statistics payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  # ──────────────────────────────────────────────
+  # Flags
+  # ──────────────────────────────────────────────
+  /api/flags:
+    get:
+      tags: [Flags]
+      summary: List all feature flags
+      description: Returns a snapshot of all runtime feature flag values.
+      operationId: listFlags
+      responses:
+        "200":
+          description: Feature flag snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: boolean
+                example:
+                  solo_mode: true
+                  chat_enabled: true
+                  chat_enabled.table.3: false
+
+  /api/flags/{key}:
+    post:
+      tags: [Flags]
+      summary: Set a feature flag
+      description: Set or override a runtime feature flag value.
+      operationId: setFlag
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Full flag key (e.g. `solo_mode`, `chat_enabled.table.3`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetFlagBody"
+      responses:
+        "200":
+          description: Flag updated
+        "400":
+          description: Empty key
+
+  # ──────────────────────────────────────────────
+  # Tables — Create
+  # ──────────────────────────────────────────────
+  /api/tables/create:
+    post:
+      tags: [Tables]
+      summary: Create a poker table
+      description: |
+        Creates a new on-chain poker table by cloning the reference table config.
+        Supports optional solo mode (player vs AI bot).
+        Requires wallet authentication.
+      operationId: createTable
+      security:
+        - WalletAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTableRequest"
+      responses:
+        "200":
+          description: Table created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTableResponse"
+        "400":
+          description: Invalid parameters
+        "503":
+          description: Soroban not configured or solo mode disabled
+        "502":
+          description: Soroban/MPC interaction failed
+
+  # ──────────────────────────────────────────────
+  # Tables — List open
+  # ──────────────────────────────────────────────
+  /api/tables/open:
+    get:
+      tags: [Tables]
+      summary: List open tables
+      description: |
+        Returns all tables in "Waiting" phase that still have unclaimed
+        wallet slots.
+      operationId: listOpenTables
+      responses:
+        "200":
+          description: Open tables list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenTablesResponse"
+
+  # ──────────────────────────────────────────────
+  # Table — Join
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/join:
+    post:
+      tags: [Tables]
+      summary: Join a table
+      description: |
+        Register a wallet-to-seat mapping for a wallet that has already
+        joined on-chain. Requires wallet authentication.
+      operationId: joinTable
+      security:
+        - WalletAuth: []
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Joined successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JoinTableResponse"
+        "404":
+          description: Table not found
+        "409":
+          description: Table not in waiting phase or wallet already seated
+
+  # ──────────────────────────────────────────────
+  # Table — Lobby
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/lobby:
+    get:
+      tags: [Tables]
+      summary: Get table lobby
+      description: Returns lobby seat information for a table.
+      operationId: getTableLobby
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Lobby information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableLobbyResponse"
+        "404":
+          description: Table not found
+
+  # ──────────────────────────────────────────────
+  # Table — Request Deal
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/request-deal:
+    post:
+      tags: [Tables]
+      summary: Request MPC deal
+      description: |
+        Triggers the MPC committee to prepare private deal contributions,
+        exchange share fragments, generate a deal proof, and submit it
+        to the Soroban contract. Public outputs include the deck Merkle
+        root and per-player hand commitments.
+      operationId: requestDeal
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealRequest"
+      responses:
+        "200":
+          description: Deal completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealResponse"
+        "409":
+          description: Table already dealt or in wrong phase
+        "502":
+          description: MPC or Soroban interaction failed
+
+  # ──────────────────────────────────────────────
+  # Table — Request Reveal
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/request-reveal/{phase}:
+    post:
+      tags: [Tables]
+      summary: Request community card reveal
+      description: |
+        Triggers MPC reveal of community cards for the specified phase.
+        Phase progression: preflop → flop (3 cards) → turn (1 card) → river (1 card).
+      operationId: requestReveal
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+        - name: phase
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [flop, turn, river]
+      responses:
+        "200":
+          description: Cards revealed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevealResponse"
+        "400":
+          description: Invalid phase
+        "409":
+          description: Wrong phase order or already revealed
+        "502":
+          description: MPC or Soroban interaction failed
+
+  # ──────────────────────────────────────────────
+  # Table — Request Showdown
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/request-showdown:
+    post:
+      tags: [Tables]
+      summary: Request showdown
+      description: |
+        Triggers MPC showdown: evaluates all hands, determines the winner,
+        distributes the pot. Includes timeout fallback if on-chain
+        proof submission fails.
+      operationId: requestShowdown
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Showdown result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShowdownResponse"
+        "409":
+          description: Table not in river/showdown phase
+        "502":
+          description: MPC or Soroban interaction failed
+
+  # ──────────────────────────────────────────────
+  # Table — Player Action
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/player-action:
+    post:
+      tags: [Tables]
+      summary: Submit player action
+      description: |
+        Submit a betting action (fold/check/call/bet/raise/all-in) to the
+        on-chain poker-table contract. Requires wallet authentication.
+        Wallet-to-seat mapping is resolved automatically.
+      operationId: playerAction
+      security:
+        - WalletAuth: []
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayerActionRequest"
+      responses:
+        "200":
+          description: Action applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerActionResponse"
+        "400":
+          description: Invalid action or amount
+        "401":
+          description: Unauthorized
+        "409":
+          description: Contract-level error
+        "502":
+          description: Soroban interaction failed
+
+  # ──────────────────────────────────────────────
+  # Table — Get Player Cards
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/player/{address}/cards:
+    get:
+      tags: [Tables]
+      summary: Get player hole cards
+      description: |
+        Resolve and return a player's hole cards by chaining permutation
+        lookups across MPC nodes. The requesting wallet must match the
+        target player address.
+      operationId: getPlayerCards
+      security:
+        - WalletAuth: []
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^G[A-Z0-9]{55}$"
+            description: Stellar wallet public key
+      responses:
+        "200":
+          description: Player's hole cards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerCardsResponse"
+        "401":
+          description: Unauthorized (address mismatch)
+        "404":
+          description: Table or player not found
+        "502":
+          description: MPC resolution failed
+
+  # ──────────────────────────────────────────────
+  # Table — Get State
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/state:
+    get:
+      tags: [Tables]
+      summary: Get table state
+      description: Returns the full on-chain table state from Soroban.
+      operationId: getTableState
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Table state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableStateResponse"
+        "503":
+          description: Soroban unavailable
+
+  # ──────────────────────────────────────────────
+  # Committee Status
+  # ──────────────────────────────────────────────
+  /api/committee/status:
+    get:
+      tags: [MPC Committee]
+      summary: MPC committee health
+      description: Returns the number of MPC nodes, their health status, and overall committee state.
+      operationId: committeeStatus
+      responses:
+        "200":
+          description: Committee status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitteeStatusResponse"
+
+  # ──────────────────────────────────────────────
+  # WebSocket Chat
+  # ──────────────────────────────────────────────
+  /api/table/{table_id}/chat/ws:
+    get:
+      tags: [Tables]
+      summary: Table chat WebSocket
+      description: |
+        Upgrades to a WebSocket connection for per-table real-time chat.
+        Messages are JSON with `text`, `alias`, and optional `timestamp` fields.
+        Text and alias are sanitized (HTML-escaped, length-limited).
+      operationId: chatWebSocket
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "101":
+          description: WebSocket upgrade successful
+        "400":
+          description: Invalid table ID
+
+  # ──────────────────────────────────────────────
+  # Sessions
+  # ──────────────────────────────────────────────
+  /api/session/{session_id}/status:
+    get:
+      tags: [Sessions]
+      summary: Get MPC session status
+      description: Returns the current status of an MPC proof session.
+      operationId: getMpcSessionStatus
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MpcSessionStatus"
+        "404":
+          description: Session not found
+
+  /api/session/{session_id}/cancel:
+    post:
+      tags: [Sessions]
+      summary: Cancel MPC session (deprecated)
+      description: |
+        **Deprecated** — Use `POST /api/admin/sessions/{session_id}/cancel` instead.
+
+        Cancel an active MPC session. Kills processes, removes temp files,
+        frees the session slot. Requires operator role.
+      deprecated: true
+      operationId: cancelMpcSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Session cancelled
+        "404":
+          description: Session not found
+
+  # ──────────────────────────────────────────────
+  # Wallet Auth
+  # ──────────────────────────────────────────────
+  /api/wallet/challenge:
+    post:
+      tags: [Wallet Auth]
+      summary: Request wallet auth challenge
+      description: |
+        Obtain a challenge string that must be signed by the wallet's
+        Stellar private key. Challenges expire after 300 seconds.
+      operationId: getWalletChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletChallengeRequest"
+      responses:
+        "200":
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletChallengeResponse"
+        "400":
+          description: Invalid Stellar address
+
+  /api/wallet/verify:
+    post:
+      tags: [Wallet Auth]
+      summary: Verify wallet signature
+      description: |
+        Verify a signed challenge and establish authentication.
+        Supports both raw Ed25519 signing and SEP-53 (Stellar Signed Message).
+      operationId: verifyWallet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletVerifyResponse"
+
+  # ──────────────────────────────────────────────
+  # Metrics
+  # ──────────────────────────────────────────────
+  /metrics:
+    get:
+      tags: [Metrics]
+      summary: Prometheus metrics
+      description: |
+        Exposes Prometheus-format metrics including request counts,
+        error rates, latency histograms, active sessions, CPU usage,
+        and memory usage.
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus metrics text
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # ──────────────────────────────────────────────
+  # Admin — Health
+  # ──────────────────────────────────────────────
+  /api/admin/health:
+    get:
+      tags: [Admin]
+      summary: Admin health details
+      description: |
+        Detailed health information including admin context.
+        Requires `read-only` role or higher.
+      operationId: adminHealth
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Detailed health info
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Missing or invalid admin headers
+
+  # ──────────────────────────────────────────────
+  # Admin — Sessions
+  # ──────────────────────────────────────────────
+  /api/admin/sessions:
+    get:
+      tags: [Admin]
+      summary: List all MPC sessions
+      description: |
+        List all tracked MPC sessions with status and metadata.
+        Requires `operator` role or higher.
+      operationId: adminListSessions
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        session_id:
+                          type: string
+                        table_id:
+                          type: integer
+                        status:
+                          type: string
+                        cancel_reason:
+                          type: string
+                          nullable: true
+                        elapsed_secs:
+                          type: integer
+
+  /api/admin/sessions/cleanup:
+    post:
+      tags: [Admin]
+      summary: Force-cleanup stale sessions
+      description: |
+        Clean up all expired MPC sessions (1-hour timeout).
+        Requires `operator` role or higher.
+      operationId: adminCleanupSessions
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Cleanup result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: integer
+                  remaining:
+                    type: integer
+
+  /api/admin/sessions/{session_id}/cancel:
+    post:
+      tags: [Admin]
+      summary: Cancel a specific session
+      description: |
+        Cancel a specific MPC session by ID.
+        Requires `operator` role or higher.
+      operationId: adminCancelSession
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Session cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  cancelled:
+                    type: boolean
+
+  # ──────────────────────────────────────────────
+  # Admin — Stats
+  # ──────────────────────────────────────────────
+  /api/admin/stats:
+    get:
+      tags: [Admin]
+      summary: Admin statistics
+      description: |
+        Detailed admin stats including per-route metrics and system health.
+        Requires `read-only` role or higher.
+      operationId: adminStats
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Admin stats
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ──────────────────────────────────────────────
+  # Admin — Config
+  # ──────────────────────────────────────────────
+  /api/admin/config/reload:
+    post:
+      tags: [Admin]
+      summary: Reload admin config
+      description: |
+        Reload admin configuration (ADMIN_KEYS) from environment without
+        a full restart. Requires `super-admin` role.
+      operationId: adminReloadConfig
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Config reloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [reloaded]
+
+  # ──────────────────────────────────────────────
+  # Admin — Rate Limits
+  # ──────────────────────────────────────────────
+  /api/admin/rate-limits:
+    get:
+      tags: [Admin]
+      summary: List rate limit configs
+      description: |
+        List all rate limit configurations from the database.
+        Requires `read-only` role or higher.
+      operationId: adminListRateLimits
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Rate limit configs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RateLimitConfig"
+                  count:
+                    type: integer
+        "503":
+          description: Database not available
+
+    post:
+      tags: [Admin]
+      summary: Create or update rate limit
+      description: |
+        Upsert a rate limit configuration.
+        Requires `operator` role or higher.
+      operationId: adminUpsertRateLimit
+      security:
+        - AdminAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRateLimitRequest"
+      responses:
+        "200":
+          description: Rate limit config upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateLimitConfig"
+        "503":
+          description: Database not available
+
+  /api/admin/rate-limits/{id}:
+    delete:
+      tags: [Admin]
+      summary: Delete rate limit config
+      description: |
+        Delete a rate limit configuration by ID.
+        Requires `operator` role or higher.
+      operationId: adminDeleteRateLimit
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                  id:
+                    type: integer
+        "404":
+          description: Rate limit config not found
+        "503":
+          description: Database not available
+
+  # ──────────────────────────────────────────────
+  # Admin — CORS
+  # ──────────────────────────────────────────────
+  /api/admin/cors:
+    get:
+      tags: [Admin]
+      summary: List CORS configs
+      description: |
+        List all CORS origin configurations from the database.
+        Requires `read-only` role or higher.
+      operationId: adminListCors
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: CORS configs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CorsConfig"
+                  count:
+                    type: integer
+        "503":
+          description: Database not available
+
+    post:
+      tags: [Admin]
+      summary: Create or update CORS origin
+      description: |
+        Upsert a CORS origin configuration.
+        Requires `operator` role or higher.
+      operationId: adminUpsertCors
+      security:
+        - AdminAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertCorsRequest"
+      responses:
+        "200":
+          description: CORS config upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorsConfig"
+        "503":
+          description: Database not available
+
+  /api/admin/cors/{id}:
+    delete:
+      tags: [Admin]
+      summary: Delete CORS origin
+      description: |
+        Delete a CORS origin configuration by ID.
+        Requires `operator` role or higher.
+      operationId: adminDeleteCors
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                  id:
+                    type: integer
+        "404":
+          description: CORS config not found
+        "503":
+          description: Database not available
+
+  # ──────────────────────────────────────────────
+  # Admin — Audit Logs
+  # ──────────────────────────────────────────────
+  /api/admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: Query audit logs
+      description: |
+        Query tamper-evident audit logs with optional filters.
+        Supports pagination. Requires `read-only` role or higher.
+      operationId: adminQueryAuditLogs
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: requester_address
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: table_id
+          in: query
+          schema:
+            type: integer
+        - name: from_timestamp
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to_timestamp
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLogEntry"
+                  count:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        "503":
+          description: Database not available
+
+  /api/admin/audit-logs/verify:
+    post:
+      tags: [Admin]
+      summary: Verify audit chain integrity
+      description: |
+        Verify the integrity of the hash-linked audit log chain.
+        Requires `read-only` role or higher.
+      operationId: adminVerifyAuditChain
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  verified_by:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+        "503":
+          description: Database not available
+
+  # ──────────────────────────────────────────────
+  # Admin — Session Migrations
+  # ──────────────────────────────────────────────
+  /api/admin/migrations:
+    get:
+      tags: [Admin]
+      summary: List pending migrations
+      description: |
+        List pending session migrations for this coordinator instance.
+        Requires `operator` role or higher.
+      operationId: adminListMigrations
+      security:
+        - AdminAuth: []
+      responses:
+        "200":
+          description: Migrations list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migrations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MigrationResponse"
+                  count:
+                    type: integer
+                  instance_id:
+                    type: string
+        "503":
+          description: Database not available
+
+  /api/admin/migrations/initiate:
+    post:
+      tags: [Admin]
+      summary: Initiate session migration
+      description: |
+        Migrate a game session state from this coordinator instance
+        to another. Requires `operator` role or higher.
+      operationId: adminInitiateMigration
+      security:
+        - AdminAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiateMigrationRequest"
+      responses:
+        "200":
+          description: Migration initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationResponse"
+        "404":
+          description: Table session not found
+        "503":
+          description: Database not available
+
+  /api/admin/migrations/{id}/complete:
+    post:
+      tags: [Admin]
+      summary: Complete session migration
+      description: |
+        Mark a session migration as complete and restore session state
+        on the target instance. Requires `operator` role or higher.
+      operationId: adminCompleteMigration
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Migration completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migration_id:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [complete]
+                  table_id:
+                    type: integer
+        "503":
+          description: Database not available
+
+  /api/admin/migrations/{id}/cancel:
+    post:
+      tags: [Admin]
+      summary: Cancel session migration
+      description: |
+        Cancel a pending session migration.
+        Requires `operator` role or higher.
+      operationId: adminCancelMigration
+      security:
+        - AdminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Migration cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migration_id:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [cancelled]
+                  cancelled_by:
+                    type: string
+        "503":
+          description: Database not available
+
+components:
+  securitySchemes:
+    WalletAuth:
+      type: apiKey
+      in: header
+      name: x-player-address
+      description: |
+        Wallet-based authentication. Requires additional headers:
+        `x-auth-signature`, `x-auth-nonce`, `x-auth-timestamp`.
+    AdminAuth:
+      type: apiKey
+      in: header
+      name: x-admin-address
+      description: |
+        Admin key-based authentication. Requires additional headers:
+        `x-admin-signature`, `x-admin-nonce`, `x-admin-timestamp`.
+
+  schemas:
+    # ──────────── Health ────────────
+    MpcNodeHealth:
+      type: object
+      required:
+        - endpoint
+        - connected
+        - last_heartbeat
+      properties:
+        endpoint:
+          type: string
+          format: uri
+        connected:
+          type: boolean
+        last_heartbeat:
+          type: string
+          format: date-time
+          nullable: true
+
+    SorobanHealth:
+      type: object
+      required:
+        - endpoint
+        - status
+      properties:
+        endpoint:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [connected, disconnected]
+
+    RouteMetric:
+      type: object
+      required:
+        - count
+        - errors
+        - latency_histogram
+      properties:
+        count:
+          type: integer
+        errors:
+          type: integer
+        latency_histogram:
+          $ref: "#/components/schemas/LatencyHistogram"
+
+    LatencyHistogram:
+      type: object
+      required:
+        - under_50ms
+        - under_250ms
+        - under_1000ms
+        - under_5000ms
+        - over_5000ms
+      properties:
+        under_50ms:
+          type: integer
+        under_250ms:
+          type: integer
+        under_1000ms:
+          type: integer
+        under_5000ms:
+          type: integer
+        over_5000ms:
+          type: integer
+
+    StatsResponse:
+      type: object
+      description: Global statistics with leaderboard (30s TTL cache)
+
+    # ──────────── Chain ────────────
+    ChainConfigResponse:
+      type: object
+      required:
+        - rpc_url
+        - network_passphrase
+        - poker_table_contract
+      properties:
+        rpc_url:
+          type: string
+          format: uri
+          description: Soroban RPC endpoint
+        network_passphrase:
+          type: string
+          description: Stellar network passphrase (e.g. "Testnet ; Public Global Stellar Network ; September 2015")
+        poker_table_contract:
+          type: string
+          description: Deployed poker-table contract ID
+
+    # ──────────── Flags ────────────
+    SetFlagBody:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+
+    # ──────────── Tables ────────────
+    CreateTableRequest:
+      type: object
+      properties:
+        max_players:
+          type: integer
+          minimum: 2
+          maximum: 6
+          description: Number of player seats (default 2)
+        solo:
+          type: boolean
+          description: Enable solo mode (player vs AI bot)
+        buy_in:
+          type: string
+          description: Buy-in amount as a parsed string (e.g. "1000000000")
+
+    CreateTableResponse:
+      type: object
+      required:
+        - table_id
+        - max_players
+        - joined_wallets
+      properties:
+        table_id:
+          type: integer
+        max_players:
+          type: integer
+        joined_wallets:
+          type: integer
+
+    OpenTablesResponse:
+      type: object
+      required:
+        - tables
+      properties:
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenTableInfo"
+
+    OpenTableInfo:
+      type: object
+      required:
+        - table_id
+        - phase
+        - max_players
+        - joined_wallets
+        - open_wallet_slots
+      properties:
+        table_id:
+          type: integer
+        phase:
+          type: string
+        max_players:
+          type: integer
+        joined_wallets:
+          type: integer
+        open_wallet_slots:
+          type: integer
+
+    JoinTableResponse:
+      type: object
+      required:
+        - table_id
+        - seat_index
+        - seat_address
+        - joined_wallets
+        - max_players
+      properties:
+        table_id:
+          type: integer
+        seat_index:
+          type: integer
+        seat_address:
+          type: string
+        joined_wallets:
+          type: integer
+        max_players:
+          type: integer
+
+    TableLobbyResponse:
+      type: object
+      required:
+        - table_id
+        - phase
+        - max_players
+        - seats
+        - joined_wallets
+      properties:
+        table_id:
+          type: integer
+        phase:
+          type: string
+        max_players:
+          type: integer
+        seats:
+          type: array
+          items:
+            $ref: "#/components/schemas/LobbySeat"
+        joined_wallets:
+          type: integer
+
+    LobbySeat:
+      type: object
+      required:
+        - seat_index
+        - chain_address
+      properties:
+        seat_index:
+          type: integer
+        chain_address:
+          type: string
+        wallet_address:
+          type: string
+          nullable: true
+
+    DealRequest:
+      type: object
+      required:
+        - players
+      properties:
+        players:
+          type: array
+          items:
+            type: string
+          description: |
+            Player addresses. If empty, resolves from lobby assignments.
+
+    DealResponse:
+      type: object
+      required:
+        - status
+        - deck_root
+        - hand_commitments
+        - proof_size
+        - session_id
+      properties:
+        status:
+          type: string
+          enum: [dealt]
+        deck_root:
+          type: string
+          description: Merkle root of the shuffled deck
+        hand_commitments:
+          type: array
+          items:
+            type: string
+          description: Per-player hand commitments
+        proof_size:
+          type: integer
+          description: Size of the generated proof in bytes
+        session_id:
+          type: string
+          format: uuid
+          description: MPC proof session identifier
+        tx_hash:
+          type: string
+          nullable: true
+          description: On-chain transaction hash (null if submission skipped)
+
+    RevealResponse:
+      type: object
+      required:
+        - status
+        - cards
+        - proof_size
+        - session_id
+      properties:
+        status:
+          type: string
+          enum: [revealed]
+        cards:
+          type: array
+          items:
+            type: integer
+          description: Revealed card indices
+        proof_size:
+          type: integer
+        session_id:
+          type: string
+          format: uuid
+        tx_hash:
+          type: string
+          nullable: true
+
+    ShowdownResponse:
+      type: object
+      required:
+        - status
+        - winner
+        - winner_index
+        - proof_size
+        - session_id
+      properties:
+        status:
+          type: string
+          enum: [showdown_complete, settled_timeout]
+        winner:
+          type: string
+          description: Winner's wallet address (empty on timeout settlement)
+        winner_index:
+          type: integer
+        proof_size:
+          type: integer
+        session_id:
+          type: string
+          format: uuid
+        tx_hash:
+          type: string
+          nullable: true
+
+    PlayerActionRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum: [fold, check, call, bet, raise, allin, all_in]
+        amount:
+          type: integer
+          description: Required for bet/raise actions
+
+    PlayerActionResponse:
+      type: object
+      required:
+        - status
+        - action
+        - player
+      properties:
+        status:
+          type: string
+          enum: [applied]
+        action:
+          type: string
+        amount:
+          type: integer
+          nullable: true
+        player:
+          type: string
+          description: Resolved on-chain player address
+        tx_hash:
+          type: string
+          nullable: true
+
+    PlayerCardsResponse:
+      type: object
+      required:
+        - card1
+        - card2
+        - salt1
+        - salt2
+      properties:
+        card1:
+          type: integer
+          description: First hole card index
+        card2:
+          type: integer
+          description: Second hole card index
+        salt1:
+          type: string
+          description: Salt for first card
+        salt2:
+          type: string
+          description: Salt for second card
+
+    TableStateResponse:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          description: Serialized on-chain table state
+
+    CommitteeStatusResponse:
+      type: object
+      required:
+        - nodes
+        - healthy
+        - status
+      properties:
+        nodes:
+          type: integer
+          description: Total number of MPC nodes
+        healthy:
+          type: array
+          items:
+            type: boolean
+          description: Per-node health status
+        status:
+          type: string
+          enum: [active, degraded]
+
+    MpcSessionStatus:
+      type: object
+      required:
+        - session_id
+        - table_id
+        - status
+      properties:
+        session_id:
+          type: string
+        table_id:
+          type: integer
+        status:
+          type: string
+        cancel_reason:
+          type: string
+          nullable: true
+        elapsed_secs:
+          type: integer
+
+    # ──────────── Wallet Auth ────────────
+    WalletChallengeRequest:
+      type: object
+      required:
+        - address
+      properties:
+        address:
+          type: string
+          pattern: "^G[A-Z0-9]{55}$"
+          description: Stellar wallet public key
+
+    WalletChallengeResponse:
+      type: object
+      required:
+        - challenge
+      properties:
+        challenge:
+          type: string
+          description: Challenge string to sign (expires in 300s)
+
+    WalletVerifyRequest:
+      type: object
+      required:
+        - address
+        - challenge
+        - signature
+      properties:
+        address:
+          type: string
+        challenge:
+          type: string
+        signature:
+          type: string
+          description: Ed25519 signature (hex or base64)
+
+    WalletVerifyResponse:
+      type: object
+      required:
+        - verified
+      properties:
+        verified:
+          type: boolean
+
+    # ──────────── Admin ────────────
+    UpsertRateLimitRequest:
+      type: object
+      required:
+        - config_type
+        - max_requests
+        - window_seconds
+        - enabled
+      properties:
+        config_type:
+          type: string
+        endpoint:
+          type: string
+          nullable: true
+        wallet_address:
+          type: string
+          nullable: true
+        max_requests:
+          type: integer
+        window_seconds:
+          type: integer
+        enabled:
+          type: boolean
+
+    RateLimitConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        config_type:
+          type: string
+        endpoint:
+          type: string
+          nullable: true
+        wallet_address:
+          type: string
+          nullable: true
+        max_requests:
+          type: integer
+        window_seconds:
+          type: integer
+        enabled:
+          type: boolean
+
+    UpsertCorsRequest:
+      type: object
+      required:
+        - origin
+        - enabled
+      properties:
+        origin:
+          type: string
+          format: uri
+        enabled:
+          type: boolean
+        description:
+          type: string
+          nullable: true
+
+    CorsConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        origin:
+          type: string
+        enabled:
+          type: boolean
+        description:
+          type: string
+          nullable: true
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        requester_address:
+          type: string
+          nullable: true
+        action:
+          type: string
+        endpoint:
+          type: string
+        method:
+          type: string
+        ip_address:
+          type: string
+          nullable: true
+        response_status:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        table_id:
+          type: integer
+          nullable: true
+        session_id:
+          type: string
+          nullable: true
+        record_hash:
+          type: string
+
+    InitiateMigrationRequest:
+      type: object
+      required:
+        - session_id
+        - table_id
+        - to_instance_id
+      properties:
+        session_id:
+          type: string
+        table_id:
+          type: integer
+        to_instance_id:
+          type: string
+
+    MigrationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        session_id:
+          type: string
+        table_id:
+          type: integer
+        from_instance_id:
+          type: string
+        to_instance_id:
+          type: string
+        migration_status:
+          type: string
+        initiated_at:
+          type: string
+          format: date-time

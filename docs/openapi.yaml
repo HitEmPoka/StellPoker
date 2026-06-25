@@ -1,0 +1,678 @@
+openapi: "3.0.3"
+info:
+  title: StellPoker Coordinator API
+  version: "0.1.0"
+  description: |
+    REST API for the MPC Coordinator service that orchestrates the MPC committee
+    for game proving and card shuffling in StellPoker.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Returns operational metrics and connectivity status of the coordinator.
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/stats:
+    get:
+      operationId: getStats
+      summary: Global stats and leaderboard
+      responses:
+        "200":
+          description: Stats response
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/chain-config:
+    get:
+      operationId: getChainConfig
+      summary: Public chain configuration parameters
+      responses:
+        "200":
+          description: Chain config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChainConfigResponse"
+        "503":
+          description: Soroban not configured
+
+  /api/flags:
+    get:
+      operationId: listFlags
+      summary: List all feature flags
+      responses:
+        "200":
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/flags/{key}:
+    post:
+      operationId: setFlag
+      summary: Set a feature flag
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetFlagBody"
+      responses:
+        "200":
+          description: Flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Bad request
+
+  /api/tables/create:
+    post:
+      operationId: createTable
+      summary: Create a new poker table
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTableRequest"
+      responses:
+        "200":
+          description: Table created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTableResponse"
+        "400":
+          description: Invalid parameters
+        "401":
+          description: Unauthorized
+        "429":
+          description: Rate limited
+        "502":
+          description: On-chain submission failed
+        "503":
+          description: Soroban not configured
+
+  /api/tables/open:
+    get:
+      operationId: listOpenTables
+      summary: List open tables with available wallet slots
+      responses:
+        "200":
+          description: List of open tables
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenTablesResponse"
+
+  /api/table/{table_id}/join:
+    post:
+      operationId: joinTable
+      summary: Register wallet-to-seat mapping for a wallet that joined on-chain
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Joined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JoinTableResponse"
+        "400":
+          description: Invalid table id
+        "401":
+          description: Unauthorized
+        "404":
+          description: Table not found
+        "409":
+          description: Conflict (not waiting phase or wallet not seated)
+        "429":
+          description: Rate limited
+
+  /api/table/{table_id}/lobby:
+    get:
+      operationId: getTableLobby
+      summary: Get lobby/seat information for a table
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Lobby info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableLobbyResponse"
+        "400":
+          description: Invalid table id
+        "404":
+          description: Table not found
+
+  /api/table/{table_id}/request-deal:
+    post:
+      operationId: requestDeal
+      summary: Initiate MPC deal (distribute cards)
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealRequest"
+      responses:
+        "200":
+          description: Deal successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealResponse"
+        "400":
+          description: Invalid parameters
+        "409":
+          description: Table already in active hand
+        "429":
+          description: Rate limited
+        "502":
+          description: MPC or Soroban failure
+        "503":
+          description: No MPC nodes configured
+
+  /api/table/{table_id}/request-reveal/{phase}:
+    post:
+      operationId: requestReveal
+      summary: Reveal board cards for a given phase (flop/turn/river)
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+        - name: phase
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [flop, turn, river]
+      responses:
+        "200":
+          description: Reveal successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevealResponse"
+        "400":
+          description: Invalid phase
+        "404":
+          description: Session not found
+        "409":
+          description: Phase out of order
+        "429":
+          description: Rate limited
+        "502":
+          description: MPC or Soroban failure
+        "503":
+          description: No MPC nodes configured
+
+  /api/table/{table_id}/request-showdown:
+    post:
+      operationId: requestShowdown
+      summary: Trigger showdown proof and settle the hand
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Showdown complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShowdownResponse"
+        "404":
+          description: Session not found
+        "409":
+          description: Not in river/showdown phase
+        "429":
+          description: Rate limited
+        "502":
+          description: MPC or Soroban failure
+        "503":
+          description: No MPC nodes configured
+
+  /api/table/{table_id}/player-action:
+    post:
+      operationId: playerAction
+      summary: Submit a player betting action
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayerActionRequest"
+      responses:
+        "200":
+          description: Action applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerActionResponse"
+        "400":
+          description: Invalid action or amount
+        "401":
+          description: Unauthorized
+        "409":
+          description: On-chain contract error
+        "429":
+          description: Rate limited
+        "502":
+          description: On-chain submission failed
+        "503":
+          description: Soroban not configured
+
+  /api/table/{table_id}/player/{address}/cards:
+    get:
+      operationId: getPlayerCards
+      summary: Get a player's hole cards (authenticated)
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player cards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerCardsResponse"
+        "401":
+          description: Unauthorized
+        "404":
+          description: Table or player not found
+        "502":
+          description: MPC failure
+
+  /api/table/{table_id}/state:
+    get:
+      operationId: getTableState
+      summary: Get the on-chain table state
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Table state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableStateResponse"
+        "503":
+          description: Soroban unavailable
+
+  /api/committee/status:
+    get:
+      operationId: getCommitteeStatus
+      summary: MPC committee health status
+      responses:
+        "200":
+          description: Committee status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitteeStatusResponse"
+
+  /api/session/{session_id}/status:
+    get:
+      operationId: getMpcSessionStatus
+      summary: Get the status of an MPC session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id, table_id, status, elapsed_secs]
+                properties:
+                  session_id:
+                    type: string
+                  table_id:
+                    type: integer
+                  status:
+                    type: string
+                  cancel_reason:
+                    type: string
+                    nullable: true
+                  elapsed_secs:
+                    type: integer
+        "404":
+          description: Session not found
+
+  /api/session/{session_id}/cancel:
+    post:
+      operationId: cancelMpcSession
+      summary: Cancel an MPC session (deprecated, use admin endpoint)
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session cancelled
+        "401":
+          description: Unauthorized
+        "404":
+          description: Session not found
+
+components:
+  parameters:
+    tableId:
+      name: table_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [uptime_seconds, mpc_nodes, soroban_rpc, active_mpc_sessions, request_metrics]
+      properties:
+        uptime_seconds:
+          type: integer
+        mpc_nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MpcNodeHealth"
+        soroban_rpc:
+          $ref: "#/components/schemas/SorobanHealth"
+        active_mpc_sessions:
+          type: integer
+        request_metrics:
+          type: object
+
+    MpcNodeHealth:
+      type: object
+      required: [endpoint, connected]
+      properties:
+        endpoint:
+          type: string
+        connected:
+          type: boolean
+        last_heartbeat:
+          type: string
+          nullable: true
+
+    SorobanHealth:
+      type: object
+      required: [endpoint, status]
+      properties:
+        endpoint:
+          type: string
+        status:
+          type: string
+          enum: [connected, disconnected]
+
+    ChainConfigResponse:
+      type: object
+      required: [rpc_url, network_passphrase, poker_table_contract]
+      properties:
+        rpc_url:
+          type: string
+        network_passphrase:
+          type: string
+        poker_table_contract:
+          type: string
+
+    SetFlagBody:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    CreateTableRequest:
+      type: object
+      properties:
+        max_players:
+          type: integer
+          minimum: 2
+          maximum: 6
+        solo:
+          type: boolean
+        buy_in:
+          type: string
+
+    CreateTableResponse:
+      type: object
+      required: [table_id, max_players, joined_wallets]
+      properties:
+        table_id:
+          type: integer
+        max_players:
+          type: integer
+        joined_wallets:
+          type: integer
+
+    OpenTablesResponse:
+      type: object
+      required: [tables]
+      properties:
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenTableInfo"
+
+    OpenTableInfo:
+      type: object
+      required: [table_id, phase, max_players, joined_wallets, open_wallet_slots]
+      properties:
+        table_id:
+          type: integer
+        phase:
+          type: string
+        max_players:
+          type: integer
+        joined_wallets:
+          type: integer
+        open_wallet_slots:
+          type: integer
+
+    JoinTableResponse:
+      type: object
+      required: [table_id, seat_index, seat_address, joined_wallets, max_players]
+      properties:
+        table_id:
+          type: integer
+        seat_index:
+          type: integer
+        seat_address:
+          type: string
+        joined_wallets:
+          type: integer
+        max_players:
+          type: integer
+
+    TableLobbyResponse:
+      type: object
+      required: [table_id, phase, max_players, seats, joined_wallets]
+      properties:
+        table_id:
+          type: integer
+        phase:
+          type: string
+        max_players:
+          type: integer
+        joined_wallets:
+          type: integer
+        seats:
+          type: array
+          items:
+            $ref: "#/components/schemas/LobbySeat"
+
+    LobbySeat:
+      type: object
+      required: [seat_index, chain_address]
+      properties:
+        seat_index:
+          type: integer
+        chain_address:
+          type: string
+        wallet_address:
+          type: string
+          nullable: true
+
+    DealRequest:
+      type: object
+      required: [players]
+      properties:
+        players:
+          type: array
+          items:
+            type: string
+
+    DealResponse:
+      type: object
+      required: [status, deck_root, hand_commitments, proof_size, session_id]
+      properties:
+        status:
+          type: string
+        deck_root:
+          type: string
+        hand_commitments:
+          type: array
+          items:
+            type: string
+        proof_size:
+          type: integer
+        session_id:
+          type: string
+        tx_hash:
+          type: string
+          nullable: true
+
+    RevealResponse:
+      type: object
+      required: [status, cards, proof_size, session_id]
+      properties:
+        status:
+          type: string
+        cards:
+          type: array
+          items:
+            type: integer
+        proof_size:
+          type: integer
+        session_id:
+          type: string
+        tx_hash:
+          type: string
+          nullable: true
+
+    ShowdownResponse:
+      type: object
+      required: [status, winner, winner_index, proof_size, session_id]
+      properties:
+        status:
+          type: string
+        winner:
+          type: string
+        winner_index:
+          type: integer
+        proof_size:
+          type: integer
+        session_id:
+          type: string
+        tx_hash:
+          type: string
+          nullable: true
+
+    PlayerActionRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [fold, check, call, bet, raise, allin, all_in]
+        amount:
+          type: integer
+          nullable: true
+
+    PlayerActionResponse:
+      type: object
+      required: [status, action, player]
+      properties:
+        status:
+          type: string
+        action:
+          type: string
+        amount:
+          type: integer
+          nullable: true
+        player:
+          type: string
+        tx_hash:
+          type: string
+          nullable: true
+
+    PlayerCardsResponse:
+      type: object
+      required: [card1, card2, salt1, salt2]
+      properties:
+        card1:
+          type: integer
+        card2:
+          type: integer
+        salt1:
+          type: string
+        salt2:
+          type: string
+
+    TableStateResponse:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+
+    CommitteeStatusResponse:
+      type: object
+      required: [nodes, healthy, status]
+      properties:
+        nodes:
+          type: integer
+        healthy:
+          type: array
+          items:
+            type: boolean
+        status:
+          type: string

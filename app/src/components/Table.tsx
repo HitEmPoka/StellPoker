@@ -16,7 +16,7 @@ import {
   trySilentReconnect,
   getActiveAddress,
   type WalletSession,
-} from "@/lib/freighter";
+} from "@/lib/wallet";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
 import { usePokerActions } from "@/lib/use-poker-actions";

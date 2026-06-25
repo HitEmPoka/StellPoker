@@ -7,6 +7,7 @@ import {
 
 export interface WalletSession {
   address: string;
+  walletType: "freighter" | "lobstr";
   signMessage: (message: string) => Promise<string>;
 }
 
@@ -227,6 +228,7 @@ async function connectViaOfficialApi(): Promise<WalletSession | null> {
 
   return {
     address,
+    walletType: "freighter" as const,
     signMessage: async (message: string) => {
       const result = await freighterSignMessage(message, { address });
       return parseModernSignature(result);
@@ -258,6 +260,7 @@ async function connectViaLegacyApi(): Promise<WalletSession | null> {
 
   return {
     address,
+    walletType: "freighter" as const,
     signMessage: async (message: string): Promise<string> => {
       const sig = await api.signMessage!(message, { address });
       return parseSignature(sig);
@@ -291,6 +294,13 @@ export function clearSavedWallet(): void {
   } catch {
     // ignore
   }
+}
+
+export function isFreighterInstalled(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const legacyApi = getLegacyApiCandidate();
+  return legacyApi !== null;
 }
 
 export async function connectFreighterWallet(): Promise<WalletSession> {
@@ -348,6 +358,7 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
 
     return {
       address,
+      walletType: "freighter" as const,
       signMessage: async (message: string) => {
         const result = await freighterSignMessage(message, { address });
         return parseModernSignature(result);
