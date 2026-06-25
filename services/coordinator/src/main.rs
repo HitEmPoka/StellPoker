@@ -126,6 +126,13 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
+    billing_engine: Arc<billing::BillingEngine>,
+
+    stats: stats::StatsStore,
+    feature_flags: feature_flags::FeatureFlagStore,
+    db_pool: Option<Arc<sqlx::PgPool>>,
+    instance_id: String,
+    pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
 }
 
 #[derive(Clone)]
