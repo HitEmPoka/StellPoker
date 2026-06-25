@@ -1,0 +1,63 @@
+version: '3.8'
+
+# Logging overlay — run alongside the main stack:
+#   docker-compose -f docker-compose.yml -f infrastructure/logging/docker-compose.logging.yml up
+#
+# Services:
+#   loki     :3100  — log storage and query engine
+#   promtail         — scrapes Docker container logs and ships to Loki
+#   grafana  :3000  — dashboards (admin / stellpoker)
+
+services:
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: stellpoker-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./infrastructure/logging/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready | grep -q ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: stellpoker-promtail
+    volumes:
+      - ./infrastructure/logging/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp/positions
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: stellpoker-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: stellpoker
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./infrastructure/logging/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/logging/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  loki-data:
+  promtail-positions:
+  grafana-data:

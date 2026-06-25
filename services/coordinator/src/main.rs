@@ -33,14 +33,20 @@ use std::time::{Instant, SystemTime};
 use tokio::sync::{RwLock, Mutex};
 use tower_http::cors::CorsLayer;
 use serde::Serialize;
+use prometheus::{Encoder, TextEncoder, Registry, Opts, HistogramOpts, HistogramVec, IntCounterVec, Gauge};
+use sysinfo::{get_current_pid, ProcessesToUpdate, System};
 
 mod api;
+mod db;
 #[path = "middleware.rs"]
 mod request_log;
+mod feature_flags;
 mod mpc;
 mod session_gc;
 mod soroban;
 mod stats;
+
+use api::admin::{AdminConfig, AdminState};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct LatencyHistogram {
@@ -78,11 +84,22 @@ pub struct MpcNodeHealth {
 }
 
 #[derive(Clone)]
+pub struct PrometheusMetrics {
+    pub registry: Arc<Registry>,
+    pub request_counter: IntCounterVec,
+    pub request_errors: IntCounterVec,
+    pub request_latency: HistogramVec,
+    pub process_cpu_percent: Gauge,
+    pub process_memory_bytes: Gauge,
+}
+
+#[derive(Clone)]
 pub struct MetricsState {
     pub boot_time: Instant,
     pub active_mpc_sessions: Arc<AtomicUsize>,
     pub route_metrics: Arc<Mutex<HashMap<String, RouteMetric>>>,
     pub node_healths: Arc<Mutex<Vec<MpcNodeHealth>>>,
+    pub prometheus: PrometheusMetrics,
 }
 
 #[derive(Clone)]
@@ -92,11 +109,14 @@ struct AppState {
     mpc_config: MpcConfig,
     soroban_config: soroban::SorobanConfig,
     auth_state: Arc<RwLock<AuthState>>,
+    admin_config: Arc<RwLock<api::admin::AdminConfig>>,
+    admin_state: api::admin::AdminState,
     rate_limit_state: Arc<RwLock<RateLimitState>>,
     metrics: MetricsState,
     chat_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     mpc_sessions: session_gc::SessionStore,
     stats: stats::StatsStore,
+    feature_flags: feature_flags::FeatureFlagStore,
 }
 
 #[derive(Clone)]
@@ -202,19 +222,105 @@ async fn main() {
         })
         .collect::<Vec<_>>();
 
+    let prometheus_registry = Arc::new(Registry::new());
+    let request_counter = IntCounterVec::new(
+        Opts::new("coordinator_requests_total", "Total coordinator requests."),
+        &["method", "route"],
+    )
+    .unwrap();
+    let request_errors = IntCounterVec::new(
+        Opts::new("coordinator_request_errors_total", "Total coordinator request errors."),
+        &["method", "route"],
+    )
+    .unwrap();
+    let request_latency = HistogramVec::new(
+        HistogramOpts::new(
+            "coordinator_request_latency_seconds",
+            "Request latency histogram in seconds.",
+        )
+        .buckets(vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+        &["method", "route"],
+    )
+    .unwrap();
+    let process_cpu_percent = Gauge::with_opts(
+        Opts::new(
+            "coordinator_process_cpu_percent",
+            "Coordinator process CPU usage percentage.",
+        ),
+    )
+    .unwrap();
+    let process_memory_bytes = Gauge::with_opts(
+        Opts::new(
+            "coordinator_process_memory_bytes",
+            "Coordinator process memory usage in bytes.",
+        ),
+    )
+    .unwrap();
+
+    prometheus_registry
+        .register(Box::new(request_counter.clone()))
+        .unwrap();
+    prometheus_registry
+        .register(Box::new(request_errors.clone()))
+        .unwrap();
+    prometheus_registry
+        .register(Box::new(request_latency.clone()))
+        .unwrap();
+    prometheus_registry
+        .register(Box::new(process_cpu_percent.clone()))
+        .unwrap();
+    prometheus_registry
+        .register(Box::new(process_memory_bytes.clone()))
+        .unwrap();
+
     let metrics = MetricsState {
         boot_time: Instant::now(),
         active_mpc_sessions: Arc::new(AtomicUsize::new(0)),
         route_metrics: Arc::new(Mutex::new(HashMap::new())),
         node_healths: Arc::new(Mutex::new(initial_node_healths)),
+        prometheus: PrometheusMetrics {
+            registry: prometheus_registry,
+            request_counter,
+            request_errors,
+            request_latency,
+            process_cpu_percent: process_cpu_percent.clone(),
+            process_memory_bytes: process_memory_bytes.clone(),
+        },
     };
 
+    let system_state = Arc::new(Mutex::new(System::new_all()));
     let mpc_sessions: session_gc::SessionStore =
         Arc::new(RwLock::new(std::collections::HashMap::new()));
+
+    let metrics_clone = metrics.clone();
+    let system_state_clone = Arc::clone(&system_state);
+    tokio::spawn(async move {
+        let pid = get_current_pid().unwrap();
+        loop {
+            {
+                let mut system = system_state_clone.lock().await;
+                system.refresh_processes(ProcessesToUpdate::All, true);
+                if let Some(process) = system.process(pid) {
+                    metrics_clone
+                        .prometheus
+                        .process_cpu_percent
+                        .set(process.cpu_usage() as f64);
+                    metrics_clone
+                        .prometheus
+                        .process_memory_bytes
+                        .set(process.memory() as f64 * 1024.0);
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+    });
 
     session_gc::spawn_gc_task(Arc::clone(&mpc_sessions));
 
     let stats_store = stats::new_store();
+
+    let admin_config = AdminConfig::from_env();
+    let admin_state = AdminState::new();
 
     // Spawn the Horizon event indexer if Soroban is configured.
     if soroban_config.is_configured() && !soroban_config.poker_table_contract.is_empty() {
@@ -234,17 +340,23 @@ async fn main() {
         tracing::info!("Stats indexer started (poll={}s)", poll_secs);
     }
 
+    let feature_flag_store = feature_flags::FeatureFlagStore::from_env();
+    tracing::info!("Feature flags initialised");
+
     let state = AppState {
         tables: Arc::new(RwLock::new(HashMap::new())),
         lobby_assignments: Arc::new(RwLock::new(HashMap::new())),
         mpc_config,
         soroban_config,
         auth_state: Arc::new(RwLock::new(AuthState::default())),
+        admin_config: Arc::new(RwLock::new(admin_config)),
+        admin_state,
         rate_limit_state: Arc::new(RwLock::new(RateLimitState::default())),
         metrics: metrics.clone(),
         chat_channels: Arc::new(Mutex::new(HashMap::new())),
         mpc_sessions,
         stats: stats_store,
+        feature_flags: feature_flag_store,
     };
 
     // Spawn background node health check task
@@ -278,8 +390,11 @@ async fn main() {
     });
 
     let app = Router::new()
+        .route("/metrics", get(metrics_endpoint))
         .route("/api/health", get(health))
         .route("/api/stats", get(get_stats))
+        .route("/api/flags", get(api::flags::list_flags))
+        .route("/api/flags/:key", post(api::flags::set_flag))
         .route("/api/tables/create", post(api::create_table))
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/chain-config", get(api::get_chain_config))
@@ -307,6 +422,13 @@ async fn main() {
         .route("/api/table/:table_id/chat/ws", get(chat_ws_handler))
         .route("/api/session/:session_id/cancel", post(api::cancel_mpc_session))
         .route("/api/session/:session_id/status", get(api::get_mpc_session_status))
+        // Admin endpoints (RBAC-protected)
+        .route("/api/admin/health", get(api::admin_health))
+        .route("/api/admin/sessions", get(api::admin_list_sessions))
+        .route("/api/admin/sessions/:session_id/cancel", post(api::admin_cancel_session))
+        .route("/api/admin/sessions/cleanup", post(api::admin_cleanup_sessions))
+        .route("/api/admin/stats", get(api::admin_stats))
+        .route("/api/admin/config/reload", post(api::admin_reload_config))
         .layer(axum::middleware::from_fn_with_state(state.clone(), metrics_middleware))
         .layer(middleware::from_fn(request_log::log_request))
         .layer(CorsLayer::permissive())
@@ -406,6 +528,28 @@ async fn metrics_middleware(
     let status = response.status();
     let is_error = status.is_server_error() || status.is_client_error();
 
+    let labels = [method.as_str(), route.as_str()];
+    state
+        .metrics
+        .prometheus
+        .request_counter
+        .with_label_values(&labels)
+        .inc();
+    if is_error {
+        state
+            .metrics
+            .prometheus
+            .request_errors
+            .with_label_values(&labels)
+            .inc();
+    }
+    state
+        .metrics
+        .prometheus
+        .request_latency
+        .with_label_values(&labels)
+        .observe(duration_ms as f64 / 1000.0);
+
     let mut route_metrics = state.metrics.route_metrics.lock().await;
     let entry = route_metrics.entry(route).or_default();
     entry.count += 1;
@@ -425,6 +569,19 @@ async fn metrics_middleware(
     }
 
     response
+}
+
+async fn metrics_endpoint(State(state): State<AppState>) -> Response {
+    let metric_families = state.metrics.prometheus.registry.gather();
+    let encoder = TextEncoder::new();
+    let mut buffer = Vec::new();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+
+    Response::builder()
+        .status(200)
+        .header("Content-Type", encoder.format_type())
+        .body(Body::from(buffer))
+        .unwrap()
 }
 
 fn sanitize_chat_message(input: &str) -> String {

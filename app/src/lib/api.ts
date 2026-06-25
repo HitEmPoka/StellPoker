@@ -450,3 +450,43 @@ export async function getStats(): Promise<StatsResponse> {
   if (!res.ok) throw new Error(`Failed to get stats: ${res.status}`);
   return res.json();
 }
+
+export interface WalletChallengeResponse {
+  challenge: string;
+}
+
+export interface WalletVerifyResponse {
+  verified: boolean;
+}
+
+export async function getWalletChallenge(address: string): Promise<WalletChallengeResponse> {
+  const res = await fetch(`${API_BASE}/api/wallet/challenge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address }),
+  });
+  if (!res.ok) {
+    throw new Error(await readApiError(res, `Failed to get wallet challenge`));
+  }
+  return res.json();
+}
+
+export async function verifyWalletChallenge(
+  address: string,
+  challenge: string,
+  signature: string
+): Promise<WalletVerifyResponse> {
+  const res = await fetch(`${API_BASE}/api/wallet/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ address, challenge, signature }),
+  });
+  if (!res.ok) {
+    throw new Error(await readApiError(res, `Wallet verification failed`));
+  }
+  return res.json();
+}

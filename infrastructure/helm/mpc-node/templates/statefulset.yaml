@@ -1,0 +1,128 @@
+{{- if not .Values.partyConfigs.useSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mpc-node.partyConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mpc-node.labels" . | nindent 4 }}
+data:
+  {{- range $filename, $content := .Values.partyConfigs.configs }}
+  {{ $filename }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mpc-node.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mpc-node.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "mpc-node.headlessServiceName" . }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "mpc-node.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "mpc-node.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mpc-node.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mpc-node
+          image: {{ include "mpc-node.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # Extract NODE_ID from the StatefulSet pod ordinal (pod name suffix).
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export NODE_ID="${HOSTNAME##*-}"
+              export PARTY_CONFIG="/app/config/party_${NODE_ID}.toml"
+              exec /usr/local/bin/mpc-node
+          ports:
+            - name: http
+              containerPort: 8101
+              protocol: TCP
+            - name: mpc
+              containerPort: 10000
+              protocol: TCP
+          env:
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: party-configs
+              mountPath: /app/config
+              readOnly: true
+            - name: circuits
+              mountPath: {{ .Values.volumes.circuits.mountPath }}
+              readOnly: true
+            - name: crs
+              mountPath: {{ .Values.volumes.crs.mountPath }}
+              readOnly: true
+      volumes:
+        - name: party-configs
+          {{- if .Values.partyConfigs.useSecret }}
+          secret:
+            secretName: {{ include "mpc-node.partyConfigName" . }}
+          {{- else }}
+          configMap:
+            name: {{ include "mpc-node.partyConfigName" . }}
+          {{- end }}
+        - name: circuits
+          {{- if .Values.volumes.circuits.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.circuits.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: crs
+          {{- if .Values.volumes.crs.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.volumes.crs.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

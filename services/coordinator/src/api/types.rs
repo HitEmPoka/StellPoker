@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Request body for `POST /api/flags/:key`.
+#[derive(Deserialize)]
+pub struct SetFlagBody {
+    pub enabled: bool,
+}
+
 #[derive(Deserialize)]
 pub struct DealRequest {
     pub players: Vec<String>,
@@ -128,3 +134,26 @@ pub struct LobbySeat {
     pub chain_address: String,
     pub wallet_address: Option<String>,
 }
+
+#[derive(Deserialize)]
+pub struct WalletChallengeRequest {
+    pub address: String,
+}
+
+#[derive(Serialize)]
+pub struct WalletChallengeResponse {
+    pub challenge: String,
+}
+
+#[derive(Deserialize)]
+pub struct WalletVerifyRequest {
+    pub address: String,
+    pub challenge: String,
+    pub signature: String,
+}
+
+#[derive(Serialize)]
+pub struct WalletVerifyResponse {
+    pub verified: bool,
+}
+

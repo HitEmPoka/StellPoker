@@ -287,3 +287,150 @@ fn parse_u32_from_stdout(stdout: &str) -> Option<u32> {
     }
     None
 }
+
+#[cfg(test)]
+mod error_handling_tests {
+    //! Coverage for the **Soroban RPC timeout** and **on-chain state-store
+    //! connection failure** error paths.
+    //!
+    //! The coordinator has no SQL database: all durable game state lives
+    //! on-chain and is read/written through the Stellar RPC via the `stellar`
+    //! CLI. A dropped RPC connection or a request timeout is therefore this
+    //! service's equivalent of a "database connection failure". Such errors
+    //! must be classified as *transient* so the invoke layer retries, while
+    //! genuine contract-logic errors must NOT be retried.
+    use super::*;
+
+    fn config() -> SorobanConfig {
+        SorobanConfig {
+            rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
+            secret_key: "test_secret".to_string(),
+            poker_table_contract: String::new(),
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            onchain_table_id: None,
+            player_identities: Vec::new(),
+        }
+    }
+
+    // `std::process::Output` cannot be built portably; on unix we synthesize an
+    // exit status from a raw wait code (0 = success, 256 = exit code 1).
+    #[cfg(unix)]
+    fn failed_output(stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn success_output(stdout: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rpc_timeout_is_classified_transient() {
+        for msg in [
+            "transaction simulation failed: timed out",
+            "request timeout after 30s",
+            "error: resource temporarily unavailable",
+            "networking or low-level protocol error: stream closed",
+        ] {
+            assert!(
+                is_transient_invoke_error(&failed_output(msg)),
+                "expected transient classification for: {msg}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rpc_connection_reset_is_transient() {
+        // The on-chain state store dropped the connection -- treat as transient.
+        assert!(is_transient_invoke_error(&failed_output(
+            "error sending request: connection reset by peer"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resource_limit_is_transient() {
+        assert!(is_transient_invoke_error(&failed_output(
+            "HostError: ResourceLimitExceeded"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn genuine_contract_error_is_not_retried() {
+        // A real contract-logic failure must NOT be classified transient --
+        // retrying it would be pointless and could double-submit.
+        assert!(!is_transient_invoke_error(&failed_output(
+            "HostError: Error(Contract, #5) NotAuthorizedCommittee"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_output_is_never_transient() {
+        assert!(!is_transient_invoke_error(&success_output("ok")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_tx_result_propagates_invoke_failure() {
+        let err = parse_tx_result(failed_output("rpc unreachable")).unwrap_err();
+        assert!(err.contains("stellar contract invoke failed"), "got: {err}");
+        assert!(err.contains("rpc unreachable"), "got: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_tx_result_returns_hash_on_success() {
+        assert_eq!(
+            parse_tx_result(success_output("deadbeefhash")).unwrap(),
+            "deadbeefhash"
+        );
+        // Some CLI versions print nothing on success.
+        assert_eq!(parse_tx_result(success_output("   ")).unwrap(), "submitted");
+    }
+
+    #[test]
+    fn committee_address_rejects_invalid_secret() {
+        let err = config().committee_address().unwrap_err();
+        assert!(err.contains("invalid committee secret key"), "got: {err}");
+    }
+
+    #[test]
+    fn unconfigured_soroban_is_reported() {
+        // Default secret + empty contract => not configured (submissions skipped).
+        assert!(!config().is_configured());
+    }
+
+    #[test]
+    fn resolve_onchain_table_id_prefers_explicit_then_fallback() {
+        let mut cfg = config();
+        assert_eq!(resolve_onchain_table_id(&cfg, 7), 7);
+        assert_eq!(resolve_onchain_table_id(&cfg, 0), 0);
+        cfg.onchain_table_id = Some(42);
+        assert_eq!(resolve_onchain_table_id(&cfg, 0), 42);
+    }
+
+    #[test]
+    fn value_parsers_reject_malformed_values() {
+        assert_eq!(parse_i128_value(&serde_json::json!("123")), Some(123));
+        assert_eq!(parse_i128_value(&serde_json::json!(45)), Some(45));
+        assert_eq!(parse_i128_value(&serde_json::json!("not-a-number")), None);
+        assert_eq!(parse_i128_value(&serde_json::json!(true)), None);
+        assert_eq!(parse_u32_value(&serde_json::json!("9")), Some(9));
+        assert_eq!(parse_u32_value(&serde_json::json!(-1)), None);
+        assert_eq!(parse_u32_value(&serde_json::json!("xx")), None);
+    }
+}
