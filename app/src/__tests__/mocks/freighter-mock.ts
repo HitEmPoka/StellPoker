@@ -73,6 +73,16 @@ export class FreighterMock {
       }),
 
       isConnected: vi.fn().mockResolvedValue(this.config.connected),
+
+      signTransaction: vi.fn().mockImplementation((txXdr: string, opts?: any) => {
+        if (this.config.signError) {
+          return Promise.resolve({ error: this.config.signError });
+        }
+        return Promise.resolve({ 
+          signedTxXdr: "signed_" + txXdr,
+          signerAddress: this.config.address 
+        });
+      }),
     };
 
     // Store reference for access to mock methods

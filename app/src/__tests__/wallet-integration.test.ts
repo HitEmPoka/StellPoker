@@ -181,6 +181,9 @@ describe("Wallet Integration Tests", () => {
       // Mock localStorage with saved wallet type
       vi.spyOn(Storage.prototype, "getItem").mockReturnValue("freighter");
       
+      // Ensure Freighter is installed and connected
+      freighterMock.setConnected(true);
+      
       const { trySilentReconnect } = await import("../lib/wallet");
       const session = await trySilentReconnect();
       
