@@ -40,6 +40,7 @@ use tower_http::cors::CorsLayer;
 mod api;
 mod audit_log;
 mod cors_db;
+pub mod crypto;
 mod db;
 mod feature_flags;
 mod hot_reload;
@@ -127,6 +128,8 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
+    /// Shared key ring for encrypting sensitive in-memory fields.
+    enc_key: Arc<crypto::EncryptionKey>,
 }
 
 #[derive(Clone)]
@@ -138,8 +141,8 @@ struct MpcConfig {
     circuit_dir: String,
     /// Soroban RPC endpoint
     soroban_rpc: String,
-    /// Committee signing key (for submitting txns)
-    committee_secret: String,
+    /// Committee signing key encrypted with the process encryption key.
+    committee_secret: crypto::EncryptedField,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -202,6 +205,15 @@ async fn main() {
         tracing_subscriber::fmt().init();
     }
 
+    let enc_key = crypto::EncryptionKey::from_env()
+        .unwrap_or_else(|_| crypto::EncryptionKey::ephemeral());
+    let enc_key = Arc::new(enc_key);
+
+    let committee_secret_plaintext = std::env::var("COMMITTEE_SECRET")
+        .unwrap_or_else(|_| "test_secret".to_string());
+    let committee_secret = crypto::EncryptedField::encrypt(&enc_key, &committee_secret_plaintext)
+        .expect("failed to encrypt committee_secret");
+
     let mpc_config = MpcConfig {
         node_endpoints: vec![
             std::env::var("MPC_NODE_0").unwrap_or_else(|_| "http://localhost:8101".to_string()),
@@ -211,8 +223,7 @@ async fn main() {
         circuit_dir: std::env::var("CIRCUIT_DIR").unwrap_or_else(|_| "./circuits".to_string()),
         soroban_rpc: std::env::var("SOROBAN_RPC")
             .unwrap_or_else(|_| "http://localhost:8000/soroban/rpc".to_string()),
-        committee_secret: std::env::var("COMMITTEE_SECRET")
-            .unwrap_or_else(|_| "test_secret".to_string()),
+        committee_secret,
     };
 
     let soroban_config = soroban::SorobanConfig::from_env();
@@ -444,6 +455,7 @@ async fn main() {
         db_pool,
         instance_id,
         plugin_loader,
+        enc_key,
     };
 
     if let Some(path) = hot_reload_snapshot {

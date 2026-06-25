@@ -30,3 +30,10 @@ sha2 = "0.10"
 hostname = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 wasmtime = { version = "14", features = ["cranelift", "pooling-allocator"] }
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+aws-sdk-kms = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+
+[features]
+kms = ["aws-sdk-kms", "aws-config"]
