@@ -14,6 +14,7 @@ import { createInitialState } from "@/lib/game-state";
 import * as api from "@/lib/api";
 import {
   trySilentReconnect,
+  getActiveAddress,
   type WalletSession,
 } from "@/lib/freighter";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
@@ -93,6 +94,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>(initialPlayMode ?? "headsup");
   const [error, setError] = useState<string | null>(null);
+  const [walletVerificationError, setWalletVerificationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [joiningTable, setJoiningTable] = useState(false);
   const [activeRequest, setActiveRequest] = useState<ActiveRequest>(null);
@@ -339,6 +341,69 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Periodic wallet spoofing and ownership verification check
+  useEffect(() => {
+    if (!wallet) {
+      setWalletVerificationError(null);
+      return;
+    }
+
+    let isSubscribed = true;
+    let timerId: NodeJS.Timeout;
+
+    const performVerification = async () => {
+      try {
+        const activeAddr = await getActiveAddress();
+        if (!isSubscribed) return;
+
+        if (!activeAddr) {
+          setWalletVerificationError("Freighter wallet is locked or disconnected. Please unlock Freighter.");
+          return;
+        }
+
+        if (activeAddr.trim().toLowerCase() !== wallet.address.trim().toLowerCase()) {
+          setWalletVerificationError(
+            `Wallet mismatch detected! Active Freighter account (${activeAddr.slice(0, 6)}...${activeAddr.slice(-4)}) does not match playing account (${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}).`
+          );
+          return;
+        }
+
+        // Silent check succeeded, now perform cryptographic challenge-response
+        const { challenge } = await api.getWalletChallenge(wallet.address);
+        if (!isSubscribed) return;
+
+        const signature = await wallet.signMessage(challenge);
+        if (!isSubscribed) return;
+
+        const { verified } = await api.verifyWalletChallenge(wallet.address, challenge, signature);
+        if (!isSubscribed) return;
+
+        if (!verified) {
+          setWalletVerificationError("Cryptographic verification failed. Wallet spoofing detected!");
+        } else {
+          setWalletVerificationError(null);
+        }
+      } catch (err) {
+        if (!isSubscribed) return;
+        setWalletVerificationError(
+          "Wallet ownership verification failed: " +
+            (err instanceof Error ? err.message : String(err))
+        );
+      }
+    };
+
+    // Run verification immediately, then every 30 seconds
+    void performVerification();
+    timerId = setInterval(() => {
+      void performVerification();
+    }, 30000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(timerId);
+    };
+  }, [wallet]);
 
   // Elapsed timer while loading
   useEffect(() => {
@@ -1163,6 +1228,57 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               SEND
             </button>
           </form>
+        </div>
+      )}
+
+      {/* Wallet Verification Mismatch/Spoof Warning Overlay */}
+      {walletVerificationError && (
+        <div
+          className="fixed inset-0 bg-black/85 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className="max-w-md w-full pixel-border-thin p-6 text-center flex flex-col gap-4"
+            style={{
+              background: "rgba(20, 10, 10, 0.95)",
+              borderColor: "#ff7675",
+              color: "#ff7675",
+              boxShadow: "0 0 25px rgba(255, 118, 117, 0.3)",
+            }}
+          >
+            <h2
+              className="text-[14px]"
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                textShadow: "2px 2px 0 #000",
+              }}
+            >
+              ⚠️ SECURITY WARNING ⚠️
+            </h2>
+            <p
+              className="text-[10px] leading-relaxed"
+              style={{
+                color: "#ff8c8a",
+                fontFamily: "'Press Start 2P', monospace",
+              }}
+            >
+              {walletVerificationError}
+            </p>
+            <div
+              className="text-[9px] mt-2 p-3 bg-red-950/40 border border-red-500/20 text-left"
+              style={{ color: "#fab1a0", fontFamily: "'Press Start 2P', monospace", lineHeight: "1.6" }}
+            >
+              TO RESOLVE THIS:
+              <br />
+              1. OPEN YOUR FREIGHTER EXTENSION.
+              <br />
+              2. SWAP BACK TO THE ACCOUNT FOR ADDRESS:
+              <br />
+              <span className="font-mono text-white select-all break-all block mt-2 text-[8px]">
+                {wallet?.address}
+              </span>
+            </div>
+          </div>
         </div>
       )}
     </PixelWorld>

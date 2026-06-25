@@ -358,3 +358,15 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
     return null;
   }
 }
+
+export async function getActiveAddress(): Promise<string | null> {
+  try {
+    const connected = await freighterIsConnected();
+    if (!connected.isConnected) return null;
+    const current = await freighterGetAddress();
+    if (current.error || !current.address) return null;
+    return current.address;
+  } catch {
+    return null;
+  }
+}
