@@ -57,6 +57,15 @@ impl Drop for SessionGuard {
 ///
 /// Public chain parameters used by the frontend for wallet-signed
 /// on-chain transactions.
+#[utoipa::path(
+    get,
+    path = "/api/chain-config",
+    tag = "Chain",
+    responses(
+        (status = 200, description = "Chain configuration", body = ChainConfigResponse),
+        (status = 503, description = "Soroban not configured")
+    )
+)]
 pub async fn get_chain_config(
     State(state): State<AppState>,
 ) -> Result<Json<ChainConfigResponse>, StatusCode> {
@@ -75,6 +84,22 @@ pub async fn get_chain_config(
 ///
 /// Creates a new empty on-chain table by copying config from the reference
 /// table. Players then join directly on-chain with their own wallet auth.
+#[utoipa::path(
+    post,
+    path = "/api/tables/create",
+    tag = "Tables",
+    request_body = CreateTableRequest,
+    responses(
+        (status = 200, description = "Table created", body = CreateTableResponse),
+        (status = 400, description = "Invalid parameters"),
+        (status = 401, description = "Unauthorized"),
+        (status = 503, description = "Soroban not configured or solo mode disabled"),
+        (status = 502, description = "Soroban/MPC interaction failed")
+    ),
+    security(
+        ("WalletAuth" = [])
+    )
+)]
 pub async fn create_table(
     State(state): State<AppState>,
     headers: HeaderMap,

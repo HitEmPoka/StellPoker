@@ -36,6 +36,8 @@ use std::time::{Instant, SystemTime};
 use sysinfo::{get_current_pid, ProcessesToUpdate, System};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::CorsLayer;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 mod api;
 mod archiver;
@@ -58,7 +60,7 @@ mod stats;
 
 use api::admin::{AdminConfig, AdminState};
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, utoipa::ToSchema)]
 pub struct LatencyHistogram {
     pub under_50ms: u64,
     pub under_250ms: u64,
@@ -79,19 +81,131 @@ impl Default for LatencyHistogram {
     }
 }
 
-#[derive(Serialize, Clone, Debug, Default)]
+#[derive(Serialize, Clone, Debug, Default, utoipa::ToSchema)]
 pub struct RouteMetric {
     pub count: u64,
     pub errors: u64,
     pub latency_histogram: LatencyHistogram,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, utoipa::ToSchema)]
 pub struct MpcNodeHealth {
     pub endpoint: String,
     pub connected: bool,
-    pub last_heartbeat: Option<SystemTime>,
+    pub last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct SorobanHealth {
+    pub endpoint: String,
+    pub status: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct HealthResponse {
+    pub uptime_seconds: u64,
+    pub mpc_nodes: Vec<MpcNodeHealth>,
+    pub soroban_rpc: SorobanHealth,
+    pub active_mpc_sessions: usize,
+    pub request_metrics: HashMap<String, RouteMetric>,
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        health,
+        get_stats,
+        api::get_chain_config,
+        api::create_table,
+        api::list_open_tables,
+        api::join_table,
+        api::get_table_lobby,
+        api::request_deal,
+        api::request_reveal,
+        api::request_showdown,
+        api::player_action,
+        api::get_player_cards,
+        api::get_table_state,
+        api::committee_status,
+        api::register_node,
+        api::node_heartbeat,
+        api::deregister_node,
+        api::cancel_mpc_session,
+        api::get_mpc_session_status,
+        api::admin_health,
+        api::admin_list_sessions,
+        api::admin_cancel_session,
+        api::admin_cleanup_sessions,
+        api::admin_stats,
+        api::admin_reload_config,
+        api::flags::list_flags,
+        api::flags::set_flag,
+        api::plugins::list_plugins,
+        api::plugins::plugin_health,
+        api::plugins::load_plugin,
+        api::plugins::rescan_plugins,
+        api::plugins::get_plugin,
+        api::plugins::unload_plugin,
+        api::plugins::call_plugin_function,
+        api::auth::get_wallet_challenge,
+        api::auth::verify_wallet,
+    ),
+    components(schemas(
+        LatencyHistogram,
+        RouteMetric,
+        MpcNodeHealth,
+        SorobanHealth,
+        HealthResponse,
+        stats::GlobalStats,
+        stats::PlayerStats,
+        stats::StatsResponse,
+        api::types::SetFlagBody,
+        api::types::DealRequest,
+        api::types::DealResponse,
+        api::types::RevealResponse,
+        api::types::ShowdownResponse,
+        api::types::PlayerActionRequest,
+        api::types::PlayerActionResponse,
+        api::types::TableStateResponse,
+        api::types::PlayerCardsResponse,
+        api::types::CommitteeStatusResponse,
+        api::types::RegisterNodeRequest,
+        api::types::NodeRegistryResponse,
+        api::types::ChainConfigResponse,
+        api::types::CreateTableRequest,
+        api::types::CreateTableResponse,
+        api::types::OpenTablesResponse,
+        api::types::OpenTableInfo,
+        api::types::JoinTableResponse,
+        api::types::TableLobbyResponse,
+        api::types::LobbySeat,
+        api::types::WalletChallengeRequest,
+        api::types::WalletChallengeResponse,
+        api::types::WalletVerifyRequest,
+        api::types::WalletVerifyResponse,
+    )),
+    tags(
+        (name = "Health", description = "Health check and monitoring endpoints"),
+        (name = "Chain", description = "Stellar chain configuration"),
+        (name = "Tables", description = "Poker table lifecycle and game actions"),
+        (name = "MPC Committee", description = "MPC node committee status"),
+        (name = "Flags", description = "Runtime feature flags"),
+        (name = "Sessions", description = "MPC session management"),
+        (name = "Wallet Auth", description = "Wallet-based authentication"),
+        (name = "Admin", description = "Admin operations (requires RBAC)"),
+        (name = "Metrics", description = "Prometheus metrics"),
+    ),
+    info(
+        title = "StellPoker Coordinator API",
+        version = "0.1.0",
+        description = "REST API for the StellPoker MPC coordinator service."
+    ),
+    servers(
+        (url = "https://coordinator.stellpoker.example.com", description = "Production coordinator"),
+        (url = "http://localhost:8080", description = "Local development")
+    )
+)]
+struct ApiDoc;
 
 #[derive(Clone)]
 pub struct PrometheusMetrics {
@@ -523,7 +637,7 @@ async fn main() {
                     let prev_connected = node.connected;
                     if is_healthy {
                         node.connected = true;
-                        node.last_heartbeat = Some(SystemTime::now());
+                        node.last_heartbeat = Some(chrono::Utc::now());
                     } else {
                         if prev_connected {
                             tracing::warn!("MPC Node ({}) went offline", endpoint);
@@ -536,7 +650,7 @@ async fn main() {
                         endpoint,
                         connected: is_healthy,
                         last_heartbeat: if is_healthy {
-                            Some(SystemTime::now())
+                            Some(chrono::Utc::now())
                         } else {
                             None
                         },
@@ -548,6 +662,7 @@ async fn main() {
     });
 
     let app = Router::new()
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/health", get(health))
         .route("/api/stats", get(get_stats))
@@ -713,21 +828,6 @@ async fn build_cors_layer(db_pool: Option<&sqlx::PgPool>) -> CorsLayer {
         .allow_credentials(true)
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
-    uptime_seconds: u64,
-    mpc_nodes: Vec<MpcNodeHealth>,
-    soroban_rpc: SorobanHealth,
-    active_mpc_sessions: usize,
-    request_metrics: HashMap<String, RouteMetric>,
-}
-
-#[derive(Serialize)]
-struct SorobanHealth {
-    endpoint: String,
-    status: String,
-}
-
 async fn check_soroban_connectivity(rpc_url: &str) -> bool {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
@@ -743,6 +843,14 @@ async fn check_soroban_connectivity(rpc_url: &str) -> bool {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Health information", body = HealthResponse)
+    )
+)]
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let uptime_seconds = state.metrics.boot_time.elapsed().as_secs();
     let mpc_nodes = state.metrics.node_healths.lock().await.clone();
@@ -949,6 +1057,14 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
 ///
 /// Returns global statistics and a top-10 leaderboard, served from an
 /// in-memory cache with a 30-second TTL.
+#[utoipa::path(
+    get,
+    path = "/api/stats",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Statistics payload", body = stats::StatsResponse)
+    )
+)]
 async fn get_stats(State(state): State<AppState>) -> Json<stats::StatsResponse> {
     let ttl = std::time::Duration::from_secs(30);
     Json(stats::get_stats(&state.stats, ttl).await)
