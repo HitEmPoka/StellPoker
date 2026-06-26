@@ -18,6 +18,7 @@ import {
   isFreighterInstalled,
   getActiveAddress as freighterGetActiveAddress,
   clearSavedWallet as clearFreighterWallet,
+  getActiveAddress as getActiveFreighterAddress,
 } from "./freighter";
 
 import {
@@ -80,6 +81,10 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
   if (lobstrSession) return lobstrSession;
 
   return null;
+}
+
+export async function getActiveAddress(): Promise<string | null> {
+  return getActiveFreighterAddress();
 }
 
 export function getWalletDisplayName(session: WalletSession): string {

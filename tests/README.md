@@ -15,6 +15,12 @@ docker-compose up -d
 python3 scripts/test-flow.py
 ```
 
+To run the real circuit-sequencing integration test for Noir/Barretenberg:
+
+```bash
+python3 -m unittest tests.test_circuit_sequence
+```
+
 Or against testnet:
 ```bash
 NETWORK=testnet python3 scripts/test-flow.py

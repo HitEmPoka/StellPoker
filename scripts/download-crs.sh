@@ -16,6 +16,12 @@ echo "Output directory: ${CRS_DIR}"
 
 mkdir -p "${CRS_DIR}"
 
+if ! command -v co-noir >/dev/null 2>&1; then
+  echo "ERROR: co-noir not found on PATH." >&2
+  echo "Install it with: cargo install --git https://github.com/TaceoLabs/co-snarks --branch main co-noir" >&2
+  exit 127
+fi
+
 # co-noir download-crs fetches the BN254 SRS points file
 # --crs specifies the output file path, --num-points how many G1 points to download
 co-noir download-crs --crs "${CRS_DIR}/bn254_g1.dat" --num-points 4194304

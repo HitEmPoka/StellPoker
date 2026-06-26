@@ -64,11 +64,36 @@ docker-compose up
 
 Each service (`soroban`, `mpc-node-0/1/2`, `coordinator`) defines a `healthcheck`,
 and the `coordinator` only starts once Soroban and all three MPC nodes report
-healthy. Check status with:
+healthy (`depends_on: condition: service_healthy`). Each node also has a
+`start_period` grace window (60s for MPC nodes to cover co-noir key generation
+and CRS load, 30s for Soroban) during which a failing check does **not** count
+against the retry budget. Check status with:
 
 ```bash
 docker-compose ps
 ```
+
+### Diagnosing unhealthy services
+
+`docker-compose ps` shows a `STATUS` of `healthy`, `health: starting`, or
+`unhealthy` for each service. To investigate one that won't go healthy:
+
+```bash
+# See the most recent health-check probes (exit code + captured output).
+docker inspect --format '{{json .State.Health}}' stellpoker-mpc-node-0-1 | jq
+
+# Watch health transitions live across the whole stack.
+docker events --filter event=health_status
+
+# Tail a service's own logs for the underlying error (panic, bind conflict, …).
+docker-compose logs -f mpc-node-0
+```
+
+Each health check is wrapped so that a failed probe writes a
+`WARN: <service> health check failed` line to the health log (visible in the
+`docker inspect` output above), making failures easy to grep. If a service is
+stuck in `health: starting` past its `start_period`, the underlying process is
+almost certainly still initializing or crash-looping — check its logs.
 
 If you're running services directly instead of via docker-compose, use
 `./scripts/start-local.sh` — it polls each node's `/health` endpoint (and the
@@ -112,6 +137,61 @@ docker-compose, and `${SOROBAN_RPC}` from `.env.local` when running locally.
 **`No .env.local found — Soroban submission disabled`**
 Run `./scripts/deploy-local.sh` first; it deploys the contracts and writes
 the `.env.local` that `start-local.sh` and the coordinator read.
+
+## MPC Node Discovery
+
+The coordinator selects its MPC nodes via `select_mpc_nodes`, which picks a
+source in this precedence order:
+
+1. **On-chain committee registry** — used when `COMMITTEE_REGISTRY_CONTRACT` is
+   configured.
+2. **Static endpoints (backward compatible):** `MPC_NODE_0`, `MPC_NODE_1`,
+   `MPC_NODE_2` (as `docker-compose.yml` sets). Used when the registry is not
+   configured but these env vars are explicitly set.
+3. **Dynamic discovery:** when neither of the above is configured, MPC nodes
+   register themselves at runtime and sessions run on a healthy subset
+   (minimum 3 healthy, else `503 Service Unavailable`).
+
+The dynamic-discovery endpoints below are active only in case (3); when the
+committee registry or static `MPC_NODE_*` endpoints are configured they return
+`409 Conflict`:
+
+```
+POST   /api/node/register        {"id": "0", "endpoint": "http://node-0:8101"}
+POST   /api/node/{id}/heartbeat  # keep registration alive (re-register also works)
+DELETE /api/node/{id}            # graceful deregister on shutdown
+```
+
+A node is considered unhealthy once it has gone 30s without a heartbeat. Check
+the active committee any time with `GET /api/committee/status`.
+
+## Git Blame and Formatting Commits
+
+This repository keeps a `.git-blame-ignore-revs` file that lists commits that
+were purely formatting or refactoring changes (e.g. `cargo fmt`, `prettier`,
+whitespace fixes). Configuring git to use it means `git blame` skips those
+commits and points straight to the last meaningful change.
+
+**One-time setup (per clone):**
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+After that, `git blame` and editor integrations that rely on it (GitLens, etc.)
+will automatically ignore formatting-only commits.
+
+**Adding a formatting commit to the file:**
+
+If your PR is a pure formatting/refactoring change, add its full SHA to
+`.git-blame-ignore-revs` with a short comment explaining what it was:
+
+```
+# 2024-xx-xx — run cargo fmt across workspace
+abcdef1234567890abcdef1234567890abcdef12
+```
+
+The SHA must be the full 40-character commit hash (available after merging).
 
 ## Reporting Issues
 
