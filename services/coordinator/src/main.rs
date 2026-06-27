@@ -43,6 +43,7 @@ mod api;
 mod archiver;
 mod audit_log;
 mod cors_db;
+pub mod crypto;
 mod db;
 mod discovery;
 mod feature_flags;
@@ -245,13 +246,8 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
-    pub maintenance_mode: Arc<AtomicBool>,
-    /// Shared HTTP client for all coordinator → MPC node calls.
-    /// Pre-configured with client TLS certificates and trusted node certs.
-    mpc_client: reqwest::Client,
-    /// Leader-election state: true when this instance holds the advisory lock
-    /// and is the active coordinator. Followers return 503 for write ops.
-    leader_state: leader_election::LeaderState,
+    /// Shared key ring for encrypting sensitive in-memory fields.
+    enc_key: Arc<crypto::EncryptionKey>,
 }
 
 #[derive(Clone)]
@@ -267,8 +263,8 @@ struct MpcConfig {
     circuit_dir: String,
     /// Soroban RPC endpoint
     soroban_rpc: String,
-    /// Committee signing key (for submitting txns)
-    committee_secret: String,
+    /// Committee signing key encrypted with the process encryption key.
+    committee_secret: crypto::EncryptedField,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -331,10 +327,15 @@ async fn main() {
         tracing_subscriber::fmt().init();
     }
 
-    // If any MPC_NODE_* env var is explicitly set, treat the endpoints as
-    // statically configured and disable dynamic discovery (backward compat).
-    let static_endpoints_configured = (0..3)
-        .any(|i| std::env::var(format!("MPC_NODE_{}", i)).is_ok());
+    let enc_key = crypto::EncryptionKey::from_env()
+        .unwrap_or_else(|_| crypto::EncryptionKey::ephemeral());
+    let enc_key = Arc::new(enc_key);
+
+    let committee_secret_plaintext = std::env::var("COMMITTEE_SECRET")
+        .unwrap_or_else(|_| "test_secret".to_string());
+    let committee_secret = crypto::EncryptedField::encrypt(&enc_key, &committee_secret_plaintext)
+        .expect("failed to encrypt committee_secret");
+
     let mpc_config = MpcConfig {
         node_endpoints: vec![
             std::env::var("MPC_NODE_0").unwrap_or_else(|_| "http://localhost:8101".to_string()),
@@ -345,8 +346,7 @@ async fn main() {
         circuit_dir: std::env::var("CIRCUIT_DIR").unwrap_or_else(|_| "./circuits".to_string()),
         soroban_rpc: std::env::var("SOROBAN_RPC")
             .unwrap_or_else(|_| "http://localhost:8000/soroban/rpc".to_string()),
-        committee_secret: std::env::var("COMMITTEE_SECRET")
-            .unwrap_or_else(|_| "test_secret".to_string()),
+        committee_secret,
     };
 
     // Build the shared MPC HTTP client (with optional mTLS / certificate pinning).
@@ -615,9 +615,7 @@ async fn main() {
         db_pool,
         instance_id,
         plugin_loader,
-        maintenance_mode: Arc::new(AtomicBool::new(false)),
-        mpc_client,
-        leader_state,
+        enc_key,
     };
 
     // Spawn background node health check task
