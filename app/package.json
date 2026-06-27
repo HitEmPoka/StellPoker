@@ -12,7 +12,9 @@
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
     "test:visual": "playwright test --config=e2e/playwright.config.ts --project=chromium tests/visual-regression.spec.ts",
-    "test:visual:update": "playwright test --config=e2e/playwright.config.ts --project=chromium --update-snapshots tests/visual-regression.spec.ts"
+    "test:visual:update": "playwright test --config=e2e/playwright.config.ts --project=chromium --update-snapshots tests/visual-regression.spec.ts",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
@@ -35,6 +37,12 @@
     "openapi-typescript": "^7.13.0",
     "playwright": "^1.61.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "storybook": "^10.4.6",
+    "@storybook/react-webpack5": "^10.4.6",
+    "@storybook/addon-webpack5-compiler-swc": "^4.0.3",
+    "@storybook/addon-a11y": "^10.4.6",
+    "@storybook/addon-docs": "^10.4.6",
+    "@storybook/addon-onboarding": "^10.4.6"
   }
 }
