@@ -47,6 +47,7 @@ mod db;
 mod discovery;
 mod feature_flags;
 mod hot_reload;
+mod leader_election;
 mod mpc;
 mod mpc_auth_middleware;
 mod plugin;
@@ -248,6 +249,9 @@ struct AppState {
     /// Shared HTTP client for all coordinator → MPC node calls.
     /// Pre-configured with client TLS certificates and trusted node certs.
     mpc_client: reqwest::Client,
+    /// Leader-election state: true when this instance holds the advisory lock
+    /// and is the active coordinator. Followers return 503 for write ops.
+    leader_state: leader_election::LeaderState,
 }
 
 #[derive(Clone)]
@@ -525,6 +529,18 @@ async fn main() {
     let instance_id = session_migration::generate_instance_id();
     tracing::info!("Coordinator instance ID: {}", instance_id);
 
+    // Leader election: start as follower; acquire advisory lock if DB is
+    // available. Only the leader accepts new game sessions.
+    let leader_state = leader_election::LeaderState::new();
+    if let Some(ref pool) = db_pool {
+        leader_election::spawn(Arc::clone(pool), leader_state.clone());
+        tracing::info!("Leader election started (PostgreSQL advisory lock)");
+    } else {
+        // No database → single-node mode; this instance is always the leader.
+        leader_state.force_leader();
+        tracing::warn!("No database — running in single-node mode (always leader)");
+    }
+
     let mut wasm_config = wasmtime::Config::new();
     wasm_config
         .consume_fuel(true)
@@ -601,6 +617,7 @@ async fn main() {
         plugin_loader,
         maintenance_mode: Arc::new(AtomicBool::new(false)),
         mpc_client,
+        leader_state,
     };
 
     // Spawn background node health check task
@@ -667,6 +684,7 @@ async fn main() {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/health", get(health))
+        .route("/api/leader", get(get_leader_status))
         .route("/api/stats", get(get_stats))
         // Dynamic MPC node discovery (active only when neither the committee
         // registry nor static MPC_NODE_* endpoints are configured).
@@ -1091,4 +1109,25 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
 async fn get_stats(State(state): State<AppState>) -> Json<stats::StatsResponse> {
     let ttl = std::time::Duration::from_secs(30);
     Json(stats::get_stats(&state.stats, ttl).await)
+}
+
+/// GET /api/leader
+///
+/// Reports whether this coordinator instance is the current leader.
+///
+/// Clients can use this to:
+/// - Route write requests (new sessions, proof submissions) to the leader.
+/// - Implement circuit-breaker logic in proxies.
+/// - Alert when the cluster has no leader (all instances report `false`).
+///
+/// Response:
+/// ```json
+/// { "is_leader": true,  "instance_id": "abc123" }
+/// { "is_leader": false, "instance_id": "def456" }
+/// ```
+async fn get_leader_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "is_leader": state.leader_state.is_leader(),
+        "instance_id": state.instance_id,
+    }))
 }
