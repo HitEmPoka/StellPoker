@@ -130,6 +130,7 @@ struct AppState {
     db_pool: Option<Arc<sqlx::PgPool>>,
     instance_id: String,
     pub plugin_loader: Arc<tokio::sync::RwLock<plugin::PluginLoader>>,
+    pub maintenance_mode: Arc<AtomicBool>,
     /// Shared HTTP client for all coordinator → MPC node calls.
     /// Pre-configured with client TLS certificates and trusted node certs.
     mpc_client: reqwest::Client,
@@ -456,6 +457,17 @@ async fn main() {
     let archive_store = archiver::new_store();
     archiver::load_existing_archives(&archive_store, &archive_config).await;
 
+    if let Some(path) = hot_reload_snapshot {
+        hot_reload::spawn_snapshot_task(path, tables, lobby_assignments);
+    }
+
+    archiver::spawn_archive_task(
+        state.mpc_sessions.clone(),
+        Arc::clone(&state.tables),
+        archive_store.clone(),
+        archive_config,
+    );
+
     let state = AppState {
         tables: Arc::clone(&tables),
         lobby_assignments: Arc::clone(&lobby_assignments),
@@ -473,19 +485,9 @@ async fn main() {
         db_pool,
         instance_id,
         plugin_loader,
+        maintenance_mode: Arc::new(AtomicBool::new(false)),
         mpc_client,
     };
-
-    if let Some(path) = hot_reload_snapshot {
-        hot_reload::spawn_snapshot_task(path, tables, lobby_assignments);
-    }
-
-    archiver::spawn_archive_task(
-        state.mpc_sessions.clone(),
-        Arc::clone(&state.tables),
-        archive_store.clone(),
-        archive_config,
-    );
 
     // Spawn background node health check task
     let node_healths = state.metrics.node_healths.clone();
@@ -618,6 +620,7 @@ async fn main() {
         )
         .route("/api/admin/stats", get(api::admin_stats))
         .route("/api/admin/config/reload", post(api::admin_reload_config))
+        .route("/api/admin/maintenance", post(api::admin_toggle_maintenance))
         // New admin endpoints for issues #267, #261, #264, #265
         .route("/api/admin/rate-limits", get(api::admin_list_rate_limits))
         .route("/api/admin/rate-limits", post(api::admin_upsert_rate_limit))
@@ -662,6 +665,10 @@ async fn main() {
             "/api/admin/archives/purge",
             post(api::admin_purge_archives),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            maintenance_middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             metrics_middleware,
@@ -720,6 +727,7 @@ struct HealthResponse {
     soroban_rpc: SorobanHealth,
     active_mpc_sessions: usize,
     request_metrics: HashMap<String, RouteMetric>,
+    maintenance_mode: bool,
 }
 
 #[derive(Serialize)]
@@ -773,6 +781,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 
     let active_mpc_sessions = state.metrics.active_mpc_sessions.load(Ordering::SeqCst);
     let request_metrics = state.metrics.route_metrics.lock().await.clone();
+    let maintenance_mode = state.maintenance_mode.load(Ordering::Relaxed);
 
     Json(HealthResponse {
         uptime_seconds,
@@ -783,7 +792,22 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         },
         active_mpc_sessions,
         request_metrics,
+        maintenance_mode,
     })
+}
+
+async fn maintenance_middleware(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response, axum::http::StatusCode> {
+    if state.maintenance_mode.load(Ordering::Relaxed) {
+        let path = req.uri().path();
+        if !path.starts_with("/api/admin") {
+            return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+    Ok(next.run(req).await)
 }
 
 async fn metrics_middleware(
