@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Board } from "./Board";
 import { Card } from "./Card";
 import { PlayerSeat } from "./PlayerSeat";
@@ -17,6 +18,7 @@ import {
   getActiveAddress,
   type WalletSession,
 } from "@/lib/wallet";
+import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
 import { TransactionSimulation } from "./TransactionSimulation";
@@ -91,6 +93,7 @@ function mapOnChainPhase(phase: string): GamePhase | null {
 }
 
 export function Table({ tableId, initialPlayMode }: TableProps) {
+  const router = useRouter();
   const [game, setGame] = useState<GameState>(() => createInitialState(tableId));
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>(initialPlayMode ?? "headsup");
@@ -408,6 +411,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
       clearInterval(timerId);
     };
   }, [wallet]);
+
+  // Auto-logout when wallet disconnects (#322).
+  useWalletMonitor({
+    wallet,
+    onDisconnect: () => {
+      setWallet(null);
+      setGame(createInitialState(tableId));
+      router.push("/");
+    },
+  });
 
   // Elapsed timer while loading
   useEffect(() => {
