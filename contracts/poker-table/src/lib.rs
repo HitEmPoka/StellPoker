@@ -11,6 +11,8 @@ mod invariants_test;
 #[cfg(test)]
 mod lifecycle_invariants_test;
 mod pot;
+#[cfg(test)]
+mod state_machine_test;
 mod test;
 mod timeout;
 mod types;
