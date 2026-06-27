@@ -145,6 +145,20 @@ python3 scripts/test-flow.py
 NETWORK=testnet ./scripts/deploy.sh
 ```
 
+## Staging Environment
+
+Staging mirrors production with a dedicated coordinator, three MPC nodes, and a staging frontend, while still settling against **Soroban testnet**.
+
+```bash
+cp .env.staging.example .env.staging
+# fill in staging contracts, keys, identities, and public URLs
+NETWORK=staging OUTPUT_ENV_FILE=.env.staging.deploy ./scripts/deploy.sh
+# copy the generated contract IDs from .env.staging.deploy into .env.staging
+./scripts/deploy-staging.sh
+```
+
+That flow starts the staging services and runs the integration suite against staging before production promotion. The staging runbook lives in [docs/staging-environment.md](docs/staging-environment.md).
+
 ## Deploy to Mainnet
 
 ### Pre-flight checklist

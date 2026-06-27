@@ -6,8 +6,9 @@ import Link from "next/link";
 import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
+import { TransactionSimulation } from "@/components/TransactionSimulation";
 import * as api from "@/lib/api";
-import { joinTableOnChain } from "@/lib/onchain";
+import { useJoinTableSimulation } from "@/lib/use-transaction-simulation";
 import {
   detectInstalledWallets,
   connectWallet,
@@ -16,6 +17,7 @@ import {
   type WalletSession,
   type WalletType,
 } from "@/lib/wallet";
+import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -55,6 +57,15 @@ export default function Home() {
   );
   const [joinTableId, setJoinTableId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pendingTableId, setPendingTableId] = useState<number | null>(null);
+
+  const joinTableSim = useJoinTableSimulation(wallet, () => {
+    if (pendingTableId) {
+      const query = maxPlayers >= 3 ? "?mode=multi" : "?mode=headsup";
+      router.push(`/table/${pendingTableId}${query}`);
+      setPendingTableId(null);
+    }
+  });
 
   // Fade-in timer for splash
   useEffect(() => {
@@ -82,6 +93,16 @@ export default function Home() {
       setScreen("menu");
     }
   }, [screen, wallet]);
+
+  // Auto-logout when wallet disconnects (#322).
+  useWalletMonitor({
+    wallet,
+    onDisconnect: () => {
+      setWallet(null);
+      setScreen("connect");
+      setError("Wallet disconnected. Please reconnect to continue.");
+    },
+  });
 
   const handleConnect = async (type: WalletType) => {
     setConnecting(type);
@@ -118,7 +139,9 @@ export default function Home() {
       );
 
       if (!solo && buyIn) {
-        await joinTableOnChain(wallet, created.table_id, buyIn);
+        setPendingTableId(created.table_id);
+        joinTableSim.joinTable(created.table_id, buyIn);
+        return; // Simulation will handle navigation
       }
 
       const query = solo
@@ -684,6 +707,27 @@ export default function Home() {
         >
           📊 STATS
         </Link>
+
+        {/* Transaction Simulation */}
+        {joinTableSim.showSimulation && joinTableSim.simulation && (
+          <TransactionSimulation
+            simulation={joinTableSim.simulation}
+            loading={joinTableSim.loading}
+            onConfirm={() => {
+              if (pendingTableId) {
+                const buyIn = parseXlmToStroops(buyInXlm);
+                if (buyIn) {
+                  joinTableSim.confirmJoin(pendingTableId, buyIn);
+                }
+              }
+            }}
+            onCancel={() => {
+              joinTableSim.cancelSimulation();
+              setPendingTableId(null);
+              setBusy(false);
+            }}
+          />
+        )}
       </div>
     </PixelWorld>
   );

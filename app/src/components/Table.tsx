@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Board } from "./Board";
 import { Card } from "./Card";
 import { PlayerSeat } from "./PlayerSeat";
@@ -17,12 +18,15 @@ import {
   getActiveAddress,
   type WalletSession,
 } from "@/lib/wallet";
+import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
+import { TransactionSimulation } from "./TransactionSimulation";
 import { usePokerActions } from "@/lib/use-poker-actions";
 import { getDealerLine } from "@/lib/dealer-lines";
 import { subscribePokerTableEvents } from "@/lib/events";
 import { getAlias, setAlias } from "@/lib/alias-store";
+import { stellarExpertUrl } from "@/lib/explorer";
 import {
   loadHandHistory,
   saveHandHistoryEntry,
@@ -90,6 +94,7 @@ function mapOnChainPhase(phase: string): GamePhase | null {
 }
 
 export function Table({ tableId, initialPlayMode }: TableProps) {
+  const router = useRouter();
   const [game, setGame] = useState<GameState>(() => createInitialState(tableId));
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>(initialPlayMode ?? "headsup");
@@ -274,6 +279,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     handleReveal,
     handleShowdown,
     handleAction,
+    joinSimulation,
+    actionSimulation,
+    pendingAction,
   } = usePokerActions({
     tableId,
     wallet,
@@ -404,6 +412,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
       clearInterval(timerId);
     };
   }, [wallet]);
+
+  // Auto-logout when wallet disconnects (#322).
+  useWalletMonitor({
+    wallet,
+    onDisconnect: () => {
+      setWallet(null);
+      setGame(createInitialState(tableId));
+      router.push("/");
+    },
+  });
 
   // Elapsed timer while loading
   useEffect(() => {
@@ -805,9 +823,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
 
             {(() => {
               const explorerUrl = game.lastTxHash
-                ? `https://stellar.expert/explorer/testnet/tx/${game.lastTxHash}`
+                ? stellarExpertUrl("tx", game.lastTxHash)
                 : wallet
-                  ? `https://stellar.expert/explorer/testnet/account/${wallet.address}`
+                  ? stellarExpertUrl("account", wallet.address)
                   : null;
               if (!explorerUrl) return null;
               return (
@@ -1070,7 +1088,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               <span className="text-[8px]" style={{ color: "#7f8c8d" }}>
                 TX:{" "}
                 <a
-                  href={`https://stellar.expert/explorer/testnet/tx/${game.lastTxHash}`}
+                  href={stellarExpertUrl("tx", game.lastTxHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: "#ffc078", textShadow: "1px 1px 0 rgba(0,0,0,0.5)" }}
@@ -1280,6 +1298,37 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Transaction Simulations */}
+      {joinSimulation.showSimulation && joinSimulation.simulation && (
+        <TransactionSimulation
+          simulation={joinSimulation.simulation}
+          loading={joinSimulation.loading}
+          onConfirm={() => {
+            joinSimulation.confirmJoin();
+          }}
+          onCancel={() => {
+            joinSimulation.cancelSimulation();
+          }}
+        />
+      )}
+
+      {actionSimulation.showSimulation && actionSimulation.simulation && pendingAction && (
+        <TransactionSimulation
+          simulation={actionSimulation.simulation}
+          loading={actionSimulation.loading}
+          onConfirm={() => {
+            actionSimulation.confirmAction(
+              tableId, 
+              pendingAction.action, 
+              pendingAction.amount
+            );
+          }}
+          onCancel={() => {
+            actionSimulation.cancelSimulation();
+          }}
+        />
       )}
     </PixelWorld>
   );

@@ -4,8 +4,11 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 mod betting;
+mod constant_time;
 mod game;
 mod game_hub;
+#[cfg(test)]
+mod gas_regression_test;
 #[cfg(test)]
 mod invariants_test;
 #[cfg(test)]
@@ -13,6 +16,8 @@ mod lifecycle_invariants_test;
 mod pot;
 mod test;
 mod timeout;
+#[cfg(test)]
+mod tournament_lifecycle_test;
 mod types;
 mod verifier;
 
@@ -103,7 +108,9 @@ fn verify_hole_cards_against_proof(
         let (submitted_c1, submitted_c2) = hole_cards
             .get(active_idx)
             .ok_or(PokerTableError::InvalidHoleCards)?;
-        if proof_c1 != submitted_c1 || proof_c2 != submitted_c2 {
+        if constant_time::u32_ne(proof_c1, submitted_c1)
+            || constant_time::u32_ne(proof_c2, submitted_c2)
+        {
             return Err(PokerTableError::HoleCardMismatch);
         }
         active_idx += 1;
@@ -210,7 +217,7 @@ impl PokerTableContract {
                 .players
                 .get(i)
                 .ok_or(PokerTableError::InvalidPlayerIndex)?;
-            if p.address == player {
+            if constant_time::address_eq(&env, &p.address, &player) {
                 return Err(PokerTableError::AlreadySeated);
             }
         }
@@ -262,7 +269,7 @@ impl PokerTableContract {
                 .players
                 .get(i)
                 .ok_or(PokerTableError::InvalidPlayerIndex)?;
-            if p.address == player {
+            if constant_time::address_eq(&env, &p.address, &player) {
                 found = true;
                 withdrawn = p.stack;
                 if withdrawn > 0 {
@@ -354,7 +361,7 @@ impl PokerTableContract {
         if !matches!(table.phase, GamePhase::Dealing) {
             return Err(PokerTableError::NotInDealingPhase);
         }
-        if committee != table.committee {
+        if constant_time::address_ne(&env, &committee, &table.committee) {
             return Err(PokerTableError::NotAuthorizedCommittee);
         }
         if hand_commitments.len() != table.players.len() {
@@ -430,7 +437,7 @@ impl PokerTableContract {
 
         let mut table = load_table(&env, table_id)?;
 
-        if committee != table.committee {
+        if constant_time::address_ne(&env, &committee, &table.committee) {
             return Err(PokerTableError::NotAuthorizedCommittee);
         }
 
@@ -507,7 +514,7 @@ impl PokerTableContract {
         if !matches!(table.phase, GamePhase::Showdown) {
             return Err(PokerTableError::NotInShowdownPhase);
         }
-        if committee != table.committee {
+        if constant_time::address_ne(&env, &committee, &table.committee) {
             return Err(PokerTableError::NotAuthorizedCommittee);
         }
 
