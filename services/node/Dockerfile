@@ -11,7 +11,7 @@ RUN ./scripts/compile-circuits.sh
 RUN cargo build --release -p mpc-node
 
 # Build co-noir from source
-FROM rust:1.85 AS conoir-builder
+FROM rust:1.90 AS conoir-builder
 RUN cargo install --git https://github.com/TaceoLabs/co-snarks --branch main co-noir
 
 FROM debian:bookworm-slim
