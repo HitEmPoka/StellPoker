@@ -44,6 +44,7 @@ mod archiver;
 mod audit_log;
 mod cors_db;
 pub mod crypto;
+mod dashboard;
 mod db;
 mod discovery;
 mod feature_flags;
@@ -103,11 +104,22 @@ struct SorobanHealth {
     pub status: String,
 }
 
+/// Deployment status of the Soroban poker_table contract. `configured` is true
+/// when the coordinator has both a contract id and a non-default signer; the
+/// `contract_id` is exposed (possibly empty) so the dashboard can render it
+/// and a developer can verify on-chain.
+#[derive(Serialize, utoipa::ToSchema)]
+struct ContractDeployment {
+    pub configured: bool,
+    pub contract_id: String,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 struct HealthResponse {
     pub uptime_seconds: u64,
     pub mpc_nodes: Vec<MpcNodeHealth>,
     pub soroban_rpc: SorobanHealth,
+    pub contract_deployment: ContractDeployment,
     pub active_mpc_sessions: usize,
     pub request_metrics: HashMap<String, RouteMetric>,
 }
@@ -157,6 +169,7 @@ struct HealthResponse {
         RouteMetric,
         MpcNodeHealth,
         SorobanHealth,
+        ContractDeployment,
         HealthResponse,
         stats::GlobalStats,
         stats::PlayerStats,
@@ -680,6 +693,7 @@ async fn main() {
 
     let app = Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route("/", get(dashboard::dashboard_page))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/health", get(health))
         .route("/api/leader", get(get_leader_status))
@@ -906,6 +920,11 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let request_metrics = state.metrics.route_metrics.lock().await.clone();
     let maintenance_mode = state.maintenance_mode.load(Ordering::Relaxed);
 
+    let contract_deployment = ContractDeployment {
+        configured: state.soroban_config.is_configured(),
+        contract_id: state.soroban_config.poker_table_contract.clone(),
+    };
+
     Json(HealthResponse {
         uptime_seconds,
         mpc_nodes,
@@ -913,6 +932,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
             endpoint: state.soroban_config.rpc_url.clone(),
             status: soroban_status,
         },
+        contract_deployment,
         active_mpc_sessions,
         request_metrics,
         maintenance_mode,
