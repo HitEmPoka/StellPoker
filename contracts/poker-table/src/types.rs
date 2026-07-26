@@ -64,6 +64,26 @@ pub enum PokerTableError {
     InvalidPlayerCount = 37,
     CannotChangeMinPlayersMidHand = 38,
     ContractPaused = 39,
+    InvalidStraddleConfig = 40,
+    StraddleAlreadyPosted = 41,
+    EmergencyTimelockActive = 42,
+    EmergencyWithdrawalNotApplicable = 43,
+    AlreadyApprovedEmergencyWithdrawal = 44,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum StraddlePosition {
+    BigBlind,
+    Utg,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StraddleConfig {
+    /// Zero disables the straddle; otherwise only 2 or 3 are accepted.
+    pub multiplier: u32,
+    pub position: StraddlePosition,
 }
 
 #[contracttype]
@@ -146,4 +166,8 @@ pub struct TableState {
 pub enum DataKey {
     Table(u32),
     Paused(u32), // per-table pause flag
+    StraddleConfig(u32),
+    ActiveStraddleSeat(u32),
+    EmergencyRequestLedger(u32),
+    EmergencyApprovals(u32),
 }

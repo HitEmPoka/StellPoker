@@ -1152,4 +1152,50 @@ mod test {
         let seat = join_player(&s, table_id, &player, 500);
         assert_eq!(seat, 0);
     }
+
+    #[test]
+    fn test_big_blind_straddle_posts_total_and_orders_action() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        let p3 = Address::generate(&s.env);
+        join_player(&s, table_id, &p1, 500);
+        join_player(&s, table_id, &p2, 500);
+        join_player(&s, table_id, &p3, 500);
+
+        s.client
+            .configure_straddle(&table_id, &2, &StraddlePosition::BigBlind);
+        s.client.start_hand(&table_id);
+        let started = s.client.get_table(&table_id);
+        let bb_seat = (started.dealer_seat + 2) % 3;
+        assert_eq!(started.players.get(bb_seat).unwrap().bet_this_round, 20);
+
+        commit_mock_deal(&s, table_id, 3);
+        let dealt = s.client.get_table(&table_id);
+        assert_eq!(dealt.current_turn, (bb_seat + 1) % 3);
+    }
+
+    #[test]
+    fn test_majority_emergency_withdrawal_refunds_each_player() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        let p3 = Address::generate(&s.env);
+        join_player(&s, table_id, &p1, 500);
+        join_player(&s, table_id, &p2, 500);
+        join_player(&s, table_id, &p3, 500);
+        s.client.start_hand(&table_id);
+
+        let unlock = s.client.get_table(&table_id).last_action_ledger + 201;
+        s.env.ledger().set_sequence_number(unlock);
+        assert!(!s.client.approve_emergency_withdrawal(&table_id, &p1));
+        assert!(s.client.approve_emergency_withdrawal(&table_id, &p2));
+
+        assert_eq!(s.token.balance(&p1), 500);
+        assert_eq!(s.token.balance(&p2), 500);
+        assert_eq!(s.token.balance(&p3), 500);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
+    }
 }

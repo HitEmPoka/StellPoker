@@ -110,6 +110,22 @@ testnet.
 
 ## Results
 
+### Poseidon2 audit
+
+| Circuit | Before | After | Reused commitments |
+| --- | ---: | ---: | --- |
+| `deal_valid` (6 players) | 133 | 121 | 12 dealt-card leaves |
+| `showdown_valid` (6 players) | 133 | 121 | 12 dealt-card leaves |
+| `muck_valid` | 118 | 116 | 2 dealt-card leaves |
+| `reveal_board_valid` | 115 | 115 | none |
+| `hand_rank_valid` | n/a | 3 | two cards plus one hand |
+
+Counts are static Poseidon2 permutation instances derived from the circuit
+source (52 card leaves, 63 Merkle nodes, plus hand/board commitments). The
+deal, showdown, and muck circuits now reuse already-computed Merkle leaves.
+Run the benchmark workflow after Noir changes to record backend constraint
+counts alongside these source-level hash counts.
+
 ### Constraint Table
 
 | Circuit              | ACIR Opcodes | Backend Opcodes |

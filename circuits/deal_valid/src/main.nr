@@ -63,8 +63,10 @@ fn main(
             dealt_card1_indices[p] = idx1;
             dealt_card2_indices[p] = idx2;
 
-            let c1_commit = commitments::commit_card(deck[idx1], salts[idx1]);
-            let c2_commit = commitments::commit_card(deck[idx2], salts[idx2]);
+            // Reuse the leaf commitments computed for the Merkle tree instead
+            // of paying for two redundant Poseidon2 permutations per player.
+            let c1_commit = leaves[idx1];
+            let c2_commit = leaves[idx2];
             hand_commitments[p] = commitments::commit_hand(c1_commit, c2_commit);
         }
     }

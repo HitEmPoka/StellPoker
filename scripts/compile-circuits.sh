@@ -55,7 +55,7 @@ if [ ! -f "${PROJECT_DIR}/.crs/bn254_g1.dat" ]; then
 fi
 EXPECTED_NOIR_TAG="v${EXPECTED_NOIR_VERSION}"
 TOOLS_DIR="${PROJECT_DIR}/.tmp_tools"
-CIRCUITS=(deal_valid reveal_board_valid showdown_valid)
+CIRCUITS=(deal_valid reveal_board_valid showdown_valid muck_valid hand_rank_valid)
 
 detect_platform_asset() {
     local os arch

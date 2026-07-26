@@ -83,8 +83,8 @@ fn main(
             hole_card1[p] = deck[idx1] as u32;
             hole_card2[p] = deck[idx2] as u32;
 
-            let c1_commit = commitments::commit_card(deck[idx1], salts[idx1]);
-            let c2_commit = commitments::commit_card(deck[idx2], salts[idx2]);
+            let c1_commit = leaves[idx1];
+            let c2_commit = leaves[idx2];
             let expected_commit = commitments::commit_hand(c1_commit, c2_commit);
             assert(expected_commit == hand_commitments[p], "hand commitment mismatch");
 
