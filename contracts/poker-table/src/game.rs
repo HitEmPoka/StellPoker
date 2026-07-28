@@ -50,6 +50,36 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     post_blind(table, sb_seat, level.small_blind)?;
     post_blind(table, bb_seat, level.big_blind)?;
 
+    env.storage()
+        .instance()
+        .remove(&DataKey::ActiveStraddleSeat(table.id));
+    if let Some(straddle) = env
+        .storage()
+        .instance()
+        .get::<DataKey, StraddleConfig>(&DataKey::StraddleConfig(table.id))
+    {
+        if straddle.multiplier != 0 {
+            let (seat, amount) = match straddle.position {
+                StraddlePosition::BigBlind => (
+                    bb_seat,
+                    table.config.big_blind * (straddle.multiplier - 1) as i128,
+                ),
+                StraddlePosition::Utg => (
+                    (table.dealer_seat + 3) % num_players,
+                    table.config.big_blind * straddle.multiplier as i128,
+                ),
+            };
+            post_blind(table, seat, amount)?;
+            env.storage()
+                .instance()
+                .set(&DataKey::ActiveStraddleSeat(table.id), &seat);
+            env.events().publish(
+                (Symbol::new(env, "straddle_posted"), table.id),
+                (seat, straddle.multiplier),
+            );
+        }
+    }
+
     // Clear board state
     table.board_cards = Vec::new(env);
     table.dealt_indices = Vec::new(env);
@@ -143,7 +173,7 @@ fn post_blind(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Pok
     };
 
     player.stack -= actual;
-    player.bet_this_round = actual;
+    player.bet_this_round += actual;
     player.committed += actual;
     table.pot += actual;
     table.players.set(seat, player);

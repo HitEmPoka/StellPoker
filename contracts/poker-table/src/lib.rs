@@ -413,6 +413,50 @@ fn derive_session_id(table_id: u32, hand_number: u32) -> u32 {
     x
 }
 
+fn require_emergency_timelock(env: &Env, table: &TableState) -> Result<(), PokerTableError> {
+    if matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+        return Err(PokerTableError::EmergencyWithdrawalNotApplicable);
+    }
+    let unlock_ledger = table
+        .last_action_ledger
+        .saturating_add(table.config.timeout_ledgers.saturating_mul(2));
+    if env.ledger().sequence() < unlock_ledger {
+        return Err(PokerTableError::EmergencyTimelockActive);
+    }
+    Ok(())
+}
+
+fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+    let token = token::Client::new(env, &table.config.token);
+    for i in 0..table.players.len() {
+        let mut player = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let refund = player.stack + player.committed;
+        if refund > 0 {
+            token.transfer(&env.current_contract_address(), &player.address, &refund);
+        }
+        player.stack = 0;
+        player.bet_this_round = 0;
+        player.committed = 0;
+        player.folded = true;
+        table.players.set(i, player);
+    }
+    table.pot = 0;
+    table.side_pots = Vec::new(env);
+    table.phase = GamePhase::Settlement;
+    table.last_action_ledger = env.ledger().sequence();
+    env.storage()
+        .instance()
+        .remove(&DataKey::EmergencyApprovals(table.id));
+    env.events().publish(
+        (Symbol::new(env, "emergency_withdrawal"), table.id),
+        table.hand_number,
+    );
+    Ok(())
+}
+
 #[contractimpl]
 impl PokerTableContract {
     /// Initialize a new poker table with configuration.
@@ -1358,6 +1402,92 @@ impl PokerTableContract {
     /// Read current table state (view function).
     pub fn get_table(env: Env, table_id: u32) -> Result<TableState, PokerTableError> {
         load_table(&env, table_id)
+    }
+
+    /// Configure an optional 2x/3x big-blind straddle for future hands.
+    pub fn configure_straddle(
+        env: Env,
+        table_id: u32,
+        multiplier: u32,
+        position: StraddlePosition,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        if multiplier != 0 && multiplier != 2 && multiplier != 3 {
+            return Err(PokerTableError::InvalidStraddleConfig);
+        }
+        env.storage().instance().set(
+            &DataKey::StraddleConfig(table_id),
+            &StraddleConfig {
+                multiplier,
+                position,
+            },
+        );
+        env.events().publish(
+            (Symbol::new(&env, "straddle_configured"), table_id),
+            multiplier,
+        );
+        Ok(())
+    }
+
+    /// Approve recovery of every player's own stack and committed chips after
+    /// a game has been stuck for twice the normal timeout. Execution occurs
+    /// automatically once strictly more than half of seated players approve.
+    pub fn approve_emergency_withdrawal(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<bool, PokerTableError> {
+        player.require_auth();
+        let mut table = load_table(&env, table_id)?;
+        require_emergency_timelock(&env, &table)?;
+
+        let key = DataKey::EmergencyApprovals(table_id);
+        let mut approvals = env
+            .storage()
+            .instance()
+            .get::<DataKey, Vec<Address>>(&key)
+            .unwrap_or(Vec::new(&env));
+        let mut seated = false;
+        for i in 0..table.players.len() {
+            let p = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            if constant_time::address_eq(&env, &p.address, &player) {
+                seated = true;
+            }
+        }
+        if !seated {
+            return Err(PokerTableError::PlayerNotAtTable);
+        }
+        for approval in approvals.iter() {
+            if constant_time::address_eq(&env, &approval, &player) {
+                return Err(PokerTableError::AlreadyApprovedEmergencyWithdrawal);
+            }
+        }
+        approvals.push_back(player);
+        env.storage().instance().set(&key, &approvals);
+        let approved = approvals.len() * 2 > table.players.len();
+        if approved {
+            execute_emergency_withdrawal(&env, &mut table)?;
+            save_table(&env, &table);
+        }
+        Ok(approved)
+    }
+
+    /// Admin override for an unrecoverable MPC failure, subject to the same
+    /// on-chain timelock as majority recovery.
+    pub fn admin_emergency_withdrawal(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let mut table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        require_emergency_timelock(&env, &table)?;
+        execute_emergency_withdrawal(&env, &mut table)?;
+        save_table(&env, &table);
+        Ok(())
     }
 
     // ========================================================================
