@@ -128,6 +128,52 @@ async fn main() {
         metrics: NodeMetrics::new(),
     };
 
+    // ── Background metric updaters ────────────────────────────────────────────
+    {
+        let metrics = state.metrics.clone();
+        let node_id = state.node_id;
+        tokio::spawn(async move {
+            let mut sys = sysinfo::System::new();
+            loop {
+                sys.refresh_memory();
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                if let Some(process) = sys.process(sysinfo::get_current_pid().unwrap()) {
+                    metrics.memory_bytes.set(process.memory() as f64 * 1024.0);
+                }
+                metrics.memory_limit_bytes.set(
+                    std::env::var("MPC_NODE_MEMORY_LIMIT_BYTES")
+                        .ok()
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(2.0 * 1024.0 * 1024.0 * 1024.0), // default 2GiB
+                );
+                metrics.node_up.set(1.0);
+                tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            }
+        });
+    }
+
+    // ── Certificate expiry metric ─────────────────────────────────────────────
+    {
+        let metrics = state.metrics.clone();
+        tokio::spawn(async move {
+            loop {
+                let expiry = std::env::var("MPC_NODE_CERT_EXPIRY_TIMESTAMP")
+                    .ok()
+                    .and_then(|ts| ts.parse::<i64>().ok())
+                    .map(|ts| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        (ts - now) as f64 / 86400.0
+                    })
+                    .unwrap_or(365.0);
+                metrics.cert_expiry_days.with_label_values(&["server"]).set(expiry);
+                tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/metrics", get(metrics::metrics_endpoint))

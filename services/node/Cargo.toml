@@ -27,6 +27,7 @@ sha2 = "0.10"
 tower = "0.4"
 zeroize = { version = "1", features = ["derive"] }
 prometheus = "0.14"
+sysinfo = "0.37"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
