@@ -52,6 +52,7 @@ mod discovery;
 mod feature_flags;
 mod hot_reload;
 mod idempotency;
+mod job_queue;
 mod key_rotation;
 mod leader_election;
 mod mpc;
@@ -315,10 +316,15 @@ struct AppState {
     /// A session ID that has already been used is rejected to prevent replay
     /// attacks on deal/reveal/showdown proofs.
     used_session_ids: Arc<RwLock<HashSet<String>>>,
+    /// Async job queue for MPC session orchestration.
+    /// Replaces synchronous in-request MPC handling with retry, priority,
+    /// cancellation, and progress tracking.
+    pub job_queue: Arc<job_queue::JobQueue>,
 }
 
 #[derive(Clone)]
 #[allow(dead_code)]
+#[derive(Clone)]
 struct MpcConfig {
     /// Endpoints of the 3 MPC nodes
     node_endpoints: Vec<String>,
@@ -700,6 +706,8 @@ async fn main() {
         admin_config: Arc::new(RwLock::new(admin_config)),
         admin_state,
         rate_limit_state: Arc::new(RwLock::new(RateLimitState::default())),
+        ip_buckets: rate_limit::new_ip_bucket_store(),
+        rejection_counter: rate_limit::new_rejection_counter(),
         metrics: metrics.clone(),
         chat_channels: Arc::new(Mutex::new(HashMap::new())),
         game_state_channels: Arc::new(Mutex::new(HashMap::new())),
@@ -718,15 +726,123 @@ async fn main() {
         benchmark_store,
         committee_key_rotation,
         used_session_ids: Arc::new(RwLock::new(HashSet::new())),
+        job_queue: Arc::new(job_queue::JobQueue::new(
+            std::env::var("MPC_JOB_QUEUE_WORKERS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4),
+        )),
     };
     idempotency::spawn_gc_task(state.idempotency_store.clone());
-    // Spawn rate-limit background tasks (Issue #25).
     rate_limit::spawn_rate_alert_task(state.rejection_counter.clone());
     rate_limit::spawn_bucket_gc_task(state.ip_buckets.clone());
     key_rotation::spawn_rotation_task(
         state.committee_key_rotation.clone(),
         state.soroban_config.clone(),
     );
+    // Register job queue handlers.
+    let jq = Arc::clone(&state.job_queue);
+    let mpc_client_jq = state.mpc_client.clone();
+    let mpc_config_jq = state.mpc_config.clone();
+    jq.register_handler(
+        "mpc_deal",
+        Arc::new(move |job| {
+            let client = mpc_client_jq.clone();
+            let cfg = mpc_config_jq.clone();
+            tokio::spawn(async move {
+                let table_id = job.table_id;
+                let players: Vec<String> = serde_json::from_value(
+                    job.payload.get("players").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let prepared = mpc::prepare_deal_from_nodes(
+                    &client,
+                    &cfg.node_endpoints,
+                    &cfg.circuit_dir,
+                    table_id,
+                    &players,
+                )
+                .await
+                .map_err(|e| format!("deal prepare failed: {}", e))?;
+                let session_id = job.job_id.replace("job-mpc_deal-", "proof-");
+                let deal_circuit = if players.len() >= 2 && players.len() < 6 {
+                    format!("deal_valid_{}p", players.len())
+                } else {
+                    "deal_valid".to_string()
+                };
+                let proof = mpc::generate_proof_from_share_sets(
+                    &client,
+                    table_id,
+                    &prepared.share_set_ids,
+                    &session_id,
+                    &deal_circuit,
+                    &cfg.circuit_dir,
+                    &cfg.node_endpoints,
+                )
+                .await
+                .map_err(|e| format!("deal proof generation failed: {}", e))?;
+                Ok(serde_json::json!({
+                    "proof": proof.proof,
+                    "public_inputs": proof.public_inputs,
+                    "session_id": proof.session_id,
+                }))
+            })
+        }),
+    );
+    let jq2 = Arc::clone(&state.job_queue);
+    let mpc_client_jq2 = state.mpc_client.clone();
+    let mpc_config_jq2 = state.mpc_config.clone();
+    jq2.register_handler(
+        "mpc_reveal",
+        Arc::new(move |job| {
+            let client = mpc_client_jq2.clone();
+            let cfg = mpc_config_jq2.clone();
+            tokio::spawn(async move {
+                let table_id = job.table_id;
+                let phase: String = serde_json::from_value(
+                    job.payload.get("phase").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let dealt_indices: Vec<u32> = serde_json::from_value(
+                    job.payload.get("dealt_indices").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let deck_root: String = serde_json::from_value(
+                    job.payload.get("deck_root").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let prepared = mpc::prepare_reveal_from_nodes(
+                    &client,
+                    &cfg.node_endpoints,
+                    &cfg.circuit_dir,
+                    table_id,
+                    &phase,
+                    &dealt_indices,
+                    &deck_root,
+                )
+                .await
+                .map_err(|e| format!("reveal prepare failed: {}", e))?;
+                let session_id = job.job_id.replace("job-mpc_reveal-", "proof-");
+                let proof = mpc::generate_proof_from_share_sets(
+                    &client,
+                    table_id,
+                    &prepared.share_set_ids,
+                    &session_id,
+                    "reveal_board_valid",
+                    &cfg.circuit_dir,
+                    &cfg.node_endpoints,
+                )
+                .await
+                .map_err(|e| format!("reveal proof generation failed: {}", e))?;
+                Ok(serde_json::json!({
+                    "proof": proof.proof,
+                    "public_inputs": proof.public_inputs,
+                    "session_id": proof.session_id,
+                }))
+            })
+        }),
+    );
+    state.job_queue.spawn_workers();
     circuit_pins::spawn_circuit_watcher(state.mpc_config.circuit_dir.clone());
 
     if let Some(path) = hot_reload_snapshot {
