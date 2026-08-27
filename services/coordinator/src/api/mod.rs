@@ -23,7 +23,10 @@ use serde::Serialize;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::{circuit_pins, feature_flags, mpc, session_gc, soroban, AppState, MpcNodeProgress, TableSession};
+use crate::{
+    circuit_pins, feature_flags, mpc, session_cache, session_gc, session_recovery, soroban,
+    AppState, MpcNodeProgress, TableSession,
+};
 use auth::{allow_insecure_dev_auth, enforce_rate_limit, validate_signed_request};
 use parsing::{
     parse_deal_outputs, parse_requested_buy_in, parse_reveal_outputs, parse_showdown_outputs,
@@ -46,6 +49,90 @@ fn parameterised_circuit_name(base: &str, player_count: usize) -> String {
         format!("{}_{}p", base, player_count)
     } else {
         base.to_string()
+    }
+}
+
+/// Partial session recovery when a single MPC node fails mid-session (Issue
+/// #235). Called after `mpc::is_node_unavailable_error` fires for a
+/// deal/reveal/showdown proof generation call: checkpoints the session's
+/// intermediate state and, if a healthy replacement node is available, swaps
+/// it into `session.selected_node_endpoints` so the caller's retry (still
+/// signalled via the existing CONFLICT response, per Issue #96) uses a
+/// working committee instead of failing again against the same dead node.
+async fn attempt_partial_recovery(
+    state: &AppState,
+    session: &mut TableSession,
+    node_endpoints: &[String],
+    error: &str,
+    circuit_name: &str,
+) {
+    let Some(failed_idx) = session_recovery::extract_failed_node_index(error) else {
+        return;
+    };
+    let Some(failed_endpoint) = node_endpoints.get(failed_idx) else {
+        return;
+    };
+
+    let replacements = if dynamic_discovery_active(state) {
+        state.node_registry.read().await.healthy_endpoints()
+    } else {
+        state.mpc_config.node_endpoints.clone()
+    };
+
+    // REP3 needs every original share-holder (see Issue #96 notes above), so
+    // the threshold is the full committee size: losing any node always
+    // requires a replacement rather than continuing with fewer nodes.
+    let outcome = session_recovery::recover_from_node_failure(
+        node_endpoints,
+        failed_endpoint,
+        node_endpoints.len(),
+        &replacements,
+    );
+
+    let last_checkpoint = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cached = session_cache::CachedSession {
+        session_id: format!("table-{}", session.table_id),
+        table_id: session.table_id,
+        phase: session.phase.clone(),
+        circuit_name: circuit_name.to_string(),
+        deck_root: session.deck_root.clone(),
+        hand_commitments: session.hand_commitments.clone(),
+        player_order: session.player_order.clone(),
+        dealt_indices: session.dealt_indices.clone(),
+        board_indices: session.board_indices.clone(),
+        reveal_tx_hashes: session.reveal_tx_hashes.clone(),
+        proof_nonce: session.proof_nonce,
+        last_checkpoint,
+    };
+    if let Err(e) = session_recovery::checkpoint_session_state(&cached) {
+        tracing::error!(
+            table_id = session.table_id,
+            "failed to checkpoint session state during node-failure recovery: {}",
+            e
+        );
+    }
+
+    match outcome {
+        session_recovery::RecoveryOutcome::ContinueWithRemaining { endpoints }
+        | session_recovery::RecoveryOutcome::Reassigned { endpoints, .. } => {
+            tracing::warn!(
+                table_id = session.table_id,
+                failed_node = %failed_endpoint,
+                new_committee = ?endpoints,
+                "MPC node failure recovery: committee updated for next retry"
+            );
+            session.selected_node_endpoints = endpoints;
+        }
+        session_recovery::RecoveryOutcome::AwaitingReplacement => {
+            tracing::error!(
+                table_id = session.table_id,
+                failed_node = %failed_endpoint,
+                "MPC node failure recovery: no healthy replacement available; session state checkpointed for later resumption"
+            );
+        }
     }
 }
 
@@ -549,7 +636,7 @@ pub async fn request_deal(
     let deal_circuit = parameterised_circuit_name(&req.circuit_name, players.len());
     deal_span.record("circuit", deal_circuit.as_str());
     deal_span.record("proof_session_id", proof_session_id.as_str());
-    let deal_proof = mpc::generate_proof_from_share_sets(
+    let deal_proof = match mpc::generate_proof_from_share_sets(
         &state.mpc_client,
         table_id,
         &prepared_deal.share_set_ids,
@@ -559,18 +646,23 @@ pub async fn request_deal(
         &node_endpoints,
     )
     .await
-    .map_err(|e| {
-        tracing::error!("Deal proof generation failed: {}", e);
-        // Issue #96: a committee node that went down mid-session can't be
-        // recovered by retrying this same session (REP3 needs all 3 original
-        // share-holders) — signal the caller to start a fresh deal instead of
-        // a generic gateway error.
-        if mpc::is_node_unavailable_error(&e) {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::BAD_GATEWAY
+    {
+        Ok(proof) => proof,
+        Err(e) => {
+            tracing::error!("Deal proof generation failed: {}", e);
+            // Issue #96: a committee node that went down mid-session can't be
+            // recovered by retrying this same session (REP3 needs all 3
+            // original share-holders) — signal the caller to start a fresh
+            // deal instead of a generic gateway error. Issue #235: attempt to
+            // checkpoint state and line up a replacement node for that retry.
+            if mpc::is_node_unavailable_error(&e) {
+                attempt_partial_recovery(&state, session, &node_endpoints, &e, &deal_circuit)
+                    .await;
+                return Err(StatusCode::CONFLICT);
+            }
+            return Err(StatusCode::BAD_GATEWAY);
         }
-    })?;
+    };
 
     let parsed_deal =
         parse_deal_outputs(&deal_proof.public_inputs, players.len()).map_err(|e| {
@@ -804,7 +896,7 @@ pub async fn request_reveal(
     }
     reveal_span.record("proof_session_id", proof_session_id.as_str());
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
-    let reveal_proof = mpc::generate_proof_from_share_sets(
+    let reveal_proof = match mpc::generate_proof_from_share_sets(
         &state.mpc_client,
         table_id,
         &prepared_reveal.share_set_ids,
@@ -814,15 +906,26 @@ pub async fn request_reveal(
         &node_endpoints,
     )
     .await
-    .map_err(|e| {
-        tracing::error!("Reveal proof generation failed: {}", e);
-        // Issue #96: see the deal-proof call site above.
-        if mpc::is_node_unavailable_error(&e) {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::BAD_GATEWAY
+    {
+        Ok(proof) => proof,
+        Err(e) => {
+            tracing::error!("Reveal proof generation failed: {}", e);
+            // Issue #96: see the deal-proof call site above. Issue #235:
+            // attempt recovery before signalling the caller to retry.
+            if mpc::is_node_unavailable_error(&e) {
+                attempt_partial_recovery(
+                    &state,
+                    session,
+                    &node_endpoints,
+                    &e,
+                    "reveal_board_valid",
+                )
+                .await;
+                return Err(StatusCode::CONFLICT);
+            }
+            return Err(StatusCode::BAD_GATEWAY);
         }
-    })?;
+    };
 
     let num_revealed = match phase.as_str() {
         "flop" => 3usize,
@@ -1001,7 +1104,7 @@ pub async fn request_showdown(
     showdown_span.record("circuit", showdown_circuit.as_str());
     showdown_span.record("proof_session_id", proof_session_id.as_str());
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
-    let showdown_proof = mpc::generate_proof_from_share_sets(
+    let showdown_proof = match mpc::generate_proof_from_share_sets(
         &state.mpc_client,
         table_id,
         &prepared_showdown.share_set_ids,
@@ -1011,15 +1114,20 @@ pub async fn request_showdown(
         &node_endpoints,
     )
     .await
-    .map_err(|e| {
-        tracing::error!("Showdown proof generation failed: {}", e);
-        // Issue #96: see the deal-proof call site above.
-        if mpc::is_node_unavailable_error(&e) {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::BAD_GATEWAY
+    {
+        Ok(proof) => proof,
+        Err(e) => {
+            tracing::error!("Showdown proof generation failed: {}", e);
+            // Issue #96: see the deal-proof call site above. Issue #235:
+            // attempt recovery before signalling the caller to retry.
+            if mpc::is_node_unavailable_error(&e) {
+                attempt_partial_recovery(&state, session, &node_endpoints, &e, &showdown_circuit)
+                    .await;
+                return Err(StatusCode::CONFLICT);
+            }
+            return Err(StatusCode::BAD_GATEWAY);
         }
-    })?;
+    };
 
     let parsed_showdown =
         parse_showdown_outputs(&showdown_proof.public_inputs, session.player_order.len()).map_err(
