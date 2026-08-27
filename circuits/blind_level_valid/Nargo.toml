@@ -1,0 +1,12 @@
+[package]
+name = "blind_level_valid"
+type = "bin"
+authors = ["StellPoker"]
+compiler_version = ">=0.36.0"
+
+[package.metadata.circuit]
+description = "Prove the correct blind level was applied to a hand, derived from elapsed time since tournament start plus any paused duration. Prevents blind level manipulation."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+max_players = 6
