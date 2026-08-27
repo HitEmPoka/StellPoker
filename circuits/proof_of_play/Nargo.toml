@@ -1,0 +1,13 @@
+[package]
+name = "proof_of_play"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[package.metadata.circuit]
+description = "Prove that a wallet has played at least N hands without revealing which hands. Useful for gated features or achievements while preserving privacy."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+poseidon2_permutations = 0
+max_players = 6

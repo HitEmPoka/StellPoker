@@ -1,0 +1,13 @@
+[package]
+name = "time_bank_valid"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[package.metadata.circuit]
+description = "Prove that a player had sufficient time-bank balance when using an extension. Inputs: time banks used, time elapsed, and replenishment rate."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+poseidon2_permutations = 0
+max_players = 6
