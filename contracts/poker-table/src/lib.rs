@@ -4,6 +4,8 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 mod betting;
+#[cfg(test)]
+mod blinds_schedule_test;
 mod constant_time;
 mod game;
 mod game_hub;
@@ -16,6 +18,8 @@ mod invariants_test;
 mod lifecycle_invariants_test;
 mod pot;
 #[cfg(test)]
+mod queue_test;
+#[cfg(test)]
 mod state_machine_test;
 mod test;
 mod timeout;
@@ -24,6 +28,8 @@ mod tournament_lifecycle_test;
 #[cfg(test)]
 mod min_raise_test;
 mod types;
+#[cfg(test)]
+mod upgrade_test;
 mod verifier;
 
 use types::*;
@@ -33,6 +39,32 @@ const TABLE_TTL_THRESHOLD: u32 = 17_280; // ~1 day — trigger extension when be
 const TABLE_TTL_EXTEND: u32 = 518_400; // ~30 days
 const BOARD_INDICES_COUNT: u32 = 5; // flop(3) + turn(1) + river(1)
 const MAX_PLAYERS_PER_TABLE: u32 = 6;
+const MAX_QUEUE_SIZE: u32 = 12;
+/// Minimum delay between proposing and executing a contract upgrade, so
+/// seated players have a real window to notice and exit before it lands.
+const MIN_UPGRADE_DELAY_SECONDS: u64 = 86_400; // 1 day
+
+fn validate_blinds_schedule(schedule: &BlindsSchedule) -> Result<(), PokerTableError> {
+    let len = schedule.levels.len();
+    if len == 0 {
+        return Err(PokerTableError::EmptyBlindsSchedule);
+    }
+    for i in 0..len {
+        let level = schedule
+            .levels
+            .get(i)
+            .ok_or(PokerTableError::InvalidBlindLevel)?;
+        if level.small_blind <= 0 || level.big_blind <= level.small_blind || level.ante < 0 {
+            return Err(PokerTableError::InvalidBlindLevel);
+        }
+        // Every level but the last must have a nonzero duration, or the
+        // schedule could never advance past it.
+        if i + 1 < len && level.duration_seconds == 0 {
+            return Err(PokerTableError::InvalidBlindLevel);
+        }
+    }
+    Ok(())
+}
 
 #[contract]
 pub struct PokerTableContract;
@@ -155,6 +187,21 @@ fn index_player_table(env: &Env, player: &Address, table_id: u32) {
         .extend_ttl(&key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 }
 
+fn load_queue(env: &Env, table_id: u32) -> Vec<QueueEntry> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Queue(table_id))
+        .unwrap_or(Vec::new(env))
+}
+
+fn save_queue(env: &Env, table_id: u32, queue: &Vec<QueueEntry>) {
+    let key = DataKey::Queue(table_id);
+    env.storage().persistent().set(&key, queue);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+}
+
 /// Drop `table_id` from `player`'s seat index.
 fn unindex_player_table(env: &Env, player: &Address, table_id: u32) {
     let key = DataKey::PlayerTables(player.clone());
@@ -258,6 +305,104 @@ fn compute_rit_board_indices(
     Ok(())
 }
 
+fn emit_queue_positions(env: &Env, table_id: u32, queue: &Vec<QueueEntry>) {
+    for i in 0..queue.len() {
+        if let Some(entry) = queue.get(i) {
+            env.events().publish(
+                (Symbol::new(env, "queue_position"), table_id),
+                (entry.player, i),
+            );
+        }
+    }
+}
+
+/// Add `player` to the waiting-list queue for a full table, escrowing their
+/// buy-in immediately so they can be auto-seated later without a further
+/// transaction. Returns the 0-based queue position.
+fn join_queue(
+    env: &Env,
+    table_id: u32,
+    player: Address,
+    buy_in: i128,
+) -> Result<u32, PokerTableError> {
+    let mut queue = load_queue(env, table_id);
+
+    if queue.len() >= MAX_QUEUE_SIZE {
+        return Err(PokerTableError::QueueFull);
+    }
+    for i in 0..queue.len() {
+        let entry = queue.get(i).ok_or(PokerTableError::NotQueued)?;
+        if constant_time::address_eq(env, &entry.player, &player) {
+            return Err(PokerTableError::AlreadyQueued);
+        }
+    }
+
+    let table = load_table(env, table_id)?;
+    let token = token::Client::new(env, &table.config.token);
+    token.transfer(&player, &env.current_contract_address(), &buy_in);
+
+    queue.push_back(QueueEntry {
+        player: player.clone(),
+        buy_in,
+    });
+    let position = queue.len() - 1;
+    save_queue(env, table_id, &queue);
+
+    env.events().publish(
+        (Symbol::new(env, "queue_joined"), table_id),
+        (player, position),
+    );
+
+    Ok(position)
+}
+
+/// If the queue is non-empty and a seat is free, seat the front of the
+/// queue using their already-escrowed buy-in. No-op if the queue is empty
+/// or the table has no free seat.
+fn seat_next_from_queue(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
+    let queue = load_queue(env, table_id);
+    if queue.is_empty() {
+        return Ok(());
+    }
+
+    let mut table = load_table(env, table_id)?;
+    if table.players.len() >= table.config.max_players {
+        return Ok(());
+    }
+
+    let next = queue.get(0).ok_or(PokerTableError::NotQueued)?;
+    let mut new_queue: Vec<QueueEntry> = Vec::new(env);
+    for i in 1..queue.len() {
+        if let Some(entry) = queue.get(i) {
+            new_queue.push_back(entry);
+        }
+    }
+
+    let seat = table.players.len();
+    table.players.push_back(PlayerState {
+        address: next.player.clone(),
+        stack: next.buy_in,
+        bet_this_round: 0,
+        committed: 0,
+        folded: false,
+        all_in: false,
+        sitting_out: false,
+        seat_index: seat,
+        total_buy_in: next.buy_in,
+        rebuy_count: 0,
+    });
+    save_table(env, &table);
+    save_queue(env, table_id, &new_queue);
+
+    env.events().publish(
+        (Symbol::new(env, "queue_seated"), table_id),
+        (next.player, seat),
+    );
+    emit_queue_positions(env, table_id, &new_queue);
+
+    Ok(())
+}
+
 fn derive_session_id(table_id: u32, hand_number: u32) -> u32 {
     // Deterministic 32-bit hash of (table_id, hand_number).
     let mut x = table_id ^ hand_number.rotate_left(16);
@@ -266,6 +411,50 @@ fn derive_session_id(table_id: u32, hand_number: u32) -> u32 {
     x = x.wrapping_mul(0x85EB_CA6B);
     x ^= x >> 13;
     x
+}
+
+fn require_emergency_timelock(env: &Env, table: &TableState) -> Result<(), PokerTableError> {
+    if matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+        return Err(PokerTableError::EmergencyWithdrawalNotApplicable);
+    }
+    let unlock_ledger = table
+        .last_action_ledger
+        .saturating_add(table.config.timeout_ledgers.saturating_mul(2));
+    if env.ledger().sequence() < unlock_ledger {
+        return Err(PokerTableError::EmergencyTimelockActive);
+    }
+    Ok(())
+}
+
+fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+    let token = token::Client::new(env, &table.config.token);
+    for i in 0..table.players.len() {
+        let mut player = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let refund = player.stack + player.committed;
+        if refund > 0 {
+            token.transfer(&env.current_contract_address(), &player.address, &refund);
+        }
+        player.stack = 0;
+        player.bet_this_round = 0;
+        player.committed = 0;
+        player.folded = true;
+        table.players.set(i, player);
+    }
+    table.pot = 0;
+    table.side_pots = Vec::new(env);
+    table.phase = GamePhase::Settlement;
+    table.last_action_ledger = env.ledger().sequence();
+    env.storage()
+        .instance()
+        .remove(&DataKey::EmergencyApprovals(table.id));
+    env.events().publish(
+        (Symbol::new(env, "emergency_withdrawal"), table.id),
+        table.hand_number,
+    );
+    Ok(())
 }
 
 #[contractimpl]
@@ -287,6 +476,7 @@ impl PokerTableContract {
         {
             return Err(PokerTableError::InvalidPlayerCount);
         }
+        validate_blinds_schedule(&config.blinds_schedule)?;
 
         let table_id = env
             .storage()
@@ -317,7 +507,14 @@ impl PokerTableContract {
             hand_actions: Vec::new(&env),
             rit_state: None,
             jackpot_balance: 0,
-            last_raise_size: config.big_blind,
+            last_raise_size: config
+                .blinds_schedule
+                .levels
+                .get(0)
+                .ok_or(PokerTableError::EmptyBlindsSchedule)?
+                .big_blind,
+            current_blind_level: 0,
+            level_started_at: env.ledger().timestamp(),
         };
 
         save_table(&env, &table);
@@ -331,7 +528,13 @@ impl PokerTableContract {
         Ok(table_id)
     }
 
-    /// Join a table with a buy-in deposit.
+    /// Join a table with a buy-in deposit. If the table is full, the player
+    /// is added to the waiting-list queue instead (buy-in is still escrowed
+    /// immediately) and automatically seated when a spot opens via
+    /// `leave_table`. Returns the seat index when seated directly, or the
+    /// 0-based queue position (via `Err`-free `Ok(u32)` as well — check
+    /// `is_queued` semantics through `get_queue` if the distinction matters)
+    /// when queued.
     pub fn join_table(
         env: Env,
         table_id: u32,
@@ -346,9 +549,6 @@ impl PokerTableContract {
         if !matches!(table.phase, GamePhase::Waiting) {
             return Err(PokerTableError::TableNotAcceptingPlayers);
         }
-        if (table.players.len() as u32) >= table.config.max_players {
-            return Err(PokerTableError::TableFull);
-        }
         if buy_in < table.config.min_buy_in || buy_in > table.config.max_buy_in {
             return Err(PokerTableError::InvalidBuyIn);
         }
@@ -362,6 +562,10 @@ impl PokerTableContract {
             if constant_time::address_eq(&env, &p.address, &player) {
                 return Err(PokerTableError::AlreadySeated);
             }
+        }
+
+        if (table.players.len() as u32) >= table.config.max_players {
+            return join_queue(&env, table_id, player, buy_in);
         }
 
         // Transfer buy-in to contract.
@@ -518,7 +722,9 @@ impl PokerTableContract {
         Ok(())
     }
 
-    /// Leave the table and withdraw remaining stack.
+    /// Leave the table and withdraw remaining stack. If the waiting-list
+    /// queue is non-empty, the next queued player is automatically seated
+    /// into the vacated spot using their already-escrowed buy-in.
     pub fn leave_table(env: Env, table_id: u32, player: Address) -> Result<i128, PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
@@ -588,7 +794,53 @@ impl PokerTableContract {
             (player, withdrawn),
         );
 
+        seat_next_from_queue(&env, table_id)?;
+
         Ok(withdrawn)
+    }
+
+    /// Cancel a pending waiting-list spot and refund the escrowed buy-in.
+    pub fn leave_queue(env: Env, table_id: u32, player: Address) -> Result<i128, PokerTableError> {
+        player.require_auth();
+
+        let queue = load_queue(&env, table_id);
+
+        let mut refund: i128 = 0;
+        let mut found = false;
+        let mut new_queue: Vec<QueueEntry> = Vec::new(&env);
+        for i in 0..queue.len() {
+            let entry = queue.get(i).ok_or(PokerTableError::NotQueued)?;
+            if constant_time::address_eq(&env, &entry.player, &player) {
+                found = true;
+                refund = entry.buy_in;
+            } else {
+                new_queue.push_back(entry);
+            }
+        }
+        if !found {
+            return Err(PokerTableError::NotQueued);
+        }
+
+        if refund > 0 {
+            let table = load_table(&env, table_id)?;
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), &player, &refund);
+        }
+
+        save_queue(&env, table_id, &new_queue);
+
+        env.events().publish(
+            (Symbol::new(&env, "queue_left"), table_id),
+            (player, refund),
+        );
+        emit_queue_positions(&env, table_id, &new_queue);
+
+        Ok(refund)
+    }
+
+    /// Read the current waiting-list queue for a table (view function).
+    pub fn get_queue(env: Env, table_id: u32) -> Vec<QueueEntry> {
+        load_queue(&env, table_id)
     }
 
     /// Start a new hand. Called after enough players are seated.
@@ -695,14 +947,38 @@ impl PokerTableContract {
     }
 
     /// Player submits a betting action.
+    ///
+    /// `seq`: monotonically increasing per-player per-table sequence number.
+    /// The contract rejects any action whose `seq` is not exactly one greater
+    /// than the previously accepted action for `(table_id, player)`.
+    /// This prevents front-running and replay attacks on betting actions.
     pub fn player_action(
         env: Env,
         table_id: u32,
         player: Address,
+        seq: u32,
         action: Action,
     ) -> Result<(), PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
+
+        // Validate action sequence number to prevent replay/stale attacks.
+        let counter_key = DataKey::PlayerActionCounter(table_id, player.clone());
+        let last_seq: u32 = env
+            .storage()
+            .persistent()
+            .get(&counter_key)
+            .unwrap_or(0);
+        if seq != last_seq.wrapping_add(1) {
+            return Err(PokerTableError::StaleActionSequence);
+        }
+        // Bump counter and extend TTL.
+        env.storage()
+            .persistent()
+            .set(&counter_key, &seq);
+        env.storage()
+            .persistent()
+            .extend_ttl(&counter_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 
         let mut table = load_table(&env, table_id)?;
 
@@ -815,8 +1091,9 @@ impl PokerTableContract {
             table.rit_state = Some(rit);
 
             // Pre-compute board indices for both runs
-            let rit_state = table.rit_state.as_mut().unwrap();
-            compute_rit_board_indices(&env, table, rit_state)?;
+            let mut rit_state = table.rit_state.clone().unwrap();
+            compute_rit_board_indices(&env, &table, &mut rit_state)?;
+            table.rit_state = Some(rit_state);
 
             // Transition to appropriate dealing phase based on how many shared cards
             table.phase = match shared_board_count {
@@ -1081,7 +1358,7 @@ impl PokerTableContract {
             Ok(())
         } else {
             // Normal showdown
-            game::settle_showdown(&env, &mut table, winner_index, tie_mask)?;
+            game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
             save_table(&env, &table);
             Ok(())
         }
@@ -1127,6 +1404,92 @@ impl PokerTableContract {
         load_table(&env, table_id)
     }
 
+    /// Configure an optional 2x/3x big-blind straddle for future hands.
+    pub fn configure_straddle(
+        env: Env,
+        table_id: u32,
+        multiplier: u32,
+        position: StraddlePosition,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        if multiplier != 0 && multiplier != 2 && multiplier != 3 {
+            return Err(PokerTableError::InvalidStraddleConfig);
+        }
+        env.storage().instance().set(
+            &DataKey::StraddleConfig(table_id),
+            &StraddleConfig {
+                multiplier,
+                position,
+            },
+        );
+        env.events().publish(
+            (Symbol::new(&env, "straddle_configured"), table_id),
+            multiplier,
+        );
+        Ok(())
+    }
+
+    /// Approve recovery of every player's own stack and committed chips after
+    /// a game has been stuck for twice the normal timeout. Execution occurs
+    /// automatically once strictly more than half of seated players approve.
+    pub fn approve_emergency_withdrawal(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<bool, PokerTableError> {
+        player.require_auth();
+        let mut table = load_table(&env, table_id)?;
+        require_emergency_timelock(&env, &table)?;
+
+        let key = DataKey::EmergencyApprovals(table_id);
+        let mut approvals = env
+            .storage()
+            .instance()
+            .get::<DataKey, Vec<Address>>(&key)
+            .unwrap_or(Vec::new(&env));
+        let mut seated = false;
+        for i in 0..table.players.len() {
+            let p = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            if constant_time::address_eq(&env, &p.address, &player) {
+                seated = true;
+            }
+        }
+        if !seated {
+            return Err(PokerTableError::PlayerNotAtTable);
+        }
+        for approval in approvals.iter() {
+            if constant_time::address_eq(&env, &approval, &player) {
+                return Err(PokerTableError::AlreadyApprovedEmergencyWithdrawal);
+            }
+        }
+        approvals.push_back(player);
+        env.storage().instance().set(&key, &approvals);
+        let approved = approvals.len() * 2 > table.players.len();
+        if approved {
+            execute_emergency_withdrawal(&env, &mut table)?;
+            save_table(&env, &table);
+        }
+        Ok(approved)
+    }
+
+    /// Admin override for an unrecoverable MPC failure, subject to the same
+    /// on-chain timelock as majority recovery.
+    pub fn admin_emergency_withdrawal(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let mut table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        require_emergency_timelock(&env, &table)?;
+        execute_emergency_withdrawal(&env, &mut table)?;
+        save_table(&env, &table);
+        Ok(())
+    }
+
     // ========================================================================
     // Hand History (read-only)
     // ========================================================================
@@ -1157,6 +1520,56 @@ impl PokerTableContract {
     /// Number of hands the history buffer can hold before it starts evicting.
     pub fn hand_history_capacity() -> u32 {
         history::HAND_HISTORY_CAPACITY
+    }
+
+    /// Offset-based paginated hand history (newest first). Each record read
+    /// has its TTL extended (bump-on-read pattern for pagination cursors).
+    ///
+    /// * `offset` — skip this many records from the newest (0 = start at newest).
+    /// * `limit` — max records to return (capped at the buffer capacity).
+    pub fn get_hand_history_chunk(
+        env: Env,
+        table_id: u32,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<HandRecord> {
+        history::get_history_chunk(&env, table_id, offset, limit)
+    }
+
+    // ========================================================================
+    // Paginated Player List (read-only)
+    // ========================================================================
+
+    /// Return the total number of seated players (useful for pagination UIs).
+    pub fn get_player_count(env: Env, table_id: u32) -> Result<u32, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        Ok(table.players.len())
+    }
+
+    /// Return a slice of the table's players with offset/limit pagination.
+    /// Players are returned in seat order. The table entry's TTL is bumped
+    /// on every read.
+    pub fn get_players_paginated(
+        env: Env,
+        table_id: u32,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<PlayerState>, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        let total = table.players.len();
+        if offset >= total || limit == 0 {
+            return Ok(Vec::new(&env));
+        }
+        let end = core::cmp::min(offset.saturating_add(limit), total);
+        let mut out: Vec<PlayerState> = Vec::new(&env);
+        let mut i = offset;
+        while i < end {
+            if let Some(p) = table.players.get(i) {
+                out.push_back(p);
+            }
+            i += 1;
+        }
+        Ok(out)
     }
 
     // ========================================================================
@@ -1218,16 +1631,94 @@ impl PokerTableContract {
         Ok(())
     }
 
-    /// Upgrade the contract WASM (admin only).
-    pub fn upgrade(
+    /// Propose a contract-wasm upgrade (admin only). The upgrade can only be
+    /// executed after `delay_seconds` have elapsed (minimum
+    /// `MIN_UPGRADE_DELAY_SECONDS`), giving seated players a window to
+    /// notice and exit before it lands. Replaces any existing proposal.
+    pub fn propose_upgrade(
         env: Env,
         table_id: u32,
         new_wasm_hash: BytesN<32>,
+        delay_seconds: u64,
     ) -> Result<(), PokerTableError> {
         let table = load_table(&env, table_id)?;
         table.admin.require_auth();
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        if delay_seconds < MIN_UPGRADE_DELAY_SECONDS {
+            return Err(PokerTableError::UpgradeDelayTooShort);
+        }
+
+        let execute_after = env.ledger().timestamp() + delay_seconds;
+        let proposal = UpgradeProposal {
+            new_wasm_hash: new_wasm_hash.clone(),
+            execute_after,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::UpgradeProposal(table_id), &proposal);
+        env.storage().persistent().extend_ttl(
+            &DataKey::UpgradeProposal(table_id),
+            TABLE_TTL_THRESHOLD,
+            TABLE_TTL_EXTEND,
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "upgrade_proposed"), table_id),
+            (new_wasm_hash, execute_after),
+        );
         Ok(())
+    }
+
+    /// Execute a previously proposed upgrade (admin only), once its delay
+    /// has elapsed. Always upgrades to the hash committed at proposal time —
+    /// there is no way to swap in a different hash at execution time.
+    pub fn execute_upgrade(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        let key = DataKey::UpgradeProposal(table_id);
+        let proposal: UpgradeProposal = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::NoUpgradeProposal)?;
+
+        if env.ledger().timestamp() < proposal.execute_after {
+            return Err(PokerTableError::UpgradeDelayNotElapsed);
+        }
+
+        env.storage().persistent().remove(&key);
+        env.deployer()
+            .update_current_contract_wasm(proposal.new_wasm_hash.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "upgrade_executed"), table_id),
+            proposal.new_wasm_hash,
+        );
+        Ok(())
+    }
+
+    /// Cancel a pending upgrade proposal (admin only).
+    pub fn cancel_upgrade(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        let key = DataKey::UpgradeProposal(table_id);
+        if env.storage().persistent().get::<DataKey, UpgradeProposal>(&key).is_none() {
+            return Err(PokerTableError::NoUpgradeProposal);
+        }
+        env.storage().persistent().remove(&key);
+
+        env.events()
+            .publish((Symbol::new(&env, "upgrade_cancelled"), table_id), ());
+        Ok(())
+    }
+
+    /// Read the pending upgrade proposal for a table, if any (view function).
+    pub fn get_upgrade_proposal(env: Env, table_id: u32) -> Option<UpgradeProposal> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeProposal(table_id))
     }
 
     /// Update the rake (admin only). Capped at `MAX_RAKE_BPS` (5%).

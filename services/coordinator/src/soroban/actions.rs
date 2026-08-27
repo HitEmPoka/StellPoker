@@ -300,6 +300,7 @@ pub async fn submit_player_action(
     player_address: &str,
     action: &str,
     amount: Option<i128>,
+    seq: u32,
 ) -> Result<String, String> {
     if !config.is_configured() {
         return Err("Soroban not configured".to_string());
@@ -345,6 +346,8 @@ pub async fn submit_player_action(
             onchain_table_id.to_string(),
             "--player".to_string(),
             player_address.to_string(),
+            "--seq".to_string(),
+            seq.to_string(),
             "--action".to_string(),
             action_json,
         ],
@@ -576,6 +579,96 @@ pub async fn get_table_state(config: &SorobanConfig, table_id: u32) -> Result<St
         .output()
         .await
         .map_err(|e| format!("Failed to invoke stellar CLI: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Read a paginated slice of seated players via `get_players_paginated`.
+pub async fn get_players_paginated(
+    config: &SorobanConfig,
+    table_id: u32,
+    offset: u32,
+    limit: u32,
+) -> Result<String, String> {
+    if !config.is_configured() {
+        return Err("Soroban not configured".to_string());
+    }
+    let onchain_table_id = resolve_onchain_table_id(config, table_id);
+    let output = invoke_contract_with_retries(
+        config,
+        vec![
+            "get_players_paginated".to_string(),
+            "--table_id".to_string(),
+            onchain_table_id.to_string(),
+            "--offset".to_string(),
+            offset.to_string(),
+            "--limit".to_string(),
+            limit.to_string(),
+        ],
+    )
+    .await?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Read the total player count via `get_player_count`.
+pub async fn get_player_count(
+    config: &SorobanConfig,
+    table_id: u32,
+) -> Result<String, String> {
+    if !config.is_configured() {
+        return Err("Soroban not configured".to_string());
+    }
+    let onchain_table_id = resolve_onchain_table_id(config, table_id);
+    let output = invoke_contract_with_retries(
+        config,
+        vec![
+            "get_player_count".to_string(),
+            "--table_id".to_string(),
+            onchain_table_id.to_string(),
+        ],
+    )
+    .await?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Read a paginated chunk of hand history via `get_hand_history_chunk`.
+pub async fn get_hand_history_chunk(
+    config: &SorobanConfig,
+    table_id: u32,
+    offset: u32,
+    limit: u32,
+) -> Result<String, String> {
+    if !config.is_configured() {
+        return Err("Soroban not configured".to_string());
+    }
+    let onchain_table_id = resolve_onchain_table_id(config, table_id);
+    let output = invoke_contract_with_retries(
+        config,
+        vec![
+            "get_hand_history_chunk".to_string(),
+            "--table_id".to_string(),
+            onchain_table_id.to_string(),
+            "--offset".to_string(),
+            offset.to_string(),
+            "--limit".to_string(),
+            limit.to_string(),
+        ],
+    )
+    .await?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

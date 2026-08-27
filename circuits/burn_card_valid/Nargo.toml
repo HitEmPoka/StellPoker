@@ -1,0 +1,16 @@
+[package]
+name = "burn_card_valid"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Prove exactly one card is burned before each street (preflop, flop, turn, river) per poker rules, and that burned cards are distinct from all dealt/board cards."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+poseidon2_permutations = 64
+max_players = 6

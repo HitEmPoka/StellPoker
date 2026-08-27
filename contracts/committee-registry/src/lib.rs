@@ -25,6 +25,14 @@ pub struct CommitteeMember {
     pub region: soroban_sdk::String,   // Geographic region (e.g., us-east-1)
     pub active: bool,
     pub slash_count: u32,
+    /// Total stake delegated to this node by external delegators.
+    pub total_delegated_stake: i128,
+    /// Accumulated rewards per unit of delegated stake, scaled by REWARD_SCALE.
+    /// Increases monotonically whenever fees are distributed to this node.
+    pub rewards_per_stake: i128,
+    /// Node-operator fee rate in basis points (0–10000). The node keeps this
+    /// fraction of any fee distribution; the remainder goes to delegators.
+    pub fee_rate_bps: u32,
 }
 
 #[contracttype]
@@ -105,10 +113,24 @@ pub enum RegistryKey {
     MinWithdrawal,
 }
 
+/// Fixed-point scale for `rewards_per_stake`. Using 1e12 gives sub-stroop
+/// precision even for nodes with only a few hundred delegators.
+const REWARD_SCALE: i128 = 1_000_000_000_000;
+
 #[contractimpl]
 impl CommitteeRegistryContract {
     /// Initialize the registry.
-    pub fn initialize(env: Env, admin: Address, stake_token: Address, min_stake: i128) {
+    ///
+    /// * `delegation_cooldown_ledgers` — number of ledgers a delegator must
+    ///   wait between calling `undelegate` and being able to `withdraw_undelegation`.
+    ///   A value of 0 disables the cooldown (useful for tests).
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        stake_token: Address,
+        min_stake: i128,
+        delegation_cooldown_ledgers: u32,
+    ) {
         admin.require_auth();
         assert!(
             !env.storage().instance().has(&RegistryKey::Admin),
@@ -130,6 +152,9 @@ impl CommitteeRegistryContract {
                 showdown_ledgers: 120,
             },
         );
+        env.storage()
+            .instance()
+            .set(&RegistryKey::DelegationCooldown, &delegation_cooldown_ledgers);
     }
 
     /// Admin configures timeout windows for the phases that depend on MPC nodes.
@@ -270,6 +295,7 @@ impl CommitteeRegistryContract {
         stake: i128,
         endpoint: soroban_sdk::String,
         region: soroban_sdk::String,
+        fee_rate_bps: u32,
     ) {
         member.require_auth();
         assert!(
@@ -279,6 +305,8 @@ impl CommitteeRegistryContract {
                 .unwrap_or(false),
             "contract paused"
         );
+
+        assert!(fee_rate_bps <= 10_000, "fee_rate_bps must be <= 10000");
 
         let min_stake: i128 = env
             .storage()
@@ -303,6 +331,9 @@ impl CommitteeRegistryContract {
             region,
             active: true,
             slash_count: 0,
+            total_delegated_stake: 0,
+            rewards_per_stake: 0,
+            fee_rate_bps,
         };
 
         env.storage()
@@ -824,6 +855,37 @@ impl CommitteeRegistryContract {
         let slashed = m.stake / 2;
         m.stake -= slashed;
         m.active = false;
+
+        // Slash delegators proportionally (same 50 % haircut).
+        let mut total_delegation_slashed: i128 = 0;
+        let delegators: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&RegistryKey::NodeDelegators(member.clone()))
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..delegators.len() {
+            let delegator = delegators.get(i).unwrap();
+            let del_key = RegistryKey::Delegation(delegator.clone(), member.clone());
+            if let Some(mut rec) = env.storage().persistent().get::<RegistryKey, DelegationRecord>(&del_key) {
+                // Checkpoint rewards before slashing the amount.
+                rec.pending_rewards += Self::calc_pending(&rec, m.rewards_per_stake);
+                rec.debt_snapshot = m.rewards_per_stake;
+                let slash_amount = rec.amount / 2;
+                rec.amount -= slash_amount;
+                total_delegation_slashed += slash_amount;
+                m.total_delegated_stake -= slash_amount;
+                env.storage().persistent().set(&del_key, &rec);
+            }
+            // Also haircut any pending (cooling-down) undelegation.
+            let pend_key = RegistryKey::PendingUndelegation(delegator.clone(), member.clone());
+            if let Some(mut pend) = env.storage().persistent().get::<RegistryKey, UndelegationRequest>(&pend_key) {
+                let slash_amount = pend.amount / 2;
+                pend.amount -= slash_amount;
+                total_delegation_slashed += slash_amount;
+                env.storage().persistent().set(&pend_key, &pend);
+            }
+        }
+
         env.events().publish(
             (Symbol::new(env, "slash_reported"), m.slash_count),
             (member.clone(), reason),
@@ -831,7 +893,9 @@ impl CommitteeRegistryContract {
         env.storage()
             .persistent()
             .set(&RegistryKey::Member(member.clone()), &m);
-        slashed
+
+        // Total slashed is node stake + delegator stake haircut.
+        slashed + total_delegation_slashed
     }
 
     fn slash_member_record(env: &Env, member: &Address, reason: Symbol) -> CommitteeMember {
@@ -890,7 +954,6 @@ mod test {
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _},
         token::{StellarAssetClient, TokenClient},
-        String,
     };
 
     struct Setup<'a> {
@@ -914,13 +977,14 @@ mod test {
 
         let admin = Address::generate(&env);
         let member = Address::generate(&env);
-        client.initialize(&admin, &token.address, &1_000);
+        client.initialize(&admin, &token.address, &1_000, &100);
         token_admin.mint(&member, &2_000);
         client.register_member(
             &member,
             &1_000,
             &soroban_sdk::String::from_str(&env, "node-0"),
             &soroban_sdk::String::from_str(&env, "us-east-1"),
+            &1_000, // 10% fee rate
         );
 
         Setup {
@@ -946,6 +1010,7 @@ mod test {
             &1_000,
             &soroban_sdk::String::from_str(env, "node-1"),
             &soroban_sdk::String::from_str(env, "eu-west-1"),
+            &500, // 5% fee rate
         );
 
         let active = s.client.get_active_members();
@@ -1300,7 +1365,7 @@ mod test_paused {
         let member = Address::generate(&env);
         let endpoint = String::from_str(&env, "http://node0:8101");
         let region = String::from_str(&env, "us-east-1");
-        client.register_member(&member, &500, &endpoint, &region);
+        client.register_member(&member, &500, &endpoint, &region, &0);
     }
 
     #[test]
@@ -1332,7 +1397,7 @@ mod test_paused {
         let admin2 = Address::generate(&env);
         let contract_id2 = env.register(CommitteeRegistryContract, ());
         let client2 = CommitteeRegistryContractClient::new(&env, &contract_id2);
-        client2.initialize(&admin2, &sac2.address(), &100);
+        client2.initialize(&admin2, &sac2.address(), &100, &0);
 
         let member = Address::generate(&env);
         token_sac2.mint(&member, &500);
@@ -1342,7 +1407,7 @@ mod test_paused {
 
         let endpoint = String::from_str(&env, "http://node0:8101");
         let region = String::from_str(&env, "us-east-1");
-        client2.register_member(&member, &500, &endpoint, &region);
+        client2.register_member(&member, &500, &endpoint, &region, &0);
         let m = client2.get_member(&member);
         assert!(m.active);
     }
@@ -1353,5 +1418,247 @@ mod test_paused {
         let (env, client, _admin) = setup_paused();
         let stranger = Address::generate(&env);
         client.pause(&stranger);
+    }
+}
+
+#[cfg(test)]
+mod test_delegation {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        token::{StellarAssetClient, TokenClient},
+        Env, String,
+    };
+
+    /// Helper: set up a registry with one node already registered.
+    /// Returns (env, client, token, admin, node).
+    fn setup() -> (
+        Env,
+        CommitteeRegistryContractClient<'static>,
+        TokenClient<'static>,
+        Address,
+        Address,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(CommitteeRegistryContract, ());
+        let client = CommitteeRegistryContractClient::new(&env, &contract_id);
+
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token = TokenClient::new(&env, &sac.address());
+        let token_sac = StellarAssetClient::new(&env, &sac.address());
+
+        let admin = Address::generate(&env);
+        let node = Address::generate(&env);
+
+        // cooldown = 10 ledgers
+        client.initialize(&admin, &sac.address(), &1_000, &10);
+
+        token_sac.mint(&node, &5_000);
+        // fee_rate_bps = 1000 (10%)
+        client.register_member(
+            &node,
+            &1_000,
+            &String::from_str(&env, "node-0"),
+            &String::from_str(&env, "us-east-1"),
+            &1_000,
+        );
+
+        (env, client, token, admin, node)
+    }
+
+    #[test]
+    fn delegate_and_query() {
+        let (env, client, token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+
+        client.delegate(&delegator, &node, &500);
+
+        let rec = client.get_delegation(&delegator, &node).unwrap();
+        assert_eq!(rec.amount, 500);
+        assert_eq!(rec.pending_rewards, 0);
+
+        let m = client.get_member(&node);
+        assert_eq!(m.total_delegated_stake, 500);
+        // Delegator transferred 500; they now hold 1500.
+        assert_eq!(token.balance(&delegator), 1_500);
+    }
+
+    #[test]
+    fn delegate_accumulates_on_second_call() {
+        let (env, client, token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &3_000);
+
+        client.delegate(&delegator, &node, &500);
+        client.delegate(&delegator, &node, &300);
+
+        let rec = client.get_delegation(&delegator, &node).unwrap();
+        assert_eq!(rec.amount, 800);
+        assert_eq!(token.balance(&delegator), 2_200);
+    }
+
+    #[test]
+    fn distribute_fees_and_claim_rewards() {
+        let (env, client, token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &node, &1_000);
+
+        // Distribute 1000 tokens as fees.
+        // node fee = 10% of 1000 = 100  → sent directly to node
+        // delegator share = 900
+        let payer = Address::generate(&env);
+        sac.mint(&payer, &1_000);
+        client.distribute_fees(&payer, &node, &1_000);
+
+        // Node operator received 100 directly (node had 4000 remaining after
+        // staking 1000, so total balance = 4000 + 100 = 4100).
+        assert_eq!(token.balance(&node), 4_100);
+
+        // Delegator should be able to claim ~900 (modulo REWARD_SCALE rounding).
+        let pending = client.pending_rewards(&delegator, &node);
+        assert_eq!(pending, 900);
+
+        let claimed = client.claim_rewards(&delegator, &node);
+        assert_eq!(claimed, 900);
+        // Started with 2000, delegated 1000, claimed 900 → 1900.
+        assert_eq!(token.balance(&delegator), 1_900);
+    }
+
+    #[test]
+    fn distribute_fees_no_delegators_all_goes_to_node() {
+        let (env, client, token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+
+        let payer = Address::generate(&env);
+        sac.mint(&payer, &500);
+        client.distribute_fees(&payer, &node, &500);
+
+        // No delegators: all 500 go to the node operator.
+        // Node minted 5000, staked 1000 → 4000 remaining + 500 fees = 4500.
+        assert_eq!(token.balance(&node), 4_500);
+    }
+
+    #[test]
+    fn undelegate_starts_cooldown() {
+        let (env, client, _token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &_token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &node, &1_000);
+
+        client.undelegate(&delegator, &node, &400);
+
+        // Active delegation reduced.
+        let rec = client.get_delegation(&delegator, &node).unwrap();
+        assert_eq!(rec.amount, 600);
+
+        // Pending undelegation created.
+        let pend = client.get_pending_undelegation(&delegator, &node).unwrap();
+        assert_eq!(pend.amount, 400);
+        // unlock_ledger = current (0) + 10 cooldown
+        assert_eq!(pend.unlock_ledger, 10);
+
+        // Node total_delegated_stake reduced.
+        let m = client.get_member(&node);
+        assert_eq!(m.total_delegated_stake, 600);
+    }
+
+    #[test]
+    #[should_panic(expected = "cooldown not elapsed")]
+    fn withdraw_before_cooldown_panics() {
+        let (env, client, _token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &_token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &node, &1_000);
+        client.undelegate(&delegator, &node, &400);
+        // ledger is still at 0; cooldown is 10 → must panic
+        client.withdraw_undelegation(&delegator, &node);
+    }
+
+    #[test]
+    fn withdraw_after_cooldown_returns_tokens() {
+        let (env, client, token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &node, &1_000);
+        client.undelegate(&delegator, &node, &400);
+
+        env.ledger().with_mut(|l| l.sequence_number += 10);
+        let returned = client.withdraw_undelegation(&delegator, &node);
+        assert_eq!(returned, 400);
+        assert_eq!(token.balance(&delegator), 1_400); // started 2000, delegated 1000, got 400 back
+        // Pending undelegation gone.
+        assert!(client.get_pending_undelegation(&delegator, &node).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "existing undelegation pending; withdraw first")]
+    fn second_undelegate_before_withdraw_panics() {
+        let (env, client, _token, _admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &_token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &3_000);
+        client.delegate(&delegator, &node, &2_000);
+        client.undelegate(&delegator, &node, &500);
+        // second call before withdraw must panic
+        client.undelegate(&delegator, &node, &500);
+    }
+
+    #[test]
+    fn slash_propagates_to_delegators() {
+        let (env, client, token, admin, node) = setup();
+        let sac = StellarAssetClient::new(&env, &token.address);
+
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &node, &1_000);
+
+        // Trigger a timeout slash via report_timeout path.
+        client.set_timeout_config(&admin, &2, &2, &2);
+        let player = Address::generate(&env);
+        let players = Vec::from_array(&env, [player.clone()]);
+        client.track_game_phase(&admin, &1, &GamePhase::Deal, &players);
+        env.ledger().with_mut(|l| l.sequence_number += 2);
+        client.report_timeout(&1, &node);
+
+        // Node stake halved: 1000 → 500
+        let m = client.get_member(&node);
+        assert_eq!(m.stake, 500);
+        assert!(!m.active);
+
+        // Delegator amount halved: 1000 → 500
+        let rec = client.get_delegation(&delegator, &node).unwrap();
+        assert_eq!(rec.amount, 500);
+    }
+
+    #[test]
+    fn set_delegation_cooldown_updates_value() {
+        let (env, client, _token, admin, _node) = setup();
+        client.set_delegation_cooldown(&admin, &50);
+
+        // Verify by undelegating and checking the new unlock_ledger.
+        let sac = StellarAssetClient::new(&env, &_token.address);
+        let delegator = Address::generate(&env);
+        sac.mint(&delegator, &2_000);
+        client.delegate(&delegator, &_node, &1_000);
+        client.undelegate(&delegator, &_node, &200);
+        let pend = client.get_pending_undelegation(&delegator, &_node).unwrap();
+        assert_eq!(pend.unlock_ledger, 50); // 0 + 50
     }
 }

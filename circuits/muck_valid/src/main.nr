@@ -63,8 +63,8 @@ fn main(
     let hole_card2 = deck[hole_card_idx2];
 
     // 3. Verify mucker's hand commitment matches derived hole cards.
-    let c1_commit = commitments::commit_card(hole_card1, salts[hole_card_idx1]);
-    let c2_commit = commitments::commit_card(hole_card2, salts[hole_card_idx2]);
+    let c1_commit = leaves[hole_card_idx1];
+    let c2_commit = leaves[hole_card_idx2];
     let computed_commit = commitments::commit_hand(c1_commit, c2_commit);
     assert(computed_commit == mucker_hand_commitment, "mucker hand commitment mismatch");
 

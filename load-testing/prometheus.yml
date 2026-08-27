@@ -2,6 +2,14 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - 'prometheus-alerting-rules.yml'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
   - job_name: 'prometheus'
     static_configs:
@@ -11,3 +19,21 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['host.docker.internal:8080']
+
+  - job_name: 'mpc-nodes'
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'host.docker.internal:8101'
+          - 'host.docker.internal:8102'
+          - 'host.docker.internal:8103'
+        labels:
+          node_id: '0'
+      - targets:
+          - 'host.docker.internal:8102'
+        labels:
+          node_id: '1'
+      - targets:
+          - 'host.docker.internal:8103'
+        labels:
+          node_id: '2'

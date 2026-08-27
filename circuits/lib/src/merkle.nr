@@ -79,11 +79,28 @@ pub fn compute_merkle_root_generic<let LEAVES: u32, let DEPTH: u32>(
             let left = if 2 * i < LEAVES { current_layer[2 * i] } else { 0 };
             let right = if 2 * i + 1 < LEAVES { current_layer[2 * i + 1] } else { 0 };
             next_layer[i] = hash_pair(left, right);
-        }
+//
+// Uses a fixed upper bound of levels (16) and guards on the current layer
+// size, so every loop bound is compile-time known.
+pub fn compute_merkle_root_generic<let LEAVES: u32>(leaves: [Field; LEAVES]) -> Field {
+    let mut current_size: u32 = LEAVES;
+    let mut current_layer = leaves;
+    let mut next_layer: [Field; LEAVES] = [0; LEAVES];
 
-        // Prepare for next layer - shift down and update capacity
-        current_layer = next_layer;
-        capacity = next_layer_size;
+    // Bottom-up tree construction for up to 16 levels (256+ leaves).
+    for _level in 0..16 {
+        if current_size > 1 {
+            let next_size = current_size / 2;
+            for i in 0..LEAVES {
+                if i < next_size {
+                    let left = current_layer[2 * i];
+                    let right = if 2 * i + 1 < current_size { current_layer[2 * i + 1] } else { 0 };
+                    next_layer[i] = hash_pair(left, right);
+                }
+            }
+            current_layer = next_layer;
+            current_size = next_size;
+        }
     }
 
     current_layer[0]

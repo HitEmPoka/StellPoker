@@ -1,0 +1,69 @@
+groups:
+  - name: mpc_nodes
+    interval: 15s
+    rules:
+      - alert: NodeDown
+        expr: |
+          up{job="mpc-nodes"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: mpc
+        annotations:
+          summary: "MPC node {{ $labels.instance }} is down"
+          description: "MPC node {{ $labels.instance }} (node_id={{ $labels.node_id }}) has been unreachable for more than 30 seconds."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#node-down"
+
+      - alert: SessionFailureRate
+        expr: |
+          rate(mpc_node_session_errors_total[5m])
+          /
+          (rate(mpc_node_session_errors_total[5m]) + rate(mpc_node_proofs_generated_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: mpc
+        annotations:
+          summary: "MPC session failure rate above 5% on {{ $labels.instance }}"
+          description: "The MPC session failure rate on {{ $labels.instance }} has been above 5% for the last 5 minutes (current value: {{ $value | humanizePercentage }})."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#session-failure-rate"
+
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes{job="mpc-nodes"}
+          /
+          node_memory_MemTotal_bytes
+          > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          team: mpc
+        annotations:
+          summary: "High memory usage on MPC node {{ $labels.instance }}"
+          description: "MPC node {{ $labels.instance }} memory usage is above 80% (current value: {{ $value | humanizePercentage }})."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#high-memory-usage"
+
+      - alert: ClockSkewDetected
+        expr: |
+          mpc_node_clock_skew_seconds{job="mpc-nodes"} > 1
+        for: 1m
+        labels:
+          severity: critical
+          team: mpc
+        annotations:
+          summary: "Clock skew detected on MPC node {{ $labels.instance }}"
+          description: "MPC node {{ $labels.instance }} has a clock skew of {{ $value }} seconds. Clock skew > 1s can compromise REP3 protocol security."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#clock-skew"
+
+      - alert: CertificateExpiring
+        expr: |
+          mpc_node_cert_expiry_days{job="mpc-nodes"} < 14
+        for: 1h
+        labels:
+          severity: warning
+          team: mpc
+        annotations:
+          summary: "MPC node TLS certificate expiring soon on {{ $labels.instance }}"
+          description: "MPC node {{ $labels.instance }} TLS certificate expires in {{ $value | humanizeDuration }}. Renew before it expires."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#certificate-expiry"

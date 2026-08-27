@@ -1,0 +1,13 @@
+[package]
+name = "hand_rank_valid"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Prove a committed private hand has the claimed rank against a public board."
+max_players = 1
+poseidon2_permutations = 3

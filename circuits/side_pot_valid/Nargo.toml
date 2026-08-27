@@ -1,0 +1,16 @@
+[package]
+name = "side_pot_valid"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Prove that a claimed side-pot allocation (amounts + eligibility per pot) is exactly the correct Texas Hold'em side-pot derivation for the given all-in commitments, and that all chips are conserved."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+poseidon2_permutations = 0
+max_players = 6
