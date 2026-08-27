@@ -230,7 +230,20 @@ async fn prepare_from_nodes(
 
     for (idx, endpoint) in node_endpoints.iter().enumerate() {
         let url = url_builder(endpoint, table_id);
-        let body = body.clone();
+        // Bandwidth estimation / adaptive protocol selection (Issue #238):
+        // tell the node which coNoir protocol variant to run based on this
+        // endpoint's current estimated bandwidth, then measure this
+        // request's payload size and latency to refine the estimate for
+        // next time.
+        let variant = crate::bandwidth::select_protocol_variant(endpoint).await;
+        let mut body = body.clone();
+        if let serde_json::Value::Object(ref mut map) = body {
+            map.insert(
+                "protocol_variant".to_string(),
+                serde_json::Value::String(variant.as_str().to_string()),
+            );
+        }
+        let body_bytes = serde_json::to_vec(&body).map(|v| v.len()).unwrap_or(0);
         let client = client.clone();
         let op = operation_name.to_string();
         let endpoint = endpoint.clone();
@@ -250,7 +263,9 @@ async fn prepare_from_nodes(
             // Graceful degradation (issue #110): track round-trip latency so
             // persistently slow nodes are logged and scored, without failing
             // this call — the node did respond, just slowly.
-            node_reliability::record(&endpoint, call_start.elapsed()).await;
+            let elapsed = call_start.elapsed();
+            node_reliability::record(&endpoint, elapsed).await;
+            crate::bandwidth::record_sample(&endpoint, body_bytes, elapsed).await;
 
             if !resp.status().is_success() {
                 let status = resp.status();
