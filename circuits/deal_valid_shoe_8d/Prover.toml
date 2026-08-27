@@ -1,0 +1,4 @@
+# Placeholder Prover.toml for deal_valid_shoe_8d (8-deck shoe, 416 cards).
+# Private MPC inputs (permutations/salts of length 416) are supplied by the
+# dealer committee at proving time. Public input shown below.
+num_players = ""

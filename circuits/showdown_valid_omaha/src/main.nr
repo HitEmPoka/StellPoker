@@ -1,35 +1,30 @@
-/// Showdown Validity Circuit
+/// Showdown Validity Circuit - Omaha variant
 ///
-/// Derives hole cards from shared deck contributions, verifies commitments,
-/// evaluates all active hands, and outputs the winner index plus a bit mask of
-/// every active player tied for the best score.
+/// Extends the standard showdown circuit with Omaha rules:
+///   - Each player is dealt exactly 4 hole cards.
+///   - The best 5-card hand MUST be formed from EXACTLY 2 hole cards and
+///     EXACTLY 3 of the 5 board cards. The 4-choose-2 (hole) x 5-choose-3
+///     (board) combinatorics is enforced by enumerating every legal 2+3
+///     construction in `evaluate_omaha_hand` (see lib/src/cards.nr).
 ///
-/// Supports variant poker games with wild cards when VARIANT_TYPE != 0.
+/// The circuit derives the shared deck, verifies the deck root, checks every
+/// active player's 4-card hand commitment, evaluates the Omaha best hand for
+/// each player, and outputs the winner index plus the tie mask.
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
-use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
 
-/// Deck composition is parameterized by the shared deck module (Issue #216):
-/// the compile-time global `deck::DECK_TYPE` selects between standard (52),
-/// short (36, 6+) and joker (54) decks. The structural permutation uses 52 MPC
-/// slots; deck-aware bounds below follow the configured deck type.
-
-/// Deck size (cards in deck, default 52 for standard poker)
+/// Deck size (single 52-card deck; Omaha does not use a multi-deck shoe).
 global DECK_SIZE: u32 = 52;
 
-/// Tree leaf count must be >= DECK_SIZE and power of 2
-/// For 52 cards: 64 leaves (6 levels)
-/// For 104 cards: 128 leaves (7 levels)
+/// Tree leaf count must be >= DECK_SIZE and power of 2.
 global TREE_LEAVES: u32 = 64;
 global TREE_DEPTH: u32 = 6;
 
-/// Variant poker configuration
-/// VARIANT_TYPE: 0 = standard, 1 = deuces wild, 2 = one-eyed jacks
-global VARIANT_TYPE: u32 = 0;
-global WILD_RANK: u32 = 0;
+/// Each Omaha player holds 4 hole cards.
+global HOLE_CARDS: u32 = 4;
 
 global MAX_PLAYERS: u32 = 6;
 
@@ -47,7 +42,14 @@ fn main(
     hand_commitments: pub [Field; MAX_PLAYERS],
     board_indices: pub [u32; 5],
     deck_root: pub Field,
-) -> pub ([u32; MAX_PLAYERS], [u32; MAX_PLAYERS], u32, u32) {
+) -> pub (
+    [u32; MAX_PLAYERS],
+    [u32; MAX_PLAYERS],
+    [u32; MAX_PLAYERS],
+    [u32; MAX_PLAYERS],
+    u32,
+    u32,
+) {
     assert(num_active_players >= 2, "need at least 2 players");
     assert(num_active_players <= MAX_PLAYERS, "too many active players");
 
@@ -68,68 +70,74 @@ fn main(
     let computed_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
     assert(computed_root == deck_root, "deck root mismatch");
 
-    // 2. Resolve board cards and check index uniqueness against dealt cards.
+    // 2. Resolve hole + board cards and check index uniqueness.
+    // Omaha: player p occupies hole slots [4p, 4p+1, 4p+2, 4p+3].
     let mut used_indices: [bool; 52] = [false; 52];
     for p in 0..MAX_PLAYERS {
         if p < num_active_players {
-            let idx1 = p * 2;
-            let idx2 = idx1 + 1;
-            assert(idx2 < deck::deck_size(), "hole card index out of range");
-            assert(!used_indices[idx1], "duplicate dealt index");
-            used_indices[idx1] = true;
-            assert(!used_indices[idx2], "duplicate dealt index");
-            used_indices[idx2] = true;
+            let base = p * HOLE_CARDS;
+            for h in 0..HOLE_CARDS {
+                let idx = base + h;
+                assert(idx < 52, "hole card index out of range");
+                assert(!used_indices[idx], "duplicate dealt index");
+                used_indices[idx] = true;
+            }
         }
     }
 
     let mut board_cards: [u32; 5] = [0; 5];
     for i in 0..5 {
         let idx = board_indices[i];
-        assert(idx < deck::deck_size(), "board index out of range");
+        assert(idx < 52, "board index out of range");
         assert(!used_indices[idx], "board index already used");
         used_indices[idx] = true;
 
         board_cards[i] = deck[idx] as u32;
     }
 
-    // 3. Verify per-player commitments and evaluate hand ranks.
+    // 3. Verify per-player commitments (4 hole cards) and evaluate Omaha hands.
     let mut hole_card1: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut hole_card2: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
+    let mut hole_card3: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
+    let mut hole_card4: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut hand_scores: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
 
     for p in 0..MAX_PLAYERS {
         if p < num_active_players {
-            let idx1 = p * 2;
-            let idx2 = idx1 + 1;
+            let base = p * HOLE_CARDS;
+            let idx1 = base;
+            let idx2 = base + 1;
+            let idx3 = base + 2;
+            let idx4 = base + 3;
 
             hole_card1[p] = deck[idx1] as u32;
             hole_card2[p] = deck[idx2] as u32;
+            hole_card3[p] = deck[idx3] as u32;
+            hole_card4[p] = deck[idx4] as u32;
 
-            let c1_commit = leaves[idx1];
-            let c2_commit = leaves[idx2];
-            let expected_commit = commitments::commit_hand(c1_commit, c2_commit);
+            let c1_commit = commitments::commit_card(deck[idx1], salts[idx1]);
+            let c2_commit = commitments::commit_card(deck[idx2], salts[idx2]);
+            let c3_commit = commitments::commit_card(deck[idx3], salts[idx3]);
+            let c4_commit = commitments::commit_card(deck[idx4], salts[idx4]);
+            let expected_commit = commitments::commit_hand_omaha(
+                c1_commit,
+                c2_commit,
+                c3_commit,
+                c4_commit,
+            );
             assert(expected_commit == hand_commitments[p], "hand commitment mismatch");
 
-            let seven_cards: [u32; 7] = [
+            let hole_cards: [u32; 4] = [
                 hole_card1[p],
                 hole_card2[p],
-                board_cards[0],
-                board_cards[1],
-                board_cards[2],
-                board_cards[3],
-                board_cards[4],
+                hole_card3[p],
+                hole_card4[p],
             ];
-            // Use variant evaluation if VARIANT_TYPE != 0 (wild cards), else standard
-            hand_scores[p] = if VARIANT_TYPE == 0 {
-                cards::evaluate_hand_rank(seven_cards)
-            } else {
-                cards::evaluate_hand_rank_variant(seven_cards)
-            };
+            hand_scores[p] = cards::evaluate_omaha_hand(hole_cards, board_cards);
         }
     }
 
-    // 4. Compute winner as first seat with maximal score and mark all tied
-    // seats. The contract uses the mask to split tied pots.
+    // 4. Compute winner as first seat with maximal score and mark all tied seats.
     let mut winner_index: u32 = 0;
     let mut winner_score: u32 = 0;
     for p in 0..MAX_PLAYERS {
@@ -157,5 +165,5 @@ fn main(
         }
     }
 
-    (hole_card1, hole_card2, winner_index, tie_mask)
+    (hole_card1, hole_card2, hole_card3, hole_card4, winner_index, tie_mask)
 }

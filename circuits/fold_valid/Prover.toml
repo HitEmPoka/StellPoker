@@ -1,0 +1,10 @@
+# Placeholder Prover.toml for fold_valid (cryptographic burn of folded cards).
+# Private MPC inputs (permutations/salts) are supplied by the dealer committee at
+# proving time. Public inputs shown below.
+num_active_players = ""
+folded_flags = ["", "", "", "", "", ""]
+fold_hand_commitments = ["", "", "", "", "", ""]
+deck_root = ""
+round = ""
+burn_nonce = ""
+prev_burn_commitment = ""

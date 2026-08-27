@@ -65,7 +65,7 @@ fn main(
         leaves[i] = commitments::commit_card(deck[i], salts[i]);
     }
     // Remaining leaves are zero (padding).
-    let deck_root = merkle::compute_merkle_root_generic(leaves);
+    let deck_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
 
     // 3. Deterministically assign two cards per player by seat order.
     // Optimization: reuse card commitment leaves computed in step 2.

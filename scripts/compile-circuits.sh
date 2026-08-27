@@ -55,6 +55,7 @@ if [ ! -f "${PROJECT_DIR}/.crs/bn254_g1.dat" ]; then
 fi
 EXPECTED_NOIR_TAG="v${EXPECTED_NOIR_VERSION}"
 TOOLS_DIR="${PROJECT_DIR}/.tmp_tools"
+CIRCUITS=(deal_valid reveal_board_valid showdown_valid showdown_valid_omaha deal_valid_shoe deal_valid_shoe_8d fold_valid)
 CIRCUITS=(deal_valid reveal_board_valid showdown_valid burn_card_valid side_pot_valid)
 PARAMETERISED_CIRCUITS=(deal_valid showdown_valid)
 PLAYER_COUNTS=(2 3 4 5 6)
