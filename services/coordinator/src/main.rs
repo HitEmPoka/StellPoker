@@ -967,6 +967,21 @@ async fn main() {
         .route("/api/node/register", post(api::register_node))
         .route("/api/node/:id/heartbeat", post(api::node_heartbeat))
         .route("/api/node/:id", delete(api::deregister_node))
+        // MPC node version negotiation (Issue #233)
+        .route("/api/mpc/version/register", post(register_node_version))
+        .route("/api/mpc/version/nodes", get(list_node_versions))
+        .route("/api/mpc/version/negotiate", get(negotiate_version))
+        // MPC node benchmarking suite (Issue #234)
+        .route("/api/mpc/benchmark/sample", post(record_node_benchmark))
+        .route("/api/mpc/benchmark/report", get(get_node_benchmark_report))
+        .route("/api/mpc/benchmark/sweep", post(run_node_benchmark_sweep))
+        // MPC network partition detection (Issue #236)
+        .route("/api/mpc/partition/report", post(submit_partition_report))
+        .route("/api/mpc/partition/status", get(get_partition_status))
+        // MPC node identity verification via Stellar addresses (Issue #237)
+        .route("/api/mpc/identity/register", post(register_node_identity))
+        .route("/api/mpc/identity/nodes", get(list_node_identities))
+        .route("/api/mpc/identity/verify", post(verify_node_identity))
         .route("/api/flags", get(api::flags::list_flags))
         .route("/api/flags/:key", post(api::flags::set_flag))
         // Plugin management endpoints
@@ -1530,6 +1545,185 @@ async fn get_benchmarks(State(state): State<AppState>) -> Json<serde_json::Value
         "samples": benchmarks,
         "stats": stats,
     }))
+}
+
+// -- MPC node version negotiation (Issue #233) --------------------------
+
+/// POST /api/mpc/version/register
+///
+/// An MPC node reports the protocol versions and per-circuit ACIR versions
+/// it supports. Called once at node startup and whenever a node upgrades.
+async fn register_node_version(
+    State(state): State<AppState>,
+    Json(caps): Json<mpc_version::NodeCapabilities>,
+) -> axum::http::StatusCode {
+    mpc_version::register_capabilities(&state.version_registry, caps).await;
+    axum::http::StatusCode::NO_CONTENT
+}
+
+/// GET /api/mpc/version/nodes
+///
+/// Snapshot of every node's last-reported version capabilities.
+async fn list_node_versions(State(state): State<AppState>) -> Json<Vec<mpc_version::NodeCapabilities>> {
+    Json(mpc_version::list_capabilities(&state.version_registry).await)
+}
+
+/// GET /api/mpc/version/negotiate?nodes=0,1,2&circuits=deal,reveal
+///
+/// Negotiates the highest protocol version and per-circuit version supported
+/// by every listed node. Returns 409 if there's no mutually-compatible
+/// version.
+async fn negotiate_version(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<mpc_version::SessionVersionPlan>, (axum::http::StatusCode, String)> {
+    let node_ids: Vec<String> = params
+        .get("nodes")
+        .map(|s| s.split(',').map(|n| n.trim().to_string()).collect())
+        .unwrap_or_default();
+    if node_ids.is_empty() {
+        return Err((axum::http::StatusCode::BAD_REQUEST, "missing 'nodes' query param".to_string()));
+    }
+    let circuit_names: Vec<String> = params
+        .get("circuits")
+        .map(|s| s.split(',').map(|c| c.trim().to_string()).collect())
+        .unwrap_or_default();
+    let circuit_refs: Vec<&str> = circuit_names.iter().map(|s| s.as_str()).collect();
+
+    mpc_version::negotiate_session(&state.version_registry, &node_ids, &circuit_refs)
+        .await
+        .map(Json)
+        .map_err(|e| (axum::http::StatusCode::CONFLICT, e))
+}
+
+// -- MPC node benchmarking suite (Issue #234) ----------------------------
+
+/// POST /api/mpc/benchmark/sample
+///
+/// An MPC node self-reports a performance sample (proof throughput, memory,
+/// CPU) for a session or probing interval.
+async fn record_node_benchmark(
+    State(state): State<AppState>,
+    Json(sample): Json<mpc_node_benchmark::NodeBenchmarkSample>,
+) -> axum::http::StatusCode {
+    mpc_node_benchmark::record_sample(&state.node_benchmark_store, sample);
+    axum::http::StatusCode::NO_CONTENT
+}
+
+/// GET /api/mpc/benchmark/report
+///
+/// Aggregated per-node performance report (avg/min/max throughput, latency,
+/// memory, CPU) built from all recorded samples.
+async fn get_node_benchmark_report(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let samples = mpc_node_benchmark::get_samples(&state.node_benchmark_store, None);
+    let report = mpc_node_benchmark::generate_report(&samples);
+    Json(serde_json::json!({
+        "sample_count": samples.len(),
+        "report": report,
+    }))
+}
+
+/// POST /api/mpc/benchmark/sweep
+///
+/// Actively probes every configured MPC node's `/health` endpoint right now
+/// to measure network latency (and any self-reported resource metrics),
+/// recording the results.
+async fn run_node_benchmark_sweep(State(state): State<AppState>) -> Json<Vec<mpc_node_benchmark::NodeBenchmarkSample>> {
+    let nodes: Vec<(String, String)> = state
+        .mpc_config
+        .node_endpoints
+        .iter()
+        .enumerate()
+        .map(|(i, endpoint)| (i.to_string(), endpoint.clone()))
+        .collect();
+    let samples = mpc_node_benchmark::run_benchmark_sweep(&state.node_benchmark_store, &state.mpc_client, &nodes).await;
+    Json(samples)
+}
+
+// -- MPC network partition detection (Issue #236) ------------------------
+
+#[derive(Deserialize)]
+struct PartitionReportRequest {
+    reporter_node_id: String,
+    unreachable_nodes: Vec<String>,
+}
+
+/// POST /api/mpc/partition/report
+///
+/// An MPC node reports which peers it currently cannot reach. The
+/// coordinator only declares a node partitioned once a quorum of its peers
+/// independently confirm the same thing.
+async fn submit_partition_report(
+    State(state): State<AppState>,
+    Json(req): Json<PartitionReportRequest>,
+) -> axum::http::StatusCode {
+    let all_node_ids: Vec<String> = if state.mpc_config.node_endpoints.is_empty() {
+        state.node_registry.read().await.healthy_node_ids()
+    } else {
+        (0..state.mpc_config.node_endpoints.len())
+            .map(|i| i.to_string())
+            .collect()
+    };
+
+    let mut detector = state.partition_store.write().await;
+    detector.submit_report(
+        &req.reporter_node_id,
+        req.unreachable_nodes.into_iter().collect(),
+        &all_node_ids,
+    );
+    axum::http::StatusCode::NO_CONTENT
+}
+
+/// GET /api/mpc/partition/status
+///
+/// Currently partitioned nodes and any sessions paused as a result.
+async fn get_partition_status(State(state): State<AppState>) -> Json<mpc_partition::PartitionStatus> {
+    let detector = state.partition_store.read().await;
+    Json(detector.status())
+}
+
+// -- MPC node identity verification (Issue #237) -------------------------
+
+#[derive(Deserialize)]
+struct RegisterNodeIdentityRequest {
+    node_id: String,
+    stellar_address: String,
+}
+
+/// POST /api/mpc/identity/register
+///
+/// Registers (or updates) the Stellar address the coordinator trusts for a
+/// given MPC node id in the committee registry. Intended for admin/operator
+/// use when onboarding or rotating a node's keypair.
+async fn register_node_identity(
+    State(state): State<AppState>,
+    Json(req): Json<RegisterNodeIdentityRequest>,
+) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
+    mpc_identity::register_node_identity(&state.committee_registry, &req.node_id, &req.stellar_address)
+        .await
+        .map(|_| axum::http::StatusCode::NO_CONTENT)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))
+}
+
+/// GET /api/mpc/identity/nodes
+///
+/// The committee registry: MPC node id -> trusted Stellar address.
+async fn list_node_identities(State(state): State<AppState>) -> Json<HashMap<String, String>> {
+    Json(state.committee_registry.read().await.clone())
+}
+
+/// POST /api/mpc/identity/verify
+///
+/// Verifies that a session message was genuinely signed by the Stellar
+/// keypair registered for its `node_id` in the committee registry.
+async fn verify_node_identity(
+    State(state): State<AppState>,
+    Json(msg): Json<mpc_identity::SignedSessionMessage>,
+) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
+    mpc_identity::verify_session_message(&state.committee_registry, &msg)
+        .await
+        .map(|_| axum::http::StatusCode::NO_CONTENT)
+        .map_err(|e| (axum::http::StatusCode::UNAUTHORIZED, e))
 }
 
 /// GET /api/leader

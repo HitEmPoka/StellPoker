@@ -119,6 +119,21 @@ impl NodeRegistry {
         healthy.into_iter().map(|n| n.endpoint.clone()).collect()
     }
 
+    /// Ids (rather than endpoints) of every currently-healthy node, sorted
+    /// for deterministic ordering. Used where callers need a stable node
+    /// identifier (e.g. version negotiation, partition detection) rather than
+    /// where to send requests.
+    pub fn healthy_node_ids(&self) -> Vec<String> {
+        let now = Instant::now();
+        let mut healthy: Vec<&NodeInfo> = self
+            .nodes
+            .values()
+            .filter(|n| now.saturating_duration_since(n.last_heartbeat) <= HEARTBEAT_TIMEOUT)
+            .collect();
+        healthy.sort_by(|a, b| a.id.cmp(&b.id));
+        healthy.into_iter().map(|n| n.id.clone()).collect()
+    }
+
     /// Select [`MIN_HEALTHY_NODES`] healthy endpoints for a session, or `None`
     /// when fewer than that are currently healthy.
     pub fn select_session_nodes(&self) -> Option<Vec<String>> {

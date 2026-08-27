@@ -9,14 +9,14 @@
 //! that can be compared across nodes and over time to spot regressions or
 //! guide hardware/committee-size tuning.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// A single performance sample for one MPC node, taken over one session (or
 /// probing interval).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeBenchmarkSample {
     pub node_id: String,
     /// Unix timestamp (seconds) the sample was recorded.
