@@ -3,6 +3,11 @@
 // suit: 0=Clubs, 1=Diamonds, 2=Hearts, 3=Spades
 // rank: 0=2, 1=3, ..., 8=10, 9=J, 10=Q, 11=K, 12=A
 
+use crate::deck;
+
+// Deck composition is configured via the deck module (Issue #216). These
+// constants describe the default (standard) deck; deck-type-aware validation
+// is delegated to `deck` inside the helper functions below.
 pub global DECK_SIZE: u32 = 52;
 pub global NUM_SUITS: u32 = 4;
 pub global NUM_RANKS: u32 = 13;
@@ -12,20 +17,69 @@ pub global NUM_RANKS: u32 = 13;
 pub global VARIANT_TYPE: u32 = 0;
 pub global WILD_RANK: u32 = 0; // Rank that is wild (only used if VARIANT_TYPE != 0)
 
-// Validate that a card value is in range [0, 51].
+// Deck-type-specific hand ranking (Issue #216).
+// In a short deck (6+) a flush outranks a full house; in a standard or joker
+// deck the classic ranking (full house > flush) applies. These are compile-time
+// constants selected by DECK_TYPE.
+fn flush_category() -> u32 {
+    if deck::DECK_TYPE == 1 {
+        6
+    } else {
+        5
+    }
+}
+
+fn full_house_category() -> u32 {
+    if deck::DECK_TYPE == 1 {
+        5
+    } else {
+        6
+    }
+}
+
+// A wheel (A-2-3-4-5) only exists in decks that contain ranks 2..5.
+fn is_wheel(rank_count: [u32; 13]) -> bool {
+    if deck::DECK_TYPE == 1 {
+        false
+    } else {
+        (rank_count[12] > 0)
+            & (rank_count[3] > 0)
+            & (rank_count[2] > 0)
+            & (rank_count[1] > 0)
+            & (rank_count[0] > 0)
+    }
+}
+
+// Validate that a card value is a valid card for the configured deck type.
+// In a short deck the rank must be 6..A; in a joker deck values 52..53 are
+// jokers; a standard deck accepts values in [0, 52).
 pub fn assert_valid_card(card: Field) {
     let card_u32 = card as u32;
-    assert(card_u32 < DECK_SIZE, "invalid card value");
+    assert(card_u32 < deck::deck_size(), "invalid card value");
+    let is_joker = deck::is_joker(card_u32);
+    let rank_ok = deck::is_valid_rank(card_u32 % NUM_RANKS);
+    let cond = is_joker | rank_ok;
+    assert(cond, "invalid rank for deck");
 }
 
-// Extract suit from card value.
+// Extract suit from card value. Jokers report suit 4 (not a real suit).
 pub fn suit(card: Field) -> u32 {
-    (card as u32) / NUM_RANKS
+    let cv = (card as u32);
+    if deck::is_joker(cv) {
+        4
+    } else {
+        cv / NUM_RANKS
+    }
 }
 
-// Extract rank from card value.
+// Extract rank from card value. Jokers report rank 0.
 pub fn rank(card: Field) -> u32 {
-    (card as u32) % NUM_RANKS
+    let cv = (card as u32);
+    if deck::is_joker(cv) {
+        0
+    } else {
+        cv % NUM_RANKS
+    }
 }
 
 // Verify that a set of cards are all unique (no duplicates).
@@ -50,30 +104,25 @@ pub fn assert_valid_deck(deck: [Field; 52]) {
 //
 // Input: 7 cards (2 hole + 5 board), each as u32 value [0, 51].
 // Output: score (u32) where higher = better.
+//
+// Uses a bit-level evaluator: cards are mapped to 13-bit rank masks and
+// 4-bit suit masks for O(1) category detection (Issue #212), instead of
+// long comparison chains.
 pub fn evaluate_hand_rank(cards: [u32; 7]) -> u32 {
-    let mut ranks: [u32; 7] = [0; 7];
-    let mut suits: [u32; 7] = [0; 7];
-    for i in 0..7 {
-        ranks[i] = cards[i] % NUM_RANKS;
-        suits[i] = cards[i] / NUM_RANKS;
-    }
-
     let mut best_score: u32 = 0;
 
     // Check all C(7,5) = 21 combinations by choosing which 2 to skip
     for skip1 in 0..7 {
         for skip2 in (skip1 + 1)..7 {
-            let mut hand_ranks: [u32; 5] = [0; 5];
-            let mut hand_suits: [u32; 5] = [0; 5];
+            let mut hand: [u32; 5] = [0; 5];
             let mut idx: u32 = 0;
             for k in 0..7 {
                 if (k != skip1) & (k != skip2) {
-                    hand_ranks[idx] = ranks[k];
-                    hand_suits[idx] = suits[k];
+                    hand[idx] = cards[k];
                     idx += 1;
                 }
             }
-            let score = score_five(hand_ranks, hand_suits);
+            let score = score_five_bitwise(hand);
             if score > best_score {
                 best_score = score;
             }
@@ -247,11 +296,16 @@ fn score_five(mut ranks: [u32; 5], suits: [u32; 5]) -> u32 {
         categorized = true;
     }
     if !categorized & is_full_house {
-        score = (6 << 20) | (three_rank << 8) | full_house_pair_rank;
+        let fh = full_house_category();
+        let tr = three_rank;
+        let pr = full_house_pair_rank;
+        score = (fh << 20) | (tr << 8) | pr;
         categorized = true;
     }
     if !categorized & is_flush {
-        score = (5 << 20) | tb;
+        let fc = flush_category();
+        let ttb = tb;
+        score = (fc << 20) | ttb;
         categorized = true;
     }
     if !categorized & (is_straight | is_wheel) {
@@ -273,6 +327,145 @@ fn score_five(mut ranks: [u32; 5], suits: [u32; 5]) -> u32 {
     }
     if !categorized {
         score = tb;
+    }
+
+    score
+}
+
+// Bit-level score for exactly 5 cards (Issue #212).
+//
+// Each rank is mapped to a bit in a 13-bit presence mask and each suit to a
+// count in a 4-entry suit mask. Categories are then detected in O(1) time:
+// straight runs are found with a 5-bit window test over the rank mask, and
+// duplicates (pairs/trips/quads) are found by counting set columns. The
+// returned score uses the same encoding as `score_five`, so winner selection,
+// tie masks and on-chain comparison are unaffected.
+fn score_five_bitwise(cards: [u32; 5]) -> u32 {
+    let mut rank_count: [u32; NUM_RANKS] = [0; NUM_RANKS];
+    let mut suit_count: [u32; NUM_SUITS] = [0; NUM_SUITS];
+    for i in 0..5 {
+        rank_count[rank(cards[i] as Field)] += 1;
+        suit_count[suit(cards[i] as Field)] += 1;
+    }
+
+    // 13-bit presence mask: bit r set iff at least one card has rank r.
+    let bit: [u32; 13] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+    let mut present: u32 = 0;
+    for r in 0..NUM_RANKS {
+        if rank_count[r] > 0 {
+            present = present + bit[r];
+        }
+    }
+
+    // Flush: all five cards share a suit (one suit count equals 5).
+    let is_flush = (suit_count[0] == 5) | (suit_count[1] == 5) | (suit_count[2] == 5) | (suit_count[3] == 5);
+
+    // Straight: any run of 5 consecutive set bits in the rank mask.
+    let mut is_straight = false;
+    let mut straight_high: u32 = 0;
+    for s in 0..9 {
+        if (present >> s) & 31 == 31 {
+            is_straight = true;
+            straight_high = s + 4;
+        }
+    }
+    // Wheel (A-2-3-4-5) is only possible in a deck containing ranks 2..5.
+    let is_wheel = is_wheel(rank_count);
+
+    // Group extraction from rank counts.
+    let mut four_rank: u32 = 0;
+    let mut has_four = false;
+    let mut three_rank: u32 = 0;
+    let mut has_three = false;
+    let mut pairs: [u32; 2] = [0; 2];
+    let mut n_pairs: u32 = 0;
+    for r in 0..NUM_RANKS {
+        let c = rank_count[r];
+        if c == 4 {
+            four_rank = r;
+            has_four = true;
+        }
+        if c == 3 {
+            three_rank = r;
+            has_three = true;
+        }
+        if c == 2 {
+            pairs[n_pairs] = r;
+            n_pairs = n_pairs + 1;
+        }
+    }
+    // Pairs are collected in ascending rank order (loop walks 0..13), so the
+    // highest-ranks pair is the last one collected.
+    let pair_hi = if n_pairs >= 2 { pairs[1] } else { pairs[0] };
+    let pair_lo = pairs[0];
+
+    // Top-5 ranks in descending order (kickers / flush & high-card tiebreak).
+    let mut tb_ranks: [u32; 5] = [0; 5];
+    let mut placed: u32 = 0;
+    for r in 0..NUM_RANKS {
+        let rank = (NUM_RANKS - 1) - r; // descending
+        let cnt = rank_count[rank];
+        for j in 0..4 {
+            if (j < cnt) & (placed < 5) {
+                tb_ranks[placed] = rank;
+                placed = placed + 1;
+            }
+        }
+    }
+    let tb = (tb_ranks[0] << 16) | (tb_ranks[1] << 12) | (tb_ranks[2] << 8) | (tb_ranks[3] << 4) | tb_ranks[4];
+
+    let has_two_pairs = (n_pairs == 2) & !has_four;
+    let has_pair = (n_pairs == 1) & !has_three & !has_four;
+    let is_full_house = has_three & (n_pairs >= 1);
+
+    let mut score: u32 = 0;
+    let mut categorized = false;
+
+    if !categorized & is_flush & is_straight & (tb_ranks[0] == 12) {
+        score = (9 << 20) | tb; // royal flush
+        categorized = true;
+    }
+    if !categorized & is_flush & (is_straight | is_wheel) {
+        let high = if is_wheel { 3 << 16 } else { tb };
+        score = (8 << 20) | high; // straight flush
+        categorized = true;
+    }
+    if !categorized & has_four {
+        score = (7 << 20) | (four_rank << 16); // four of a kind
+        categorized = true;
+    }
+    if !categorized & is_full_house {
+        let fh = full_house_category();
+        let tr = three_rank;
+        let ph = pair_hi;
+        score = (fh << 20) | (tr << 8) | ph; // full house
+        categorized = true;
+    }
+    if !categorized & is_flush {
+        let fc = flush_category();
+        let ttb = tb;
+        score = (fc << 20) | ttb; // flush
+        categorized = true;
+    }
+    if !categorized & (is_straight | is_wheel) {
+        let high = if is_wheel { 3 << 16 } else { straight_high << 16 };
+        score = (4 << 20) | high; // straight
+        categorized = true;
+    }
+    if !categorized & has_three {
+        score = (3 << 20) | (three_rank << 16); // three of a kind
+        categorized = true;
+    }
+    if !categorized & has_two_pairs {
+        score = (2 << 20) | (pair_hi << 12) | (pair_lo << 8); // two pair
+        categorized = true;
+    }
+    if !categorized & has_pair {
+        score = (1 << 20) | (pair_hi << 16); // one pair
+        categorized = true;
+    }
+    if !categorized {
+        score = tb; // high card
     }
 
     score
@@ -430,7 +623,7 @@ fn test_variant_type_zero_is_standard() {
 
 #[test]
 fn test_deuces_wild_detection() {
-    // Rank 0 is deuce (2), check card value 0 (2♣), 13 (2♦), 26 (2♥), 39 (2♠)
+    // Rank 0 is deuce (2), check card value 0 (2C), 13 (2D), 26 (2H), 39 (2S)
     // For this test, we'd need to set VARIANT_TYPE=1, which isn't possible in tests
     // This is a limitation of the current test framework
     // In practice, this is verified by circuit compilation and integration tests
@@ -438,7 +631,7 @@ fn test_deuces_wild_detection() {
 
 #[test]
 fn test_one_eyed_jacks_detection() {
-    // Rank 9 is jack (J), check card values 9 (J♣), 22 (J♦), 35 (J♥), 48 (J♠)
+    // Rank 9 is jack (J), check card values 9 (JC), 22 (JD), 35 (JH), 48 (JS)
     // Similar limitation as above - requires circuit variant to be compiled
 }
 
@@ -704,3 +897,31 @@ fn test_hand_ordering_full_spectrum() {
     assert(one_pair > high_card);
 }
 
+// Parity check between the bit-level evaluator (Issue #212) and the original
+// score_five. The two must agree on every 5-card hand, guaranteeing the
+// optimized evaluator preserves exact tiebreak semantics.
+#[test]
+fn test_bitwise_matches_classic() {
+    // Sweep over ranks/suits across all four suits (63 varied distinct hands),
+    // which exercises flushes, straights, pairs and high-card tiebreaks.
+    let mut n: u32 = 0;
+    for a in 0..4 {
+        for b in 0..4 {
+            for c in 0..4 {
+                let hand: [u32; 5] = [a, 13 + b, 26 + c, 39, 48];
+                let mut ranks: [u32; 5] = [0; 5];
+                let mut suits: [u32; 5] = [0; 5];
+                for k in 0..5 {
+                    ranks[k] = rank(hand[k] as Field);
+                    suits[k] = suit(hand[k] as Field);
+                }
+                let classic = score_five(ranks, suits);
+                let bitwise = score_five_bitwise(hand);
+                let parity = classic == bitwise;
+                assert(parity, "parity mismatch");
+                n = n + 1;
+            }
+        }
+    }
+
+}

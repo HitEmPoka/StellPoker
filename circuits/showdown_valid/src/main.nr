@@ -8,8 +8,14 @@
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
+use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
+
+/// Deck composition is parameterized by the shared deck module (Issue #216):
+/// the compile-time global `deck::DECK_TYPE` selects between standard (52),
+/// short (36, 6+) and joker (54) decks. The structural permutation uses 52 MPC
+/// slots; deck-aware bounds below follow the configured deck type.
 
 /// Deck size (cards in deck, default 52 for standard poker)
 global DECK_SIZE: u32 = 52;
@@ -68,7 +74,7 @@ fn main(
         if p < num_active_players {
             let idx1 = p * 2;
             let idx2 = idx1 + 1;
-            assert(idx2 < 52, "hole card index out of range");
+            assert(idx2 < deck::deck_size(), "hole card index out of range");
             assert(!used_indices[idx1], "duplicate dealt index");
             used_indices[idx1] = true;
             assert(!used_indices[idx2], "duplicate dealt index");
@@ -79,7 +85,7 @@ fn main(
     let mut board_cards: [u32; 5] = [0; 5];
     for i in 0..5 {
         let idx = board_indices[i];
-        assert(idx < 52, "board index out of range");
+        assert(idx < deck::deck_size(), "board index out of range");
         assert(!used_indices[idx], "board index already used");
         used_indices[idx] = true;
 
