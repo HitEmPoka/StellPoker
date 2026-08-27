@@ -1,0 +1,12 @@
+[package]
+name = "deal_valid_shoe_8d"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Deal validity for an 8-deck (416-card) shoe; verifies per-rank/per-suit distribution (Issue #221)."
+max_players = 6

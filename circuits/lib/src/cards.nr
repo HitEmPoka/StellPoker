@@ -83,6 +83,96 @@ pub fn evaluate_hand_rank(cards: [u32; 7]) -> u32 {
     best_score
 }
 
+// Score exactly 5 cards given as raw card values (suit*13 + rank).
+fn score_five_cards(cards: [u32; 5]) -> u32 {
+    let mut ranks: [u32; 5] = [0; 5];
+    let mut suits: [u32; 5] = [0; 5];
+    for i in 0..5 {
+        ranks[i] = cards[i] % NUM_RANKS;
+        suits[i] = cards[i] / NUM_RANKS;
+    }
+    score_five(ranks, suits)
+}
+
+// Omaha hand evaluation.
+//
+// Omaha constrains each player to exactly 4 hole cards and requires the final
+// 5-card hand to be built from EXACTLY 2 hole cards combined with EXACTLY 3 of
+// the 5 board cards. We enumerate every legal construction:
+//   - C(4, 2) = 6 choices of the two hole cards (the "exactly 2" constraint)
+//   - C(5, 3) = 10 choices of the three board cards (the "exactly 3" constraint)
+// for a total of 60 candidate hands, and return the best score. Because the
+// enumeration always takes precisely 2 hole + 3 board, the rule that a player
+// may not play 3 or 4 of their hole cards is enforced structurally.
+pub fn evaluate_omaha_hand(hole: [u32; 4], board: [u32; 5]) -> u32 {
+    let mut best_score: u32 = 0;
+
+    // C(4,2): every pair of hole cards.
+    for h1 in 0..4 {
+        for h2 in (h1 + 1)..4 {
+            // C(5,3): every triple of board cards.
+            for b1 in 0..5 {
+                for b2 in (b1 + 1)..5 {
+                    for b3 in (b2 + 1)..5 {
+                        let hand: [u32; 5] = [
+                            hole[h1],
+                            hole[h2],
+                            board[b1],
+                            board[b2],
+                            board[b3],
+                        ];
+                        let score = score_five_cards(hand);
+                        if score > best_score {
+                            best_score = score;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    best_score
+}
+
+// Verify that a multi-deck shoe is correctly composed.
+//
+// A shoe of `num_decks` standard 52-card decks shuffled together must contain
+// each (rank, suit) identity exactly `num_decks` times. We track the count per
+// card identity and additionally verify the derived per-rank and per-suit
+// totals, which together prove the correct distribution was drawn from the
+// shoe (no missing/extra cards of any rank or suit).
+pub fn assert_valid_shoe<let N: u32>(deck: [Field; N], num_decks: u32) {
+    let mut counts: [u32; 52] = [0; 52];
+    for i in 0..N {
+        let v = deck[i] as u32;
+        assert(v < DECK_SIZE, "invalid card value in shoe");
+        counts[v] += 1;
+    }
+
+    // Each of the 52 (rank, suit) identities appears exactly num_decks times.
+    for c in 0..52 {
+        assert(counts[c] == num_decks, "shoe distribution incorrect for card");
+    }
+
+    // Per-rank integrity: each rank spans 4 suits, so 4 * num_decks copies.
+    for r in 0..NUM_RANKS {
+        let mut rank_count: u32 = 0;
+        for s in 0..NUM_SUITS {
+            rank_count = rank_count + counts[r + s * NUM_RANKS];
+        }
+        assert(rank_count == NUM_SUITS * num_decks, "rank distribution incorrect");
+    }
+
+    // Per-suit integrity: each suit spans 13 ranks, so 13 * num_decks copies.
+    for s in 0..NUM_SUITS {
+        let mut suit_count: u32 = 0;
+        for r in 0..NUM_RANKS {
+            suit_count = suit_count + counts[r + s * NUM_RANKS];
+        }
+        assert(suit_count == NUM_RANKS * num_decks, "suit distribution incorrect");
+    }
+}
+
 // Check if a card is wild (variant poker)
 pub fn is_wild_card(card: u32) -> bool {
     if VARIANT_TYPE == 0 {
@@ -702,5 +792,56 @@ fn test_hand_ordering_full_spectrum() {
     assert(trips > two_pair);
     assert(two_pair > one_pair);
     assert(one_pair > high_card);
+}
+
+#[test]
+fn test_omaha_straight_flush() {
+    // Omaha: player holds 4 hole cards but must use exactly 2.
+    // Hole: 2s(39), 3s(40), 2c(0), 3c(1)
+    // Board: 4s(41), 5s(42), 6s(43), 2d(13), 3d(14)
+    // Best legal hand = 2s,3s + 4s,5s,6s = 6-high straight flush (spades).
+    let hole: [u32; 4] = [39, 40, 0, 1];
+    let board: [u32; 5] = [41, 42, 43, 13, 14];
+    let score = evaluate_omaha_hand(hole, board);
+    let category = score >> 20;
+    assert(category == 8, "omaha best hand should be a straight flush");
+}
+
+#[test]
+fn test_omaha_requires_exactly_two_hole_cards() {
+    // If we were allowed to use 3 hole cards we could make a 4-spade flush;
+    // Omaha forbids this, so the best hand here is only a pair (category 1).
+    // Hole: As(51), Ks(50), Qs(49), Js(48)  Board: 2s(39), 3s(40), 4h(17), 5d(18), 6c(19)
+    // No legal 2+3 selection yields a flush (need 3 board spades; board has 2).
+    let hole: [u32; 4] = [51, 50, 49, 48];
+    let board: [u32; 5] = [39, 40, 17, 18, 19];
+    let score = evaluate_omaha_hand(hole, board);
+    let category = score >> 20;
+    // Best is a high card / pair at most (no flush possible under Omaha rule).
+    assert(category < 5, "omaha must not permit 3-hole-card flushes");
+}
+
+#[test]
+fn test_valid_six_deck_shoe() {
+    // Build a 6-deck shoe: each of the 52 identities repeated 6 times.
+    let mut shoe: [Field; 312] = [0; 312];
+    for k in 0..6 {
+        for c in 0..52 {
+            shoe[k * 52 + c] = c as Field;
+        }
+    }
+    assert_valid_shoe(shoe, 6);
+}
+
+#[test]
+fn test_valid_eight_deck_shoe() {
+    // Build an 8-deck shoe: each of the 52 identities repeated 8 times.
+    let mut shoe: [Field; 416] = [0; 416];
+    for k in 0..8 {
+        for c in 0..52 {
+            shoe[k * 52 + c] = c as Field;
+        }
+    }
+    assert_valid_shoe(shoe, 8);
 }
 

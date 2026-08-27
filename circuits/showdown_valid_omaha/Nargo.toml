@@ -1,0 +1,12 @@
+[package]
+name = "showdown_valid_omaha"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Omaha showdown: 4 hole cards per player, exactly 2-of-4 + 3-of-5 board combinatorics (Issue #218)."
+max_players = 6

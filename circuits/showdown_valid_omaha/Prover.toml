@@ -1,0 +1,7 @@
+# Placeholder Prover.toml for showdown_valid_omaha.
+# Private MPC inputs (permutations/salts) are supplied by the dealer committee at
+# proving time. Public inputs shown below; private arrays are omitted for brevity.
+num_active_players = ""
+hand_commitments = ["", "", "", "", "", ""]
+board_indices = ["", "", "", "", ""]
+deck_root = ""
