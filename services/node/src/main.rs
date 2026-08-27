@@ -41,6 +41,7 @@ mod private_table;
 mod session;
 mod tls;
 mod heartbeat;
+mod gossip;
 
 use limits::ResourceLimits;
 use metrics::NodeMetrics;

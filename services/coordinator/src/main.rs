@@ -44,6 +44,7 @@ mod api_version;
 mod archiver;
 mod audit_log;
 mod circuit_pins;
+mod committee_scaling;
 mod cors_db;
 pub mod crypto;
 mod dashboard;

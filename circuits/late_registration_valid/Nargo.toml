@@ -1,0 +1,12 @@
+[package]
+name = "late_registration_valid"
+type = "bin"
+authors = ["StellPoker"]
+compiler_version = ">=0.36.0"
+
+[package.metadata.circuit]
+description = "Prove a player registered after a tournament started but before late registration closed, and received the correct reduced starting stack for their entry time."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+max_players = 6
