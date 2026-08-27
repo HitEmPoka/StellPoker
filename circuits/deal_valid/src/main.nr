@@ -8,8 +8,13 @@
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
+use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
+
+/// Deck composition is parameterized by the shared deck module (Issue #216):
+/// the compile-time global `deck::DECK_TYPE` selects between standard (52),
+/// short (36, 6+) and joker (54) decks, and the deck-aware bounds below follow.
 
 /// Deck size (cards in deck, default 52 for standard poker)
 /// Can be overridden at compile time for variant poker games
@@ -72,7 +77,7 @@ fn main(
         if p < num_players {
             let idx1 = p * 2;
             let idx2 = idx1 + 1;
-            assert(idx2 < 52, "dealt index out of range");
+            assert(idx2 < deck::deck_size(), "dealt index out of range");
 
             dealt_card1_indices[p] = idx1;
             dealt_card2_indices[p] = idx2;
@@ -84,10 +89,10 @@ fn main(
         }
     }
 
-    // 4. Sanity check: verify no duplicate dealt indices (O(n) instead of O(n²)).
+    // 4. Sanity check: verify no duplicate dealt indices (O(n) instead of O(n*n)).
     // Since indices are deterministic (player p gets cards 2*p and 2*p+1),
-    // we just need to verify that 2*num_players <= DECK_SIZE.
-    assert(2 * num_players <= 52, "not enough cards for players");
+    // we just need to verify that 2*num_players <= deck size (deck-aware).
+    assert(2 * num_players <= deck::deck_size(), "not enough cards for players");
 
     (deck_root, hand_commitments, dealt_card1_indices, dealt_card2_indices)
 }

@@ -20,6 +20,16 @@
       "max_acir_opcodes": 12000,
       "max_backend_opcodes": 20000,
       "max_increase_pct": 5.0
+    },
+    "burn_card_valid": {
+      "max_acir_opcodes": 20000,
+      "max_backend_opcodes": 40000,
+      "max_increase_pct": 5.0
+    },
+    "side_pot_valid": {
+      "max_acir_opcodes": 12000,
+      "max_backend_opcodes": 20000,
+      "max_increase_pct": 5.0
     }
   }
 }

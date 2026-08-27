@@ -57,31 +57,28 @@ pub fn verify_merkle_proof(
 // For 64 leaves (52 cards + 12 padding), depth = 6.
 // For 128 leaves (104 cards + 24 padding), depth = 7.
 // Leaves beyond card count should be zero (padding).
+//
+// Uses a fixed upper bound of levels (16) and guards on the current layer
+// size, so every loop bound is compile-time known.
 pub fn compute_merkle_root_generic<let LEAVES: u32>(leaves: [Field; LEAVES]) -> Field {
-    // Calculate tree depth from leaf count
-    let mut depth: u32 = 0;
-    let mut capacity: u32 = 1;
-    while capacity < LEAVES {
-        depth += 1;
-        capacity *= 2;
-    }
-
-    // Bottom-up tree construction
+    let mut current_size: u32 = LEAVES;
     let mut current_layer = leaves;
-    for layer_level in 0..depth {
-        let mut next_layer_size = capacity / 2;
-        let mut next_layer: [Field; LEAVES] = [0; LEAVES];
+    let mut next_layer: [Field; LEAVES] = [0; LEAVES];
 
-        // Compute parent hashes for this layer
-        for i in 0..next_layer_size {
-            let left = if 2 * i < LEAVES { current_layer[2 * i] } else { 0 };
-            let right = if 2 * i + 1 < LEAVES { current_layer[2 * i + 1] } else { 0 };
-            next_layer[i] = hash_pair(left, right);
+    // Bottom-up tree construction for up to 16 levels (256+ leaves).
+    for _level in 0..16 {
+        if current_size > 1 {
+            let next_size = current_size / 2;
+            for i in 0..LEAVES {
+                if i < next_size {
+                    let left = current_layer[2 * i];
+                    let right = if 2 * i + 1 < current_size { current_layer[2 * i + 1] } else { 0 };
+                    next_layer[i] = hash_pair(left, right);
+                }
+            }
+            current_layer = next_layer;
+            current_size = next_size;
         }
-
-        // Prepare for next layer - shift down and update capacity
-        current_layer = next_layer;
-        capacity = next_layer_size;
     }
 
     current_layer[0]
