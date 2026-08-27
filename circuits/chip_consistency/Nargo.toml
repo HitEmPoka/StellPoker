@@ -1,0 +1,13 @@
+[package]
+name = "chip_consistency"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[package.metadata.circuit]
+description = "Prove that total chip supply is conserved: sum of all player stacks + pot + rake = total buy-ins. Useful for cross-table consistency in tournaments."
+constraint_count = 0
+proof_size_bytes = 0
+public_inputs_bytes = 0
+poseidon2_permutations = 0
+max_players = 6
