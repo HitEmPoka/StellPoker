@@ -61,6 +61,10 @@ mod mpc;
 mod mpc_auth_middleware;
 mod mpc_benchmark;
 mod mpc_heartbeat;
+mod mpc_identity;
+mod mpc_node_benchmark;
+mod mpc_partition;
+mod mpc_version;
 mod node_reliability;
 mod plugin;
 mod proof_cache;
@@ -323,6 +327,15 @@ struct AppState {
     /// Replaces synchronous in-request MPC handling with retry, priority,
     /// cancellation, and progress tracking.
     pub job_queue: Arc<job_queue::JobQueue>,
+    /// Per-node protocol/circuit version handshake registry (Issue #233).
+    version_registry: mpc_version::VersionRegistry,
+    /// Per-node resource/throughput benchmark samples (Issue #234).
+    node_benchmark_store: mpc_node_benchmark::NodeBenchmarkStore,
+    /// Consensus-based network partition detector for the MPC cluster (Issue #236).
+    partition_store: mpc_partition::PartitionStore,
+    /// Committee registry mapping MPC node id -> trusted Stellar address,
+    /// used to verify node identity and signed session messages (Issue #237).
+    committee_registry: mpc_identity::CommitteeRegistry,
 }
 
 #[derive(Clone)]
@@ -700,6 +713,24 @@ async fn main() {
         )))
     };
 
+    let version_registry = mpc_version::new_registry();
+    let node_benchmark_store = mpc_node_benchmark::new_store();
+    let partition_store = mpc_partition::new_store(mpc_partition::PartitionConfig::from_env());
+    let committee_registry = mpc_identity::new_registry();
+    // Seed committee identities from the static MPC_NODE_<n>_ADDRESS env vars,
+    // when present, mirroring how MPC_NODE_<n> endpoints are configured.
+    {
+        let mut seeded = Vec::new();
+        for i in 0..8u32 {
+            if let Ok(address) = std::env::var(format!("MPC_NODE_{}_ADDRESS", i)) {
+                seeded.push((i.to_string(), address));
+            }
+        }
+        if !seeded.is_empty() {
+            mpc_identity::seed_registry(&committee_registry, &seeded).await;
+        }
+    }
+
     let state = AppState {
         tables: Arc::clone(&tables),
         lobby_assignments: Arc::clone(&lobby_assignments),
@@ -735,6 +766,10 @@ async fn main() {
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(4),
         )),
+        version_registry,
+        node_benchmark_store,
+        partition_store,
+        committee_registry,
     };
     idempotency::spawn_gc_task(state.idempotency_store.clone());
     rate_limit::spawn_rate_alert_task(state.rejection_counter.clone());
