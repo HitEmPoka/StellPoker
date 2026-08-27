@@ -520,7 +520,7 @@ fn test_variant_type_zero_is_standard() {
 
 #[test]
 fn test_deuces_wild_detection() {
-    // Rank 0 is deuce (2), check card value 0 (2♣), 13 (2♦), 26 (2♥), 39 (2♠)
+    // Rank 0 is deuce (2), check card value 0 (2c), 13 (2d), 26 (2h), 39 (2s)
     // For this test, we'd need to set VARIANT_TYPE=1, which isn't possible in tests
     // This is a limitation of the current test framework
     // In practice, this is verified by circuit compilation and integration tests
@@ -528,7 +528,7 @@ fn test_deuces_wild_detection() {
 
 #[test]
 fn test_one_eyed_jacks_detection() {
-    // Rank 9 is jack (J), check card values 9 (J♣), 22 (J♦), 35 (J♥), 48 (J♠)
+    // Rank 9 is jack (J), check card values 9 (Jc), 22 (Jd), 35 (Jh), 48 (Js)
     // Similar limitation as above - requires circuit variant to be compiled
 }
 

@@ -1,4 +1,4 @@
-/// Deal Validity Circuit — Multi-deck Shoe variant
+/// Deal Validity Circuit - Multi-deck Shoe variant
 ///
 /// Extends the standard deal circuit to support a multi-deck shoe: 6 (or 8)
 /// standard 52-card decks shuffled together into a single shoe of 312 (or 416)
@@ -77,7 +77,7 @@ fn main(
         leaves[i] = commitments::commit_card(deck[i], salts[i]);
     }
     // Remaining leaves are zero (padding).
-    let deck_root = merkle::compute_merkle_root_generic(leaves);
+    let deck_root = merkle::compute_merkle_root_generic::<512, 9>(leaves);
 
     // 4. Deterministically assign two cards per player by seat order.
     let mut hand_commitments: [Field; MAX_PLAYERS] = [0; MAX_PLAYERS];

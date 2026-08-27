@@ -59,7 +59,7 @@ fn main(
     for i in 0..DECK_SIZE {
         leaves[i] = commitments::commit_card(deck[i], salts[i]);
     }
-    let computed_root = merkle::compute_merkle_root_generic(leaves);
+    let computed_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
     assert(computed_root == deck_root, "deck root mismatch");
 
     // 2. Resolve board cards and check index uniqueness against dealt cards.

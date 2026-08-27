@@ -22,12 +22,18 @@ pub fn commit_hand(card1_commit: Field, card2_commit: Field) -> Field {
     poseidon2_hash_2(card1_commit, card2_commit)
 }
 
-// Commit to an Omaha player's hand (4 hole cards): H(H(c1,c2), H(c3,c4)).
+// Commit to an Omaha player's hand (4 hole-card commitments):
+// H(H(c1_commit, c2_commit), H(c3_commit, c4_commit)).
 // Structured so the 4 hole cards are faithfully bound into a single commitment
 // that the showdown circuit can verify against the dealt cards.
-pub fn commit_hand_omaha(c1: Field, c2: Field, c3: Field, c4: Field) -> Field {
-    let h12 = commit_hand(commit_card(c1), commit_card(c2));
-    let h34 = commit_hand(commit_card(c3), commit_card(c4));
+pub fn commit_hand_omaha(
+    c1_commit: Field,
+    c2_commit: Field,
+    c3_commit: Field,
+    c4_commit: Field,
+) -> Field {
+    let h12 = commit_hand(c1_commit, c2_commit);
+    let h34 = commit_hand(c3_commit, c4_commit);
     commit_hand(h12, h34)
 }
 

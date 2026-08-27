@@ -1,4 +1,4 @@
-/// Fold Validity Circuit — Cryptographic Burn of Folded Cards
+/// Fold Validity Circuit - Cryptographic Burn of Folded Cards
 ///
 /// Proves that folded players' hole cards are correctly removed from the active
 /// player set and are cryptographically "burned" so they cannot be reused in

@@ -60,7 +60,7 @@ fn main(
         leaves[i] = commitments::commit_card(deck[i], salts[i]);
     }
     // Remaining leaves are zero (padding).
-    let deck_root = merkle::compute_merkle_root_generic(leaves);
+    let deck_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
 
     // 3. Deterministically assign two cards per player by seat order.
     // Optimization: reuse card commitment leaves computed in step 2.
@@ -84,7 +84,7 @@ fn main(
         }
     }
 
-    // 4. Sanity check: verify no duplicate dealt indices (O(n) instead of O(n²)).
+    // 4. Sanity check: verify no duplicate dealt indices (O(n) instead of O(n*n)).
     // Since indices are deterministic (player p gets cards 2*p and 2*p+1),
     // we just need to verify that 2*num_players <= DECK_SIZE.
     assert(2 * num_players <= 52, "not enough cards for players");

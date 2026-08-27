@@ -57,18 +57,20 @@ pub fn verify_merkle_proof(
 // For 64 leaves (52 cards + 12 padding), depth = 6.
 // For 128 leaves (104 cards + 24 padding), depth = 7.
 // Leaves beyond card count should be zero (padding).
-pub fn compute_merkle_root_generic<let LEAVES: u32>(leaves: [Field; LEAVES]) -> Field {
-    // Calculate tree depth from leaf count
-    let mut depth: u32 = 0;
-    let mut capacity: u32 = 1;
-    while capacity < LEAVES {
-        depth += 1;
-        capacity *= 2;
-    }
-
-    // Bottom-up tree construction
+// Compute Merkle root from leaves with variable tree depth.
+// `DEPTH` is passed as a compile-time constant (log2 of the leaf count) so the
+// bottom-up loop is unrollable in a constrained context.
+//   - 64 leaves  (52 cards + 12 padding)            -> DEPTH = 6
+//   - 128 leaves (104 cards + 24 padding)           -> DEPTH = 7
+//   - 512 leaves (multi-deck shoe, 6 or 8 decks)    -> DEPTH = 9
+// Leaves beyond the card count should be zero (padding).
+pub fn compute_merkle_root_generic<let LEAVES: u32, let DEPTH: u32>(
+    leaves: [Field; LEAVES],
+) -> Field {
+    // Bottom-up tree construction.
+    let mut capacity: u32 = LEAVES;
     let mut current_layer = leaves;
-    for layer_level in 0..depth {
+    for _layer_level in 0..DEPTH {
         let mut next_layer_size = capacity / 2;
         let mut next_layer: [Field; LEAVES] = [0; LEAVES];
 
@@ -90,7 +92,7 @@ pub fn compute_merkle_root_generic<let LEAVES: u32>(leaves: [Field; LEAVES]) -> 
 // Compute Merkle root from 64 leaves (backward compatible).
 // Leaves 52-63 should be zero (padding).
 pub fn compute_merkle_root(leaves: [Field; 64]) -> Field {
-    compute_merkle_root_generic(leaves)
+    compute_merkle_root_generic::<64, 6>(leaves)
 }
 
 #[test]
@@ -112,7 +114,7 @@ fn test_merkle_root_generic_64() {
         leaves[i] = i as Field;
     }
 
-    let root = compute_merkle_root_generic(leaves);
+    let root = compute_merkle_root_generic::<64, 6>(leaves);
     let root_standard = compute_merkle_root(leaves);
     assert(root == root_standard, "generic and standard should match for 64 leaves");
 }
@@ -124,7 +126,7 @@ fn test_merkle_root_generic_128() {
         leaves[i] = i as Field;
     }
 
-    let root1 = compute_merkle_root_generic(leaves);
-    let root2 = compute_merkle_root_generic(leaves);
+    let root1 = compute_merkle_root_generic::<128, 7>(leaves);
+    let root2 = compute_merkle_root_generic::<128, 7>(leaves);
     assert(root1 == root2, "generic merkle should be deterministic for 128 leaves");
 }
