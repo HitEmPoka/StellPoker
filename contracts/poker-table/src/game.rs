@@ -287,8 +287,19 @@ pub fn settle_showdown(
     table.side_pots = net_pots.clone();
 
     // Split rake between house and jackpot pool.
-    let (house_rake, jackpot_rake) =
+    let (mut house_rake, mut jackpot_rake) =
         pot::split_jackpot_rake(rake, table.config.jackpot_rake_share_bps);
+    let variance = crate::record_outcome(env, table, winner_seat)?;
+    if variance.triggered && house_rake > 0 {
+        let extra_jackpot =
+            (house_rake * variance.extra_jackpot_share_bps as i128) / 10_000;
+        house_rake -= extra_jackpot;
+        jackpot_rake += extra_jackpot;
+        env.events().publish(
+            (Symbol::new(env, "variance_jackpot_funded"), table.id),
+            (table.hand_number, variance.variance_bps, extra_jackpot),
+        );
+    }
     table.rake_balance += house_rake;
     table.jackpot_balance += jackpot_rake;
 
