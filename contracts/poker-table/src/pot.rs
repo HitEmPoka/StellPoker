@@ -5,6 +5,8 @@ use crate::types::*;
 
 /// Maximum allowed rake, in basis points (5%). Enforced at table creation.
 pub const MAX_RAKE_BPS: u32 = 500;
+pub const DEFAULT_VARIANCE_THRESHOLD_BPS: u32 = 2_500;
+pub const DEFAULT_VARIANCE_JACKPOT_SHARE_BPS: u32 = 1_000;
 
 /// Default minimum hand category for bad-beat qualification (7 = FourOfAKind).
 #[allow(dead_code)]
@@ -32,6 +34,26 @@ pub fn split_jackpot_rake(total_rake: i128, jackpot_share_bps: u32) -> (i128, i1
     let jackpot = (total_rake * jackpot_share_bps as i128) / 10_000;
     let house = total_rake - jackpot;
     (house, jackpot)
+}
+
+/// Calculate distribution variance in basis points. A perfectly even winner
+/// distribution is zero; a single seat winning every hand approaches 10,000.
+pub fn outcome_variance_bps(stats: &VarianceStats, player_count: u32) -> u32 {
+    if stats.hands == 0 || player_count < 2 {
+        return 0;
+    }
+
+    let hands = stats.hands as i128;
+    let players = player_count as i128;
+    let mut squared_deviation = 0i128;
+    for seat in 0..player_count {
+        let count = stats.winner_counts.get(seat).unwrap_or(0) as i128;
+        let deviation = count * players - hands;
+        squared_deviation += deviation * deviation;
+    }
+
+    let denominator = hands * hands * players;
+    ((squared_deviation * 10_000) / denominator) as u32
 }
 
 /// Deduct rake from each pot before distribution. Rake is computed per pot as

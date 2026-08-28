@@ -43,6 +43,110 @@ const MAX_QUEUE_SIZE: u32 = 12;
 /// Minimum delay between proposing and executing a contract upgrade, so
 /// seated players have a real window to notice and exit before it lands.
 const MIN_UPGRADE_DELAY_SECONDS: u64 = 86_400; // 1 day
+const TABLE_CLOSURE_NOTICE_SECONDS: u64 = 86_400;
+
+pub(crate) struct VarianceFunding {
+    pub(crate) variance_bps: u32,
+    pub(crate) extra_jackpot_share_bps: u32,
+    pub(crate) triggered: bool,
+}
+
+fn default_variance_config() -> VarianceConfig {
+    VarianceConfig {
+        threshold_bps: pot::DEFAULT_VARIANCE_THRESHOLD_BPS,
+        extra_jackpot_share_bps: pot::DEFAULT_VARIANCE_JACKPOT_SHARE_BPS,
+    }
+}
+
+fn require_table_owner_or_governance(
+    table: &TableState,
+    caller: &Address,
+) -> Result<(), PokerTableError> {
+    if caller == &table.admin || caller == &table.config.game_hub {
+        caller.require_auth();
+        Ok(())
+    } else {
+        Err(PokerTableError::NotAuthorizedCommittee)
+    }
+}
+
+fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, PokerTableError> {
+    let token = token::Client::new(env, &table.config.token);
+    let mut refunded = 0i128;
+    for i in 0..table.players.len() {
+        let mut player = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let balance = player.stack + player.committed;
+        let refund = balance;
+        if refund > 0 {
+            token.transfer(&env.current_contract_address(), &player.address, &refund);
+            refunded += refund;
+        }
+        player.stack = 0;
+        player.committed = 0;
+        player.bet_this_round = 0;
+        player.folded = true;
+        table.players.set(i, player);
+    }
+    table.pot = 0;
+    table.side_pots = Vec::new(env);
+    table.phase = GamePhase::Settlement;
+    table.last_action_ledger = env.ledger().sequence();
+    Ok(refunded)
+}
+
+pub(crate) fn record_outcome(
+    env: &Env,
+    table: &TableState,
+    winner_seat: u32,
+) -> Result<VarianceFunding, PokerTableError> {
+    let key = DataKey::VarianceStats(table.id);
+    let mut stats: VarianceStats = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| {
+            let mut winner_counts = Vec::new(env);
+            for _ in 0..MAX_PLAYERS_PER_TABLE {
+                winner_counts.push_back(0);
+            }
+            VarianceStats {
+                hands: 0,
+                winner_counts,
+                variance_bps: 0,
+            }
+        });
+    if winner_seat >= stats.winner_counts.len() {
+        return Err(PokerTableError::InvalidPlayerIndex);
+    }
+
+    let current_count = stats
+        .winner_counts
+        .get(winner_seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
+    stats
+        .winner_counts
+        .set(winner_seat, current_count.saturating_add(1));
+    stats.hands = stats.hands.saturating_add(1);
+    stats.variance_bps = pot::outcome_variance_bps(&stats, table.players.len());
+    env.storage().persistent().set(&key, &stats);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+    let config: VarianceConfig = env
+        .storage()
+        .persistent()
+        .get(&DataKey::VarianceConfig(table.id))
+        .unwrap_or_else(default_variance_config);
+    Ok(VarianceFunding {
+        variance_bps: stats.variance_bps,
+        extra_jackpot_share_bps: config.extra_jackpot_share_bps,
+        triggered: stats.variance_bps >= config.threshold_bps,
+    })
+}
 
 fn validate_blinds_schedule(schedule: &BlindsSchedule) -> Result<(), PokerTableError> {
     let len = schedule.levels.len();
@@ -1616,6 +1720,74 @@ impl PokerTableContract {
         Ok(table.admin)
     }
 
+    /// Propose forced closure. The table owner or configured Game Hub
+    /// governance address may propose; execution is delayed by one day.
+    pub fn propose_table_closure(
+        env: Env,
+        table_id: u32,
+        caller: Address,
+    ) -> Result<u64, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        require_table_owner_or_governance(&table, &caller)?;
+        let key = DataKey::TableClosure(table_id);
+        if env.storage().persistent().get::<DataKey, TableClosureProposal>(&key).is_some() {
+            return Err(PokerTableError::TableClosureInProgress);
+        }
+        let execute_after = env
+            .ledger()
+            .timestamp()
+            .saturating_add(TABLE_CLOSURE_NOTICE_SECONDS);
+        env.storage()
+            .persistent()
+            .set(&key, &TableClosureProposal { execute_after });
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+        env.events().publish(
+            (Symbol::new(&env, "table_closure_proposed"), table_id),
+            (caller, execute_after),
+        );
+        Ok(execute_after)
+    }
+
+    /// Execute a forced closure after its notice period. Anyone may execute
+    /// once the notice period has elapsed.
+    pub fn execute_table_closure(
+        env: Env,
+        table_id: u32,
+    ) -> Result<i128, PokerTableError> {
+        let mut table = load_table(&env, table_id)?;
+        let key = DataKey::TableClosure(table_id);
+        let proposal: TableClosureProposal = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::TableClosureNotProposed)?;
+        if env.ledger().timestamp() < proposal.execute_after {
+            return Err(PokerTableError::TableClosureNotReady);
+        }
+        let refunded = refund_table_players(&env, &mut table)?;
+        env.storage().persistent().remove(&key);
+        save_table(&env, &table);
+        env.events().publish(
+            (Symbol::new(&env, "table_closed"), table_id),
+            refunded,
+        );
+        Ok(refunded)
+    }
+
+    /// Read the pending forced-closure proposal, if one exists.
+    pub fn get_table_closure(
+        env: Env,
+        table_id: u32,
+    ) -> Result<Option<TableClosureProposal>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::TableClosure(table_id)))
+    }
+
     /// Get the Game Hub address for a table.
     pub fn get_hub(env: Env, table_id: u32) -> Result<Address, PokerTableError> {
         let table = load_table(&env, table_id)?;
@@ -1784,6 +1956,67 @@ impl PokerTableContract {
             table.config.min_bad_beat_category,
             table.config.min_bad_beat_rank,
         ))
+    }
+
+    /// Read cumulative winner distribution and normalized variance.
+    pub fn get_variance_stats(
+        env: Env,
+        table_id: u32,
+    ) -> Result<VarianceStats, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::VarianceStats(table_id))
+            .unwrap_or_else(|| VarianceStats {
+                hands: 0,
+                winner_counts: Vec::new(&env),
+                variance_bps: 0,
+            }))
+    }
+
+    /// Read variance-triggered jackpot funding configuration.
+    pub fn get_variance_config(
+        env: Env,
+        table_id: u32,
+    ) -> Result<VarianceConfig, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::VarianceConfig(table_id))
+            .unwrap_or_else(default_variance_config))
+    }
+
+    /// Configure the variance threshold and extra jackpot funding share.
+    pub fn set_variance_config(
+        env: Env,
+        table_id: u32,
+        threshold_bps: u32,
+        extra_jackpot_share_bps: u32,
+    ) -> Result<(), PokerTableError> {
+        if threshold_bps > 10_000 || extra_jackpot_share_bps > 10_000 {
+            return Err(PokerTableError::InvalidVarianceConfig);
+        }
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage().persistent().set(
+            &DataKey::VarianceConfig(table_id),
+            &VarianceConfig {
+                threshold_bps,
+                extra_jackpot_share_bps,
+            },
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::VarianceConfig(table_id),
+            TABLE_TTL_THRESHOLD,
+            TABLE_TTL_EXTEND,
+        );
+        env.events().publish(
+            (Symbol::new(&env, "variance_config_updated"), table_id),
+            (threshold_bps, extra_jackpot_share_bps),
+        );
+        Ok(())
     }
 
     /// Update the jackpot configuration (admin only).

@@ -164,6 +164,11 @@ pub enum PokerTableError {
     NoUpgradeProposal = 59,
     UpgradeDelayNotElapsed = 60,
     UpgradeDelayTooShort = 61,
+    InvalidVarianceConfig = 62,
+    TableClosureNotProposed = 63,
+    TableClosureNoticeActive = 64,
+    TableClosureNotReady = 65,
+    TableClosureInProgress = 66,
 }
 
 #[contracttype]
@@ -324,6 +329,30 @@ pub struct HandHistoryMeta {
     pub total_archived: u32,
 }
 
+/// Cumulative winner distribution used to detect unusually concentrated table
+/// outcomes. Counts are indexed by seat.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VarianceStats {
+    pub hands: u32,
+    pub winner_counts: Vec<u32>,
+    pub variance_bps: u32,
+}
+
+/// Controls when concentrated outcomes receive extra jackpot funding.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VarianceConfig {
+    pub threshold_bps: u32,
+    pub extra_jackpot_share_bps: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TableClosureProposal {
+    pub execute_after: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableState {
@@ -384,4 +413,10 @@ pub enum DataKey {
     PlayerActionCounter(u32, Address),
     Queue(u32),  // waiting-list queue for a full table
     UpgradeProposal(u32),
+    /// Per-table outcome distribution and variance state.
+    VarianceStats(u32),
+    /// Per-table variance-triggered jackpot funding configuration.
+    VarianceConfig(u32),
+    /// Pending forced closure notice for a table.
+    TableClosure(u32),
 }
