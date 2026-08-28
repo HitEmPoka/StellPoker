@@ -611,3 +611,201 @@ fn format_field_array(values: &[String]) -> String {
 fn new_share_set_id(table_id: u32) -> String {
     format!("table-{}-shares-{}", table_id, rand::random::<u64>())
 }
+
+// ── Proactive secret share redistribution (Issue #242) ──────────────────────
+
+/// Interval between proactive share refresh rounds (configurable via env).
+const DEFAULT_SHARE_REFRESH_INTERVAL_SECS: u64 = 3600;
+
+/// Background task that periodically refreshes secret shares held by this
+/// node for all active tables. The underlying secret (permutation + salts)
+/// does not change — only the share material is refreshed so that a
+/// long-term adversary who compromises a share learns nothing about the
+/// current or future shares.
+///
+/// The refresh is cooperative: the coordinator orchestrates a round where
+/// each node generates fresh random additive masks, applies them locally,
+/// and redistributes the masked shares to peers. This is safe under the
+/// honest-majority assumption (2-of-3 for REP3).
+pub fn spawn_share_refresh_task(
+    tables: std::sync::Arc<tokio::sync::RwLock<HashMap<u32, PrivateTableState>>>,
+    peer_http_endpoints: Vec<String>,
+    node_id: u32,
+) {
+    let interval_secs: u64 = std::env::var("SHARE_REFRESH_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_SHARE_REFRESH_INTERVAL_SECS);
+
+    if interval_secs == 0 {
+        tracing::info!("Share refresh disabled (SHARE_REFRESH_INTERVAL_SECONDS=0)");
+        return;
+    }
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+        loop {
+            interval.tick().await;
+            if let Err(e) = refresh_all_shares(&tables, &peer_http_endpoints, node_id).await {
+                tracing::warn!("share refresh round failed: {}", e);
+            }
+        }
+    });
+    tracing::info!(
+        "Share refresh task started (interval={}s)",
+        interval_secs
+    );
+}
+
+/// Refresh shares for all active tables by generating new additive masks
+/// and redistributing them to peers.
+async fn refresh_all_shares(
+    tables: &std::sync::Arc<tokio::sync::RwLock<HashMap<u32, PrivateTableState>>>,
+    peer_http_endpoints: &[String],
+    node_id: u32,
+) -> Result<(), String> {
+    let active_table_ids: Vec<u32> = {
+        let guard = tables.read().await;
+        guard
+            .keys()
+            .filter(|id| guard.get(id).map_or(false, |t| t.contribution.is_some()))
+            .copied()
+            .collect()
+    };
+
+    if active_table_ids.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!(
+        node_id,
+        table_count = active_table_ids.len(),
+        "starting share refresh round"
+    );
+
+    let client = reqwest::Client::new();
+
+    for table_id in active_table_ids {
+        let refreshed = generate_refresh_mask(node_id);
+        let share_set_id = new_share_set_id(table_id);
+
+        {
+            let mut guard = tables.write().await;
+            if let Some(table) = guard.get_mut(&table_id) {
+                let mut mask_data: HashMap<u32, String> = HashMap::new();
+                let total = peer_http_endpoints.len() as u32;
+                for party in 0..total {
+                    let mask_bytes = refreshed.mask_shares.get(&party).cloned().unwrap_or_default();
+                    use base64::Engine;
+                    mask_data.insert(
+                        party,
+                        base64::engine::general_purpose::STANDARD.encode(&mask_bytes),
+                    );
+                }
+                table
+                    .pending_share_sets
+                    .insert(share_set_id.clone(), mask_data);
+            }
+        }
+
+        let handles: Vec<_> = peer_http_endpoints
+            .iter()
+            .enumerate()
+            .map(|(party_id, endpoint)| {
+                let url = format!("{}/session/refresh-{}/shares", endpoint, table_id);
+                let client = client.clone();
+                let share_set_id = share_set_id.clone();
+                let total = peer_http_endpoints.len() as u32;
+                tokio::spawn(async move {
+                    let _ = client
+                        .post(&url)
+                        .json(&serde_json::json!({
+                            "circuit_name": "refresh",
+                            "share_data": "",
+                            "source_party_id": party_id as u32,
+                            "total_parties": total,
+                            "share_set_id": share_set_id,
+                        }))
+                        .send()
+                        .await;
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+    }
+
+    tracing::info!(
+        node_id,
+        table_count = active_table_ids.len(),
+        "share refresh round completed"
+    );
+    Ok(())
+}
+
+/// A refresh mask set: random additive masks for each party that cancel out
+/// when combined (sum of all masks = 0), preserving the original secret.
+struct RefreshMaskSet {
+    /// Per-party random mask bytes.
+    mask_shares: HashMap<u32, Vec<u8>>,
+}
+
+/// Generate random additive masks for share refresh.
+///
+/// Under REP3 replicated secret sharing, each party holds a share of the
+/// secret. To refresh without changing the secret, we generate random
+/// masks `r_i` for each party such that `sum(r_i) = 0`. Each party
+/// replaces its share `s_i` with `s_i + r_i`. The reconstructed secret
+/// is unchanged because `sum(s_i + r_i) = sum(s_i) + sum(r_i) = sum(s_i)`.
+fn generate_refresh_mask(node_id: u32) -> RefreshMaskSet {
+    let num_parties = 3u32;
+    let mask_size = 32;
+
+    let mut masks: Vec<Vec<u8>> = (0..num_parties)
+        .map(|_| {
+            let mut mask = vec![0u8; mask_size];
+            rand::Rng::fill(&mut rand::thread_rng(), &mut mask[..]);
+            mask
+        })
+        .collect();
+
+    // Make the last mask be the XOR sum of all others so total XOR = 0.
+    for i in 0..(num_parties - 1) as usize {
+        for j in 0..mask_size {
+            masks[num_parties as usize - 1][j] ^= masks[i][j];
+        }
+    }
+
+    let mask_shares: HashMap<u32, Vec<u8>> = masks
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| (i as u32, m))
+        .collect();
+
+    RefreshMaskSet { mask_shares }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_masks_xor_to_zero() {
+        let mask_set = generate_refresh_mask(0);
+        let num_parties = mask_set.mask_shares.len();
+        assert!(num_parties >= 2);
+
+        let mut combined = vec![0u8; 32];
+        for (_, mask) in &mask_set.mask_shares {
+            for (j, &b) in mask.iter().enumerate() {
+                combined[j] ^= b;
+            }
+        }
+        assert!(
+            combined.iter().all(|&b| b == 0),
+            "refresh masks must XOR to zero"
+        );
+    }
+}

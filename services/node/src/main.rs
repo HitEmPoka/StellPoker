@@ -145,10 +145,17 @@ async fn main() {
         sessions: Arc::new(RwLock::new(HashMap::new())),
         tables: Arc::new(RwLock::new(HashMap::new())),
         party_config_path,
-        peer_http_endpoints,
+        peer_http_endpoints: peer_http_endpoints.clone(),
         limits,
         metrics: NodeMetrics::new(),
     };
+
+    // ── Proactive share refresh task (Issue #242) ───────────────────────────
+    private_table::spawn_share_refresh_task(
+        state.tables.clone(),
+        peer_http_endpoints,
+        node_id,
+    );
 
     // ── Background metric updaters ────────────────────────────────────────────
     {
