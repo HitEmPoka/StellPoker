@@ -31,6 +31,30 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     }
 
     advance_blind_level_if_due(env, table);
+
+    // Check if a break is active — if so, deny starting a new hand.
+    if table.break_ends_at > 0 {
+        let now = env.ledger().timestamp();
+        if now < table.break_ends_at {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        // Break has elapsed; clear it and advance to next level.
+        table.break_ends_at = 0;
+        let num_levels = table.config.blinds_schedule.levels.len();
+        if table.current_blind_level + 1 < num_levels {
+            table.current_blind_level += 1;
+            table.level_started_at = now;
+            env.events().publish(
+                (Symbol::new(env, "blind_level_advanced"), table.id),
+                table.current_blind_level,
+            );
+            env.events().publish(
+                (Symbol::new(env, "level_up"), table.id),
+                table.current_blind_level,
+            );
+        }
+    }
+
     let level = current_blind_level(table)?;
 
     // Collect antes from every seated player before blinds. Antes go
@@ -62,11 +86,11 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
             let (seat, amount) = match straddle.position {
                 StraddlePosition::BigBlind => (
                     bb_seat,
-                    table.config.big_blind * (straddle.multiplier - 1) as i128,
+                    level.big_blind * (straddle.multiplier - 1) as i128,
                 ),
                 StraddlePosition::Utg => (
                     (table.dealer_seat + 3) % num_players,
-                    table.config.big_blind * straddle.multiplier as i128,
+                    level.big_blind * straddle.multiplier as i128,
                 ),
             };
             post_blind(table, seat, amount)?;
@@ -111,9 +135,18 @@ pub(crate) fn current_blind_level(table: &TableState) -> Result<BlindLevel, Poke
 /// Advance `table.current_blind_level` by one if the active level's
 /// duration has elapsed. A no-op on the final level (which lasts
 /// indefinitely) or if the schedule has only one level.
+///
+/// If the expiring level has a nonzero `break_seconds`, the schedule
+/// enters a break period instead of immediately advancing. During the
+/// break no hands may be started; the next hand triggers the actual
+/// level advance.
 fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
     let num_levels = table.config.blinds_schedule.levels.len();
     if table.current_blind_level + 1 >= num_levels {
+        return;
+    }
+    // Already in a break — do not double-advance.
+    if table.break_ends_at > 0 {
         return;
     }
     let level = match table
@@ -130,12 +163,26 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
     }
     let now = env.ledger().timestamp();
     if now >= table.level_started_at + level.duration_seconds {
-        table.current_blind_level += 1;
-        table.level_started_at = now;
-        env.events().publish(
-            (Symbol::new(env, "blind_level_advanced"), table.id),
-            table.current_blind_level,
-        );
+        if level.break_seconds > 0 {
+            // Enter break period. The next hand will advance the level.
+            table.break_ends_at = now + level.break_seconds;
+            env.events().publish(
+                (Symbol::new(env, "blind_break_started"), table.id),
+                (table.current_blind_level, level.break_seconds),
+            );
+        } else {
+            // No break — advance immediately.
+            table.current_blind_level += 1;
+            table.level_started_at = now;
+            env.events().publish(
+                (Symbol::new(env, "blind_level_advanced"), table.id),
+                table.current_blind_level,
+            );
+            env.events().publish(
+                (Symbol::new(env, "level_up"), table.id),
+                (table.current_blind_level, current_blind_level(table)),
+            );
+        }
     }
 }
 
