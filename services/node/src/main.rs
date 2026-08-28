@@ -24,6 +24,7 @@
 //! When a pin is set, the node demands mutual TLS (mTLS) and rejects any
 //! connection whose client certificate does not match the pin.
 
+mod config_validation;
 mod crypto;
 
 use axum::{
@@ -70,6 +71,26 @@ async fn main() {
         tracing_subscriber::fmt().init();
     }
 
+    // ── Startup configuration validation (Issue #240) ───────────────────────
+    let validation = config_validation::validate_config().await;
+    for warning in &validation.warnings {
+        tracing::warn!("config validation: {}", warning);
+    }
+    if !validation.is_ok() {
+        for error in &validation.errors {
+            tracing::error!("config validation: {}", error);
+        }
+        tracing::error!(
+            "MPC node startup aborted: {} configuration error(s) found",
+            validation.errors.len()
+        );
+        std::process::exit(1);
+    }
+    tracing::info!(
+        "Configuration validation passed ({} warning(s))",
+        validation.warnings.len()
+    );
+
     let node_id: u32 = std::env::var("NODE_ID")
         .unwrap_or_else(|_| "0".to_string())
         .parse()
@@ -110,6 +131,23 @@ async fn main() {
         limits.max_session_wall_seconds,
     );
 
+    // ── Startup configuration validation (Issue #240) ────────────────────────
+    let report = config_validation::validate_config().await;
+    for w in &report.warnings {
+        tracing::warn!("config: {}", w);
+    }
+    if !report.is_ok() {
+        for e in &report.errors {
+            tracing::error!("config: {}", e);
+        }
+        tracing::error!(
+            "MPC node refusing to start due to {} configuration error(s)",
+            report.errors.len()
+        );
+        std::process::exit(1);
+    }
+    tracing::info!("Configuration validation passed");
+
     // ── TLS configuration ────────────────────────────────────────────────────
     let tls_cfg = match tls::load_from_env() {
         Ok(cfg) => cfg,
@@ -124,15 +162,21 @@ async fn main() {
         sessions: Arc::new(RwLock::new(HashMap::new())),
         tables: Arc::new(RwLock::new(HashMap::new())),
         party_config_path,
-        peer_http_endpoints,
+        peer_http_endpoints: peer_http_endpoints.clone(),
         limits,
         metrics: NodeMetrics::new(),
     };
 
+    // ── Proactive share refresh task (Issue #242) ───────────────────────────
+    private_table::spawn_share_refresh_task(
+        state.tables.clone(),
+        peer_http_endpoints,
+        node_id,
+    );
+
     // ── Background metric updaters ────────────────────────────────────────────
     {
         let metrics = state.metrics.clone();
-        let node_id = state.node_id;
         tokio::spawn(async move {
             let mut sys = sysinfo::System::new();
             loop {
