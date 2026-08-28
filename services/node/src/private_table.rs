@@ -685,9 +685,9 @@ async fn refresh_all_shares(
 
     let client = reqwest::Client::new();
 
-    for table_id in active_table_ids {
+    for table_id in &active_table_ids {
         let refreshed = generate_refresh_mask(node_id);
-        let share_set_id = new_share_set_id(table_id);
+        let share_set_id = new_share_set_id(*table_id);
 
         {
             let mut guard = tables.write().await;
@@ -759,24 +759,28 @@ struct RefreshMaskSet {
 /// masks `r_i` for each party such that `sum(r_i) = 0`. Each party
 /// replaces its share `s_i` with `s_i + r_i`. The reconstructed secret
 /// is unchanged because `sum(s_i + r_i) = sum(s_i) + sum(r_i) = sum(s_i)`.
-fn generate_refresh_mask(node_id: u32) -> RefreshMaskSet {
+fn generate_refresh_mask(_node_id: u32) -> RefreshMaskSet {
     let num_parties = 3u32;
     let mask_size = 32;
+    use rand::Rng;
 
-    let mut masks: Vec<Vec<u8>> = (0..num_parties)
-        .map(|_| {
-            let mut mask = vec![0u8; mask_size];
-            rand::Rng::fill(&mut rand::thread_rng(), &mut mask[..]);
-            mask
-        })
-        .collect();
+    let mut masks: Vec<Vec<u8>> = Vec::with_capacity(num_parties as usize);
 
-    // Make the last mask be the XOR sum of all others so total XOR = 0.
-    for i in 0..(num_parties - 1) as usize {
-        for j in 0..mask_size {
-            masks[num_parties as usize - 1][j] ^= masks[i][j];
+    // Generate random masks for parties 0..N-2.
+    for _ in 0..(num_parties - 1) {
+        let mut mask = vec![0u8; mask_size];
+        rand::thread_rng().fill(&mut mask[..]);
+        masks.push(mask);
+    }
+
+    // The last mask is the XOR sum of all previous masks, so total XOR = 0.
+    let mut last_mask = vec![0u8; mask_size];
+    for mask in &masks {
+        for (j, &b) in mask.iter().enumerate() {
+            last_mask[j] ^= b;
         }
     }
+    masks.push(last_mask);
 
     let mask_shares: HashMap<u32, Vec<u8>> = masks
         .into_iter()
@@ -795,17 +799,31 @@ mod refresh_tests {
     fn refresh_masks_xor_to_zero() {
         let mask_set = generate_refresh_mask(0);
         let num_parties = mask_set.mask_shares.len();
-        assert!(num_parties >= 2);
+        assert_eq!(num_parties, 3, "expected 3 parties");
+
+        for (party_id, mask) in &mask_set.mask_shares {
+            assert_eq!(mask.len(), 32, "party {} mask should be 32 bytes", party_id);
+        }
 
         let mut combined = vec![0u8; 32];
-        for (_, mask) in &mask_set.mask_shares {
+        for (party_id, mask) in &mask_set.mask_shares {
             for (j, &b) in mask.iter().enumerate() {
                 combined[j] ^= b;
             }
         }
+
+        let non_zero: Vec<usize> = combined
+            .iter()
+            .enumerate()
+            .filter(|(_, &b)| b != 0)
+            .map(|(i, _)| i)
+            .collect();
+
         assert!(
-            combined.iter().all(|&b| b == 0),
-            "refresh masks must XOR to zero"
+            non_zero.is_empty(),
+            "refresh masks must XOR to zero, but {} byte(s) are non-zero: {:?}",
+            non_zero.len(),
+            non_zero
         );
     }
 }

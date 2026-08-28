@@ -131,6 +131,23 @@ async fn main() {
         limits.max_session_wall_seconds,
     );
 
+    // ── Startup configuration validation (Issue #240) ────────────────────────
+    let report = config_validation::validate_config().await;
+    for w in &report.warnings {
+        tracing::warn!("config: {}", w);
+    }
+    if !report.is_ok() {
+        for e in &report.errors {
+            tracing::error!("config: {}", e);
+        }
+        tracing::error!(
+            "MPC node refusing to start due to {} configuration error(s)",
+            report.errors.len()
+        );
+        std::process::exit(1);
+    }
+    tracing::info!("Configuration validation passed");
+
     // ── TLS configuration ────────────────────────────────────────────────────
     let tls_cfg = match tls::load_from_env() {
         Ok(cfg) => cfg,
@@ -160,7 +177,6 @@ async fn main() {
     // ── Background metric updaters ────────────────────────────────────────────
     {
         let metrics = state.metrics.clone();
-        let node_id = state.node_id;
         tokio::spawn(async move {
             let mut sys = sysinfo::System::new();
             loop {
