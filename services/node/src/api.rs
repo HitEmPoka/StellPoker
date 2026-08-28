@@ -350,6 +350,7 @@ pub async fn post_generate(
     let circuit_label = circuit_name.clone();
 
     tokio::spawn(async move {
+        let phase_timeouts = session::PhaseTimeouts::from_env();
         let proof_future = session::run_proof_generation(
             sid.clone(),
             circuit_dir,
@@ -361,6 +362,7 @@ pub async fn post_generate(
             party_config,
             crs_path,
             limits,
+            phase_timeouts,
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
