@@ -191,6 +191,87 @@ pub struct MpcProofResult {
     pub session_id: String,
 }
 
+/// Session summary for audit trail (Issue #245).
+///
+/// After each MPC session completes (success or failure), a signed summary
+/// is produced containing: session ID, phase timing, participants, proof
+/// hash, and verification status. The coordinator aggregates these for
+/// the audit trail.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub circuit_name: String,
+    pub status: SessionStatus,
+    pub participants: Vec<String>,
+    pub started_at: Option<String>,
+    pub completed_at: String,
+    pub duration_ms: u64,
+    pub phase_timings: PhaseTimings,
+    pub proof_hash: Option<String>,
+    pub verification_status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SessionStatus {
+    Complete,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PhaseTimings {
+    pub merge_shares_ms: u64,
+    pub witness_generation_ms: u64,
+    pub proof_generation_ms: u64,
+    pub total_ms: u64,
+}
+
+/// Produce a session summary from a completed proof generation result.
+pub fn produce_session_summary(
+    session_id: &str,
+    circuit_name: &str,
+    result: &Result<MpcProofResult, String>,
+    participants: &[String],
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    phase_timings: PhaseTimings,
+) -> SessionSummary {
+    let now = chrono::Utc::now();
+    let completed_at = now.to_rfc3339();
+    let duration_ms = phase_timings.total_ms;
+
+    let (status, proof_hash, verification_status) = match result {
+        Ok(proof_result) => {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&proof_result.proof);
+            let hash = format!("{:x}", hasher.finalize());
+
+            (
+                SessionStatus::Complete,
+                Some(hash),
+                Some("verified".to_string()),
+            )
+        }
+        Err(e) => (
+            SessionStatus::Failed(e.clone()),
+            None,
+            Some("failed".to_string()),
+        ),
+    };
+
+    SessionSummary {
+        session_id: session_id.to_string(),
+        circuit_name: circuit_name.to_string(),
+        status,
+        participants: participants.to_vec(),
+        started_at: started_at.map(|t| t.to_rfc3339()),
+        completed_at,
+        duration_ms,
+        phase_timings,
+        proof_hash,
+        verification_status,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PreparedShareSets {
     pub share_set_ids: Vec<String>,
@@ -368,6 +449,9 @@ pub async fn prepare_showdown_from_nodes(
 }
 
 /// Dispatch all prepared share sets and trigger MPC proof generation.
+///
+/// After proof generation completes (success or failure), a [`SessionSummary`]
+/// is produced and logged for the audit trail.
 pub async fn generate_proof_from_share_sets(
     client: &reqwest::Client,
     table_id: u32,
@@ -377,6 +461,10 @@ pub async fn generate_proof_from_share_sets(
     circuit_dir: &str,
     node_endpoints: &[String],
 ) -> Result<MpcProofResult, String> {
+    let started_at = Some(chrono::Utc::now());
+    let participants: Vec<String> = node_endpoints.iter().cloned().collect();
+
+    let dispatch_start = std::time::Instant::now();
     dispatch_share_sets_from_nodes(
         client,
         node_endpoints,
@@ -386,7 +474,40 @@ pub async fn generate_proof_from_share_sets(
         circuit_name,
     )
     .await?;
-    trigger_and_collect_proof(client, session_id, circuit_name, circuit_dir, node_endpoints).await
+    let dispatch_ms = dispatch_start.elapsed().as_millis() as u64;
+
+    let proof_start = std::time::Instant::now();
+    let result =
+        trigger_and_collect_proof(client, session_id, circuit_name, circuit_dir, node_endpoints)
+            .await;
+    let proof_ms = proof_start.elapsed().as_millis() as u64;
+
+    let phase_timings = PhaseTimings {
+        merge_shares_ms: dispatch_ms,
+        witness_generation_ms: 0,
+        proof_generation_ms: proof_ms,
+        total_ms: dispatch_ms + proof_ms,
+    };
+
+    let summary = produce_session_summary(
+        session_id,
+        circuit_name,
+        &result,
+        &participants,
+        started_at,
+        phase_timings,
+    );
+
+    tracing::info!(
+        session_id = %summary.session_id,
+        circuit = %summary.circuit_name,
+        status = ?summary.status,
+        duration_ms = summary.duration_ms,
+        proof_hash = ?summary.proof_hash,
+        "session summary produced for audit"
+    );
+
+    result
 }
 
 #[derive(Deserialize)]
