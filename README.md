@@ -108,6 +108,17 @@ stellar-poker/
 - Stellar CLI — `cargo install stellar-cli --features opt`
 - co-noir (for CRS download) — `cargo install --git https://github.com/TaceoLabs/co-snarks co-noir`
 
+New here? [docs/developer-onboarding.md](docs/developer-onboarding.md) is a
+step-by-step checklist from clone to a passing test hand.
+
+Nix users can get the toolchain in one command:
+
+```bash
+nix develop
+```
+
+See [flake.nix](flake.nix).
+
 ## Quick Start
 
 ```bash

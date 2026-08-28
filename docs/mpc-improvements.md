@@ -87,3 +87,29 @@ The circuit accepts:
 
 ### Integration
 Future coordinator endpoint will aggregate proofs for multi-table tournaments.
+
+## Issue #246: Peer Connection Pooling
+
+Each REP3 session makes a node talk to both peers (share dispatch, proactive
+share refresh, heartbeats). Every call site used to construct its own
+`reqwest::Client`, and a client owns its connection pool — so each request paid
+a fresh TCP handshake (plus a full TLS handshake for `https://` peers) and then
+dropped the connection.
+
+`services/node/src/pool.rs` keeps one process-wide client whose keep-alive pool
+is shared by every session, so only the first request to a peer pays handshake
+cost. A background task probes `GET {endpoint}/health` on each peer and records
+the result; `pool::is_healthy(endpoint)` exposes it so callers can skip a known
+dead peer instead of discovering it through a mid-session timeout. An endpoint
+that has never been probed reports healthy, so no peer is taken out of rotation
+at startup before the first probe runs.
+
+### Configuration
+
+```bash
+MPC_POOL_MAX_IDLE_PER_HOST=8      # idle connections kept per peer
+MPC_POOL_IDLE_TIMEOUT_SECS=90     # idle connection eviction
+MPC_POOL_TCP_KEEPALIVE_SECS=30    # TCP keep-alive probe interval
+MPC_POOL_HEALTH_INTERVAL_SECS=15  # peer health check period
+MPC_POOL_HEALTH_TIMEOUT_SECS=5    # per-probe timeout
+```

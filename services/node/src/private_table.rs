@@ -281,7 +281,7 @@ pub async fn dispatch_share_payloads(
 ) -> Result<(), String> {
     let total_parties = u32::try_from(peer_http_endpoints.len())
         .map_err(|_| "too many peer endpoints".to_string())?;
-    let client = reqwest::Client::new();
+    let client = crate::pool::peer_client();
 
     let mut handles = Vec::with_capacity(peer_http_endpoints.len());
     for (party_id_usize, endpoint) in peer_http_endpoints.iter().enumerate() {
@@ -291,6 +291,17 @@ pub async fn dispatch_share_payloads(
             .get(&party_id)
             .cloned()
             .ok_or_else(|| format!("missing share payload for party {}", party_id))?;
+
+        // Dispatch anyway — every party needs its share, so skipping one would
+        // stall the session rather than save it. The warning just makes the
+        // cause legible up front instead of surfacing as a request timeout.
+        if !crate::pool::is_healthy(endpoint) {
+            tracing::warn!(
+                peer = endpoint.as_str(),
+                party_id,
+                "dispatching shares to a peer whose last health check failed"
+            );
+        }
 
         let url = format!("{}/session/{}/shares", endpoint, proof_session_id);
         let circuit_name = circuit_name.to_string();
@@ -683,7 +694,7 @@ async fn refresh_all_shares(
         "starting share refresh round"
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::pool::peer_client();
 
     for table_id in &active_table_ids {
         let refreshed = generate_refresh_mask(node_id);
