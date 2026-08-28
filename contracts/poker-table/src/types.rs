@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, BytesN, Env, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, Bytes, BytesN, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -37,6 +37,10 @@ pub struct TableConfig {
     /// Minimum rank of the quad / trips / card required within the
     /// qualifying category (e.g. `12` = Ace).
     pub min_bad_beat_rank: u32,
+    /// Per-street action time limits in seconds. Allows different time
+    /// limits for each betting street (e.g. shorter for turbo tables).
+    /// `None` falls back to the global `timeout_ledgers` converted to seconds.
+    pub street_time_limit: Option<StreetTimeLimit>,
 }
 
 /// A single blinds/ante level in a table's schedule.
@@ -53,6 +57,12 @@ pub struct BlindLevel {
     /// (which lasts indefinitely once reached). `0` on a single-level
     /// schedule means the level never advances (fixed blinds).
     pub duration_seconds: u64,
+    /// Optional break duration in seconds after this level expires, before
+    /// the next level starts. During a break no hands are dealt; the
+    /// coordinator must wait for the break to elapse before starting a new
+    /// hand. `0` means no break. Break is only meaningful on non-final
+    /// levels with a nonzero `duration_seconds`.
+    pub break_seconds: u64,
 }
 
 /// Ordered blinds levels for a table. `levels[0]` is active from table
@@ -73,6 +83,7 @@ impl BlindsSchedule {
             big_blind,
             ante: 0,
             duration_seconds: 0,
+            break_seconds: 0,
         });
         BlindsSchedule { levels }
     }
@@ -97,6 +108,127 @@ pub struct QueueEntry {
 pub struct UpgradeProposal {
     pub new_wasm_hash: BytesN<32>,
     pub execute_after: u64, // ledger timestamp (seconds)
+}
+
+/// Position where a straddle is posted.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum StraddlePosition {
+    BigBlind,
+    Utg,
+}
+
+/// Configuration for an optional straddle (2x or 3x big blind) that
+/// can be posted before cards are dealt.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StraddleConfig {
+    pub multiplier: u32, // 0 = disabled, 2 = 2x, 3 = 3x
+    pub position: StraddlePosition,
+}
+
+/// Per-street action time limits in seconds. Allows different time limits
+/// for each betting street (e.g. shorter for preflop in turbo tables).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StreetTimeLimit {
+    /// Time limit for preflop actions, in seconds.
+    pub preflop_seconds: u64,
+    /// Time limit for flop actions, in seconds.
+    pub flop_seconds: u64,
+    /// Time limit for turn actions, in seconds.
+    pub turn_seconds: u64,
+    /// Time limit for river actions, in seconds.
+    pub river_seconds: u64,
+}
+
+impl StreetTimeLimit {
+    /// Standard time limits: 30s preflop, 60s for other streets.
+    pub fn standard() -> Self {
+        StreetTimeLimit {
+            preflop_seconds: 30,
+            flop_seconds: 60,
+            turn_seconds: 60,
+            river_seconds: 60,
+        }
+    }
+
+    /// Turbo time limits: 15s preflop, 20s for other streets.
+    pub fn turbo() -> Self {
+        StreetTimeLimit {
+            preflop_seconds: 15,
+            flop_seconds: 20,
+            turn_seconds: 20,
+            river_seconds: 20,
+        }
+    }
+
+    /// Get the time limit for a given game phase.
+    pub fn for_phase(&self, phase: &GamePhase) -> u64 {
+        match phase {
+            GamePhase::Preflop => self.preflop_seconds,
+            GamePhase::Flop => self.flop_seconds,
+            GamePhase::Turn => self.turn_seconds,
+            GamePhase::River => self.river_seconds,
+            _ => self.preflop_seconds,
+        }
+    }
+}
+
+/// A cryptographic commitment to a player's action, stored on-chain for
+/// dispute resolution. The coordinator submits commitments; in case of
+/// dispute, anyone can request the coordinator to reveal the action data,
+/// which is verified against the stored commitment.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ActionCommitment {
+    /// The action the player took.
+    pub action: Action,
+    /// Amount for bet/raise actions.
+    pub amount: i128,
+    /// The seat of the player who took the action.
+    pub seat: u32,
+    /// The game phase when the action was taken.
+    pub phase: GamePhase,
+    /// Ledger timestamp when the commitment was stored.
+    pub committed_at: u64,
+    /// Whether this commitment has been revealed in a dispute.
+    pub revealed: bool,
+}
+
+/// Aggregate hand type distribution statistics across all tables.
+/// Used for proving randomness and fairness of the deal.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HandTypeDistribution {
+    /// Count of each hand type: [HighCard, OnePair, TwoPair, ThreeOfAKind,
+    /// Straight, Flush, FullHouse, FourOfAKind, StraightFlush, RoyalFlush]
+    pub counts: Vec<u64>,
+    /// Total number of hands observed.
+    pub total_hands: u64,
+    /// Total number of showdown hands (non-fold).
+    pub total_showdowns: u64,
+}
+
+impl HandTypeDistribution {
+    pub fn new(env: &Env) -> Self {
+        let counts = Vec::from_array(env, [0u64; 10]);
+        HandTypeDistribution {
+            counts,
+            total_hands: 0,
+            total_showdowns: 0,
+        }
+    }
+}
+
+/// Bookkeeping for per-table action commitments used in dispute resolution.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ActionCommitmentMeta {
+    /// Next action index for the current hand.
+    pub next_index: u32,
+    /// Number of commitments stored for the current hand.
+    pub stored: u32,
 }
 
 #[contracterror]
@@ -164,6 +296,14 @@ pub enum PokerTableError {
     NoUpgradeProposal = 59,
     UpgradeDelayNotElapsed = 60,
     UpgradeDelayTooShort = 61,
+    InvalidStraddleConfig = 62,
+    EmergencyWithdrawalNotApplicable = 63,
+    EmergencyTimelockActive = 64,
+    AlreadyApprovedEmergencyWithdrawal = 65,
+    ActionAlreadyCommitted = 66,
+    ActionCommitmentNotFound = 67,
+    InvalidActionReveal = 68,
+    InvalidHandType = 69,
 }
 
 #[contracttype]
@@ -366,6 +506,10 @@ pub struct TableState {
     pub current_blind_level: u32,
     /// Ledger timestamp (seconds) at which the current blind level began.
     pub level_started_at: u64,
+    /// If the current level has a break, this is the timestamp (seconds) at
+    /// which the break ends and the next level becomes active. `0` means no
+    /// break is in progress.
+    pub break_ends_at: u64,
 }
 
 #[contracttype]
@@ -384,4 +528,16 @@ pub enum DataKey {
     PlayerActionCounter(u32, Address),
     Queue(u32),  // waiting-list queue for a full table
     UpgradeProposal(u32),
+    /// Per-table straddle configuration.
+    StraddleConfig(u32),
+    /// Seat index of the player who posted a straddle for the current hand.
+    ActiveStraddleSeat(u32),
+    /// Addresses of players who approved emergency withdrawal for a table.
+    EmergencyApprovals(u32),
+    /// Action commitment for dispute resolution: (table_id, hand_number, action_index).
+    ActionCommitment(u32, u32, u32),
+    /// Bookkeeping for action commitments per table.
+    ActionCommitmentMeta(u32),
+    /// Aggregate hand type distribution statistics (global).
+    HandTypeDistribution,
 }
