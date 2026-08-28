@@ -515,6 +515,7 @@ impl PokerTableContract {
                 .big_blind,
             current_blind_level: 0,
             level_started_at: env.ledger().timestamp(),
+            break_ends_at: 0,
         };
 
         save_table(&env, &table);
