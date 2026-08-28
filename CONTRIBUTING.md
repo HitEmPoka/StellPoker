@@ -8,6 +8,12 @@ Thank you for your interest in contributing. This document explains how to get s
 ./scripts/setup.sh
 ```
 
+First time on this repo? Follow
+[docs/developer-onboarding.md](docs/developer-onboarding.md) — a checklist that
+takes you from clone to a passing test hand, with a verification step for each
+stage. `nix develop` provides the toolchain if you use Nix (see
+[flake.nix](flake.nix)).
+
 See the [README](README.md) for full prerequisites.
 
 ## Project Structure

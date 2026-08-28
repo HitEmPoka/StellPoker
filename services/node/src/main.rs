@@ -38,6 +38,7 @@ use tokio::sync::RwLock;
 mod api;
 mod limits;
 mod metrics;
+mod pool;
 mod private_table;
 mod session;
 mod tls;
@@ -166,6 +167,9 @@ async fn main() {
         limits,
         metrics: NodeMetrics::new(),
     };
+
+    // ── Peer connection pool health checks (Issue #246) ─────────────────────
+    pool::spawn_health_checks(peer_http_endpoints.clone());
 
     // ── Proactive share refresh task (Issue #242) ───────────────────────────
     private_table::spawn_share_refresh_task(

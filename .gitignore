@@ -10,6 +10,13 @@ circuits/*/target/
 circuits/*/proofs/
 crs/
 
+# Nix dev shell tool homes (flake.nix keeps cargo/nargo project-local)
+.nix/
+.direnv/
+
+# Key enrollment ceremony output (mpc-enroll) — contains node key shares
+ceremony/
+
 # OS files
 .DS_Store
 **/.DS_Store
