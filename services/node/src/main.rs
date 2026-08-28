@@ -24,6 +24,7 @@
 //! When a pin is set, the node demands mutual TLS (mTLS) and rejects any
 //! connection whose client certificate does not match the pin.
 
+mod config_validation;
 mod crypto;
 
 use axum::{
@@ -69,6 +70,26 @@ async fn main() {
     } else {
         tracing_subscriber::fmt().init();
     }
+
+    // ── Startup configuration validation (Issue #240) ───────────────────────
+    let validation = config_validation::validate_config().await;
+    for warning in &validation.warnings {
+        tracing::warn!("config validation: {}", warning);
+    }
+    if !validation.is_ok() {
+        for error in &validation.errors {
+            tracing::error!("config validation: {}", error);
+        }
+        tracing::error!(
+            "MPC node startup aborted: {} configuration error(s) found",
+            validation.errors.len()
+        );
+        std::process::exit(1);
+    }
+    tracing::info!(
+        "Configuration validation passed ({} warning(s))",
+        validation.warnings.len()
+    );
 
     let node_id: u32 = std::env::var("NODE_ID")
         .unwrap_or_else(|_| "0".to_string())
