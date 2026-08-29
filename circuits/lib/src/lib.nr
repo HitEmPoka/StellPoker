@@ -7,3 +7,4 @@ pub mod merkle;
 pub mod pot;
 pub mod rank_table;
 pub mod shuffle;
+pub mod vrf;

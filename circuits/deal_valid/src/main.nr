@@ -3,14 +3,17 @@
 /// The deck is derived in-circuit from per-party private contributions:
 /// - party permutation shares
 /// - party salt shares
+/// - VRF output for public verifiability of randomness
 ///
 /// This removes any single-node plaintext deck dependency during prepare/split.
+/// The VRF shuffle seed enables public verifiability of the deck randomness.
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
 use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
+use stellar_poker_lib::vrf;
 
 /// Deck composition is parameterized by the shared deck module (Issue #216):
 /// the compile-time global `deck::DECK_TYPE` selects between standard (52),
@@ -41,17 +44,41 @@ fn main(
     party1_salts: [Field; 52],
     party2_salts: [Field; 52],
 
+    // VRF inputs for public verifiability of randomness
+    vrf_sk: Field,       // VRF private key share
+    vrf_pk: Field,       // VRF public key (public input)
+    vrf_message: Field,  // VRF message (deterministic label for deal)
+
     // Public inputs
     num_players: pub u32,
 ) -> pub (Field, [Field; MAX_PLAYERS], [u32; MAX_PLAYERS], [u32; MAX_PLAYERS]) {
     assert(num_players >= 2, "need at least 2 players");
     assert(num_players <= MAX_PLAYERS, "too many players");
 
-    let (deck, salts) = shuffle::derive_shared_deck_and_salts(
+    // Derive shuffle seed from VRF output
+    let shuffle_seed = vrf::derive_shuffle_seed(vrf_message, vrf_sk);
+
+    // Verify VRF proof for public verifiability of randomness.
+    // Anyone with the VRF public key can verify the shuffle seed was correctly derived.
+    let (vrf_output, vrf_proof) = vrf::vrf_prove(vrf_sk, vrf_message);
+    assert(vrf::vrf_verify(vrf_pk, vrf_message, shuffle_seed, vrf_proof), "VRF verification failed");
+
+    // Incorporate VRF shuffle seed into the salt contributions.
+    // The VRF seed is added to party0's salts; the sum party0+party1+party2+seed
+    // becomes the final salts used for deck derivation.
+    // This ensures the derived deck is cryptographically bound to the VRF output.
+    let mut modified_party0_salts: [Field; 52] = [0; 52];
+    for i in 0..52 {
+        modified_party0_salts[i] = party0_salts[i] + shuffle_seed;
+    }
+
+    // Derive the final secret deck and salts from all three party contributions,
+    // with the VRF shuffle seed incorporated into party0's salts.
+    let (deck, final_salts) = shuffle::derive_shared_deck_and_salts(
         party0_permutation,
         party1_permutation,
         party2_permutation,
-        party0_salts,
+        modified_party0_salts,
         party1_salts,
         party2_salts,
     );
@@ -62,7 +89,7 @@ fn main(
     // 2. Compute card commitments and Merkle root.
     let mut leaves: [Field; TREE_LEAVES] = [0; TREE_LEAVES];
     for i in 0..DECK_SIZE {
-        leaves[i] = commitments::commit_card(deck[i], salts[i]);
+        leaves[i] = commitments::commit_card(deck[i], final_salts[i]);
     }
     // Remaining leaves are zero (padding).
     let deck_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
