@@ -22,6 +22,13 @@ pub fn commit_hand(card1_commit: Field, card2_commit: Field) -> Field {
     poseidon2_hash_2(card1_commit, card2_commit)
 }
 
+// Blinded commitment to a 2-hole-card range proof (Issue #211):
+// H(card1, card2, blinding). Blinds the exact cards so the commitment is
+// zero-knowledge and binds the range claim to a single indistinguishable hand.
+pub fn commit_range_hand(card1: Field, card2: Field, blinding: Field) -> Field {
+    poseidon2_hash_3(card1, card2, blinding)
+}
+
 // Commit to an Omaha player's hand (4 hole-card commitments):
 // H(H(c1_commit, c2_commit), H(c3_commit, c4_commit)).
 // Structured so the 4 hole cards are faithfully bound into a single commitment

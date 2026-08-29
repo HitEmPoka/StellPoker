@@ -76,6 +76,8 @@ pub fn compute_merkle_root_generic<let LEAVES: u32, let DEPTH: u32>(
             let right = if 2 * i + 1 < LEAVES { current_layer[2 * i + 1] } else { 0 };
             next_layer[i] = hash_pair(left, right);
         }
+
+        // Prepare for next layer - shift down and update capacity
         current_layer = next_layer;
         capacity = next_layer_size;
     }
@@ -87,6 +89,30 @@ pub fn compute_merkle_root_generic<let LEAVES: u32, let DEPTH: u32>(
 // Leaves 52-63 should be zero (padding).
 pub fn compute_merkle_root(leaves: [Field; 64]) -> Field {
     compute_merkle_root_generic::<64, 6>(leaves)
+}
+
+// Compute the Merkle sibling path for a single leaf so an inclusion proof can
+// be produced for tests and table lookups. `path[i]` is the sibling of the
+// leaf's ancestor at level i (level 0 immediately above the leaf).
+pub fn compute_merkle_proof_generic<let LEAVES: u32, let DEPTH: u32>(
+    leaves: [Field; LEAVES],
+    index: u32,
+) -> [Field; DEPTH] {
+    let mut current_layer = leaves;
+    let mut path: [Field; DEPTH] = [0; DEPTH];
+    let mut idx = index;
+    for level in 0..DEPTH {
+        let sibling = current_layer[idx ^ 1];
+        path[level] = sibling;
+        let next_size = LEAVES >> (level + 1);
+        let mut next_layer: [Field; LEAVES] = [0; LEAVES];
+        for i in 0..next_size {
+            next_layer[i] = hash_pair(current_layer[2 * i], current_layer[2 * i + 1]);
+        }
+        current_layer = next_layer;
+        idx = idx >> 1;
+    }
+    path
 }
 
 #[test]
