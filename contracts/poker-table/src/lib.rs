@@ -43,6 +43,13 @@ const MAX_QUEUE_SIZE: u32 = 12;
 /// Minimum delay between proposing and executing a contract upgrade, so
 /// seated players have a real window to notice and exit before it lands.
 const MIN_UPGRADE_DELAY_SECONDS: u64 = 86_400; // 1 day
+/// How long after `execute_upgrade` lands that `revert_last_upgrade`
+/// remains available (issue #348 — see
+/// docs/adr/ADR-006-canary-contract-upgrades.md). Deliberately much
+/// shorter than MIN_UPGRADE_DELAY_SECONDS: a *rollback* needs to be fast
+/// once a canary/gradual-rollout process flags an elevated error rate,
+/// not deliberated over like a forward upgrade.
+const ROLLBACK_WINDOW_SECONDS: u64 = 21_600; // 6 hours
 const TABLE_CLOSURE_NOTICE_SECONDS: u64 = 86_400;
 
 pub(crate) struct VarianceFunding {
@@ -1861,6 +1868,30 @@ impl PokerTableContract {
         }
 
         env.storage().persistent().remove(&key);
+
+        // Record what we're upgrading from, chained off the last tracked
+        // upgrade (if any), so revert_last_upgrade has something to revert
+        // to (issue #348). The very first upgrade this mechanism ever
+        // executes for a table has previous_wasm_hash = None: its genesis
+        // wasm hash was never recorded on-chain, so it can't be reverted.
+        let last_key = DataKey::LastUpgrade(table_id);
+        let previous_wasm_hash = env
+            .storage()
+            .persistent()
+            .get::<DataKey, UpgradeRecord>(&last_key)
+            .map(|prev| prev.new_wasm_hash);
+        let record = UpgradeRecord {
+            previous_wasm_hash,
+            new_wasm_hash: proposal.new_wasm_hash.clone(),
+            executed_at: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&last_key, &record);
+        env.storage().persistent().extend_ttl(
+            &last_key,
+            TABLE_TTL_THRESHOLD,
+            TABLE_TTL_EXTEND,
+        );
+
         env.deployer()
             .update_current_contract_wasm(proposal.new_wasm_hash.clone());
 
@@ -1869,6 +1900,62 @@ impl PokerTableContract {
             proposal.new_wasm_hash,
         );
         Ok(())
+    }
+
+    /// Fast, no-timelock rollback of the most recently *executed* upgrade
+    /// (issue #348). Intended for a canary/gradual-rollout process to call
+    /// automatically when the new code's error rate exceeds a threshold
+    /// after `execute_upgrade` lands — see
+    /// docs/adr/ADR-006-canary-contract-upgrades.md for the full process
+    /// this is one piece of. Unlike propose/execute, there is no delay:
+    /// a rollback needs to happen quickly, not be deliberated over.
+    ///
+    /// Available for `ROLLBACK_WINDOW_SECONDS` after the upgrade it would
+    /// revert, and only reverts the single most recent one — there is no
+    /// "redo" and no reverting further back than that. Once used, the
+    /// record is consumed: going forward again requires a fresh
+    /// propose_upgrade/execute_upgrade cycle with the normal timelock.
+    pub fn revert_last_upgrade(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        let key = DataKey::LastUpgrade(table_id);
+        let record: UpgradeRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::NoUpgradeToRevert)?;
+
+        let previous_hash = record
+            .previous_wasm_hash
+            .clone()
+            .ok_or(PokerTableError::NoUpgradeToRevert)?;
+
+        let elapsed = env
+            .ledger()
+            .timestamp()
+            .saturating_sub(record.executed_at);
+        if elapsed > ROLLBACK_WINDOW_SECONDS {
+            return Err(PokerTableError::RollbackWindowExpired);
+        }
+
+        env.storage().persistent().remove(&key);
+        env.deployer()
+            .update_current_contract_wasm(previous_hash.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "upgrade_reverted"), table_id),
+            previous_hash,
+        );
+        Ok(())
+    }
+
+    /// Read the most recently executed upgrade for a table, if any (view
+    /// function).
+    pub fn get_last_upgrade(env: Env, table_id: u32) -> Option<UpgradeRecord> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::LastUpgrade(table_id))
     }
 
     /// Cancel a pending upgrade proposal (admin only).

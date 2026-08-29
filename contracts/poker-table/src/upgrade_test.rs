@@ -163,4 +163,124 @@ mod upgrade_test {
         let s = setup();
         assert_eq!(s.client.get_upgrade_proposal(&s.table_id), None);
     }
+
+    // ─── revert_last_upgrade (issue #348) ─────────────────────────────────
+
+    /// Propose, fast-forward past the delay, and execute — the shared setup
+    /// for the revert tests below.
+    fn propose_and_execute(s: &Setup, hash: &BytesN<32>) {
+        s.client.propose_upgrade(&s.table_id, hash, &86_400);
+        s.env.ledger().set_timestamp(86_400);
+        s.client.execute_upgrade(&s.table_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    fn revert_rejects_when_no_upgrade_has_ever_executed() {
+        let s = setup();
+        s.client.revert_last_upgrade(&s.table_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    fn revert_rejects_after_the_first_ever_executed_upgrade() {
+        // The very first upgrade tracked by this mechanism has no recorded
+        // "previous" hash to revert to — its genesis wasm was never
+        // recorded on-chain.
+        let s = setup();
+        let hash = fake_hash(&s.env, 1);
+        propose_and_execute(&s, &hash);
+
+        s.client.revert_last_upgrade(&s.table_id);
+    }
+
+    #[test]
+    fn revert_restores_the_hash_from_before_the_most_recent_upgrade() {
+        let s = setup();
+        let hash_a = fake_hash(&s.env, 1);
+        let hash_b = fake_hash(&s.env, 2);
+
+        propose_and_execute(&s, &hash_a);
+
+        // Second upgrade: propose again (from the new post-upgrade
+        // timestamp) and execute once its own delay has elapsed.
+        s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
+        s.env.ledger().set_timestamp(86_400 + 86_400);
+        s.client.execute_upgrade(&s.table_id);
+
+        let record = s.client.get_last_upgrade(&s.table_id).unwrap();
+        assert_eq!(record.new_wasm_hash, hash_b);
+        assert_eq!(record.previous_wasm_hash, Some(hash_a));
+
+        // Reverting the second upgrade must succeed now that there's a
+        // recorded previous hash to fall back to.
+        s.client.revert_last_upgrade(&s.table_id);
+
+        // The record is consumed on revert — no double-revert, no redo.
+        assert_eq!(s.client.get_last_upgrade(&s.table_id), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    fn reverting_twice_in_a_row_fails_the_second_time() {
+        let s = setup();
+        let hash_a = fake_hash(&s.env, 1);
+        let hash_b = fake_hash(&s.env, 2);
+
+        propose_and_execute(&s, &hash_a);
+        s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
+        s.env.ledger().set_timestamp(86_400 + 86_400);
+        s.client.execute_upgrade(&s.table_id);
+
+        s.client.revert_last_upgrade(&s.table_id);
+        // Nothing left to revert to — the record was consumed above, and
+        // there is no "redo" of a revert.
+        s.client.revert_last_upgrade(&s.table_id);
+    }
+
+    #[test]
+    fn revert_succeeds_right_up_until_the_rollback_window_boundary() {
+        let s = setup();
+        let hash_a = fake_hash(&s.env, 1);
+        let hash_b = fake_hash(&s.env, 2);
+
+        propose_and_execute(&s, &hash_a);
+        s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
+        s.env.ledger().set_timestamp(86_400 + 86_400);
+        s.client.execute_upgrade(&s.table_id);
+
+        // Exactly at the boundary (ROLLBACK_WINDOW_SECONDS = 21_600) —
+        // still within the window (elapsed > window is the rejection
+        // condition, so elapsed == window must still succeed).
+        s.env.ledger().set_timestamp(86_400 + 86_400 + 21_600);
+        s.client.revert_last_upgrade(&s.table_id);
+
+        let cfg = s.client.get_last_upgrade(&s.table_id);
+        assert_eq!(cfg, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #71)")] // RollbackWindowExpired
+    fn revert_rejects_once_the_rollback_window_has_passed() {
+        let s = setup();
+        let hash_a = fake_hash(&s.env, 1);
+        let hash_b = fake_hash(&s.env, 2);
+
+        propose_and_execute(&s, &hash_a);
+        s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
+        s.env.ledger().set_timestamp(86_400 + 86_400);
+        s.client.execute_upgrade(&s.table_id);
+
+        // One second past the window.
+        s.env
+            .ledger()
+            .set_timestamp(86_400 + 86_400 + 21_600 + 1);
+        s.client.revert_last_upgrade(&s.table_id);
+    }
+
+    #[test]
+    fn get_last_upgrade_is_none_when_no_upgrade_has_executed() {
+        let s = setup();
+        assert_eq!(s.client.get_last_upgrade(&s.table_id), None);
+    }
 }
