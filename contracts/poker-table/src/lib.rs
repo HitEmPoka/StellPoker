@@ -3,6 +3,8 @@
 
 use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec, xdr::ToXdr};
 
+mod anti_cheat;
+mod ban_list;
 mod betting;
 #[cfg(test)]
 mod blinds_schedule_test;
@@ -11,11 +13,13 @@ mod game;
 mod game_hub;
 #[cfg(test)]
 mod gas_regression_test;
+mod hand_cancellation;
 mod history;
 #[cfg(test)]
 mod invariants_test;
 #[cfg(test)]
 mod lifecycle_invariants_test;
+mod multi_currency;
 mod pot;
 #[cfg(test)]
 mod queue_test;
@@ -658,6 +662,11 @@ impl PokerTableContract {
     ) -> Result<u32, PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
+
+        // Check if player is banned
+        if ban_list::is_banned(&env, table_id, &player) {
+            return Err(PokerTableError::PlayerNotAtTable); // Reuse existing error
+        }
 
         let mut table = load_table(&env, table_id)?;
 
@@ -2353,5 +2362,214 @@ impl PokerTableContract {
             .get(&sweep_key)
             .ok_or(PokerTableError::DeadChipsNotSwept)?;
         Ok(sweep_state)
+    }
+
+    // ========================================================================
+    // Multi-Currency Support
+    // ========================================================================
+
+    /// Whitelist a currency for multi-currency buy-ins (admin only).
+    /// The currency will be accepted for buy-ins and converted to the table's base token
+    /// using the oracle rate.
+    pub fn whitelist_currency(
+        env: Env,
+        table_id: u32,
+        currency: Address,
+        oracle_address: Address,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        multi_currency::whitelist_currency(&env, table_id, currency, oracle_address);
+        env.events().publish(
+            (Symbol::new(&env, "currency_whitelisted"), table_id),
+            currency,
+        );
+        Ok(())
+    }
+
+    /// Remove a currency from the whitelist (admin only).
+    pub fn remove_whitelisted_currency(
+        env: Env,
+        table_id: u32,
+        currency: Address,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        multi_currency::remove_currency(&env, table_id, &currency);
+        env.events().publish(
+            (Symbol::new(&env, "currency_removed"), table_id),
+            currency,
+        );
+        Ok(())
+    }
+
+    /// Buy in with a whitelisted currency. The amount will be converted to the base token
+    /// using the oracle rate and the player will be seated with the converted amount.
+    pub fn buy_in_with_currency(
+        env: Env,
+        table_id: u32,
+        player: Address,
+        currency: Address,
+        currency_amount: i128,
+    ) -> Result<u32, PokerTableError> {
+        player.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let table = load_table(&env, table_id)?;
+
+        // Convert currency to base token amount using oracle
+        let base_amount = multi_currency::convert_to_base_token(
+            &env,
+            table_id,
+            &currency,
+            currency_amount,
+        )?;
+
+        // Validate buy-in amount
+        if base_amount < table.config.min_buy_in || base_amount > table.config.max_buy_in {
+            return Err(PokerTableError::InvalidBuyIn);
+        }
+
+        // Transfer the currency from player to contract
+        let currency_token = token::Client::new(&env, &currency);
+        currency_token.transfer(&player, &env.current_contract_address(), &currency_amount);
+
+        // Use standard join_table logic with converted amount
+        Self::join_table(env, table_id, player, base_amount)
+    }
+
+    /// Check if a currency is whitelisted for a table.
+    pub fn is_currency_whitelisted(
+        env: Env,
+        table_id: u32,
+        currency: Address,
+    ) -> bool {
+        multi_currency::is_whitelisted(&env, table_id, &currency)
+    }
+
+    // ========================================================================
+    // Hand Cancellation
+    // ========================================================================
+
+    /// Cancel the current hand and refund all bets (committee or admin only).
+    /// Used when an invalid proof is submitted, MPC nodes fail, or a player
+    /// disconnects unrecoverably.
+    pub fn cancel_hand(
+        env: Env,
+        table_id: u32,
+        caller: Address,
+        reason: hand_cancellation::CancellationReason,
+    ) -> Result<i128, PokerTableError> {
+        caller.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let mut table = load_table(&env, table_id)?;
+
+        // Only committee or admin can cancel hands
+        if caller != table.committee && caller != table.admin {
+            return Err(PokerTableError::NotAuthorizedCommittee);
+        }
+
+        let refunded = hand_cancellation::cancel_hand(&env, &mut table, reason.clone())?;
+
+        save_table(&env, &table);
+
+        env.events().publish(
+            (Symbol::new(&env, "hand_cancelled"), table_id),
+            (caller, refunded),
+        );
+
+        Ok(refunded)
+    }
+
+    // ========================================================================
+    // Player Ban List
+    // ========================================================================
+
+    /// Ban a player from joining the table (admin only).
+    pub fn ban_player(
+        env: Env,
+        table_id: u32,
+        player: Address,
+        reason: Symbol,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        ban_list::ban_player(&env, table_id, player.clone(), reason.clone());
+
+        env.events().publish(
+            (Symbol::new(&env, "player_banned"), table_id),
+            (player, reason),
+        );
+
+        Ok(())
+    }
+
+    /// Unban a player (admin only).
+    pub fn unban_player(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        ban_list::unban_player(&env, table_id, &player);
+
+        env.events().publish(
+            (Symbol::new(&env, "player_unbanned"), table_id),
+            player,
+        );
+
+        Ok(())
+    }
+
+    /// Check if a player is banned from the table.
+    pub fn is_player_banned(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> bool {
+        ban_list::is_banned(&env, table_id, &player)
+    }
+
+    /// Get all banned players for a table (view function).
+    pub fn get_banned_players(
+        env: Env,
+        table_id: u32,
+    ) -> Vec<(Address, Symbol)> {
+        ban_list::get_banned_players(&env, table_id)
+    }
+
+    // ========================================================================
+    // Anti-Cheat Detection
+    // ========================================================================
+
+    /// Flag suspicious chip dumping patterns for admin review.
+    /// This is typically called by an off-chain monitoring service that analyzes
+    /// hand history and submits flags when patterns are detected.
+    pub fn flag_chip_dumping(
+        env: Env,
+        table_id: u32,
+        caller: Address,
+        suspected_dumper: Address,
+        suspected_receiver: Address,
+        confidence: u32,
+    ) -> Result<(), PokerTableError> {
+        caller.require_auth();
+        let table = load_table(&env, table_id)?;
+
+        // Only committee or admin can flag
+        if caller != table.committee && caller != table.admin {
+            return Err(PokerTableError::NotAuthorizedCommittee);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "chip_dumping_flagged"), table_id),
+            (suspected_dumper, suspected_receiver, confidence),
+        );
+
+        Ok(())
     }
 }
