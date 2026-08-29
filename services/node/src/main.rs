@@ -31,7 +31,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -61,6 +61,14 @@ pub struct NodeState {
     pub limits: ResourceLimits,
     /// Prometheus metrics: active sessions, proofs generated, error counts (Issue #101).
     pub metrics: NodeMetrics,
+    /// Session IDs that have already completed proof generation (issue #241).
+    ///
+    /// Kept independently of `sessions` (which is never pruned today, but is
+    /// not guaranteed to stay that way) so a replayed session_id is rejected
+    /// even if the corresponding entry in `sessions` were ever removed —
+    /// once a session has finished, the coordinator cannot reopen it by
+    /// resubmitting shares under the same session_id.
+    pub finalized_sessions: Arc<RwLock<HashSet<String>>>,
 }
 
 #[tokio::main]
@@ -166,6 +174,7 @@ async fn main() {
         peer_http_endpoints: peer_http_endpoints.clone(),
         limits,
         metrics: NodeMetrics::new(),
+        finalized_sessions: Arc::new(RwLock::new(HashSet::new())),
     };
 
     // ── Peer connection pool health checks (Issue #246) ─────────────────────
