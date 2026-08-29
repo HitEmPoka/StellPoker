@@ -314,6 +314,7 @@ pub fn settle_showdown(
 
     table.pot = 0;
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
 
     history::archive_hand(env, table, &payouts, total_pot, rake, true)?;
@@ -538,6 +539,7 @@ pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTab
         table.pot = 0;
         table.rake_balance += rake;
         table.phase = GamePhase::Settlement;
+        table.settlement_entered_ledger = env.ledger().sequence();
         table.last_action_ledger = env.ledger().sequence();
 
         let mut payouts: Vec<(u32, i128)> = Vec::new(env);
@@ -619,6 +621,7 @@ pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableErr
 
     table.pot = 0;
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
 
     history::archive_hand(env, table, &payouts, total_pot, rake, true)?;
