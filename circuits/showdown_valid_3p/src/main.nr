@@ -3,11 +3,33 @@
 /// Derives hole cards from shared deck contributions, verifies commitments,
 /// evaluates all active hands, and outputs the winner index plus a bit mask of
 /// every active player tied for the best score.
+///
+/// Supports variant poker games with wild cards when VARIANT_TYPE != 0.
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
+use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
+
+/// Deck composition is parameterized by the shared deck module (Issue #216):
+/// the compile-time global `deck::DECK_TYPE` selects between standard (52),
+/// short (36, 6+) and joker (54) decks. The structural permutation uses 52 MPC
+/// slots; deck-aware bounds below follow the configured deck type.
+
+/// Deck size (cards in deck, default 52 for standard poker)
+global DECK_SIZE: u32 = 52;
+
+/// Tree leaf count must be >= DECK_SIZE and power of 2
+/// For 52 cards: 64 leaves (6 levels)
+/// For 104 cards: 128 leaves (7 levels)
+global TREE_LEAVES: u32 = 64;
+global TREE_DEPTH: u32 = 6;
+
+/// Variant poker configuration
+/// VARIANT_TYPE: 0 = standard, 1 = deuces wild, 2 = one-eyed jacks
+global VARIANT_TYPE: u32 = 0;
+global WILD_RANK: u32 = 0;
 
 global MAX_PLAYERS: u32 = 6;
 
@@ -39,11 +61,11 @@ fn main(
     );
 
     // 1. Recompute deck root and verify consistency with deal/reveal phases.
-    let mut leaves: [Field; 64] = [0; 64];
-    for i in 0..52 {
+    let mut leaves: [Field; TREE_LEAVES] = [0; TREE_LEAVES];
+    for i in 0..DECK_SIZE {
         leaves[i] = commitments::commit_card(deck[i], salts[i]);
     }
-    let computed_root = merkle::compute_merkle_root(leaves);
+    let computed_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
     assert(computed_root == deck_root, "deck root mismatch");
 
     // 2. Resolve board cards and check index uniqueness against dealt cards.
@@ -52,7 +74,7 @@ fn main(
         if p < num_active_players {
             let idx1 = p * 2;
             let idx2 = idx1 + 1;
-            assert(idx2 < 52, "hole card index out of range");
+            assert(idx2 < deck::deck_size(), "hole card index out of range");
             assert(!used_indices[idx1], "duplicate dealt index");
             used_indices[idx1] = true;
             assert(!used_indices[idx2], "duplicate dealt index");
@@ -63,7 +85,7 @@ fn main(
     let mut board_cards: [u32; 5] = [0; 5];
     for i in 0..5 {
         let idx = board_indices[i];
-        assert(idx < 52, "board index out of range");
+        assert(idx < deck::deck_size(), "board index out of range");
         assert(!used_indices[idx], "board index already used");
         used_indices[idx] = true;
 
@@ -83,8 +105,8 @@ fn main(
             hole_card1[p] = deck[idx1] as u32;
             hole_card2[p] = deck[idx2] as u32;
 
-            let c1_commit = commitments::commit_card(deck[idx1], salts[idx1]);
-            let c2_commit = commitments::commit_card(deck[idx2], salts[idx2]);
+            let c1_commit = leaves[idx1];
+            let c2_commit = leaves[idx2];
             let expected_commit = commitments::commit_hand(c1_commit, c2_commit);
             assert(expected_commit == hand_commitments[p], "hand commitment mismatch");
 
@@ -97,7 +119,12 @@ fn main(
                 board_cards[3],
                 board_cards[4],
             ];
-            hand_scores[p] = cards::evaluate_hand_rank(seven_cards);
+            // Use variant evaluation if VARIANT_TYPE != 0 (wild cards), else standard
+            hand_scores[p] = if VARIANT_TYPE == 0 {
+                cards::evaluate_hand_rank(seven_cards)
+            } else {
+                cards::evaluate_hand_rank_variant(seven_cards)
+            };
         }
     }
 
