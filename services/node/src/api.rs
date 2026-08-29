@@ -349,6 +349,13 @@ pub async fn post_generate(
     metrics.active_sessions.inc();
     let circuit_label = circuit_name.clone();
 
+    // Profiling is strictly opt-in per session (issue #244): only pass the
+    // registry through when this session_id was explicitly enabled via
+    // POST /session/:id/profile before generation started. A session
+    // nobody asked to profile pays no sampling overhead.
+    let profiling_enabled = state.profiling.is_enabled(&sid).await;
+    let profile = profiling_enabled.then(|| state.profiling.clone());
+
     tokio::spawn(async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
         let proof_future = session::run_proof_generation(
@@ -363,6 +370,7 @@ pub async fn post_generate(
             crs_path,
             limits,
             phase_timeouts,
+            profile,
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
@@ -497,4 +505,37 @@ pub struct ProofResponse {
     pub session_id: String,
     pub proof: String, // base64-encoded proof bytes
     pub public_inputs: Vec<String>,
+}
+
+/// POST /session/:id/profile
+///
+/// Enable on-demand CPU/memory profiling for this session (issue #244).
+/// Must be called before POST /session/:id/generate to take effect —
+/// profiling is captured while each `co-noir` phase subprocess runs, so
+/// enabling it after generation has already started (or finished) has
+/// nothing left to sample.
+pub async fn post_enable_profiling(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> StatusCode {
+    state.profiling.enable(&session_id).await;
+    StatusCode::ACCEPTED
+}
+
+/// GET /session/:id/profile
+///
+/// Return the per-phase CPU/memory profile collected so far for this
+/// session. 404 if profiling was never enabled for this session_id (as
+/// opposed to an empty profile, which means it was enabled but no phase
+/// has completed sampling yet).
+pub async fn get_profile(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<crate::profiling::SessionProfile>, StatusCode> {
+    state
+        .profiling
+        .get(&session_id)
+        .await
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }

@@ -40,6 +40,7 @@ mod limits;
 mod metrics;
 mod pool;
 mod private_table;
+mod profiling;
 mod session;
 mod tls;
 mod heartbeat;
@@ -48,6 +49,7 @@ mod gossip;
 use limits::ResourceLimits;
 use metrics::NodeMetrics;
 use private_table::PrivateTableState;
+use profiling::ProfileRegistry;
 use session::MpcSessionState;
 
 #[derive(Clone)]
@@ -61,6 +63,8 @@ pub struct NodeState {
     pub limits: ResourceLimits,
     /// Prometheus metrics: active sessions, proofs generated, error counts (Issue #101).
     pub metrics: NodeMetrics,
+    /// On-demand per-session CPU/memory profiling (issue #244).
+    pub profiling: ProfileRegistry,
 }
 
 #[tokio::main]
@@ -166,6 +170,7 @@ async fn main() {
         peer_http_endpoints: peer_http_endpoints.clone(),
         limits,
         metrics: NodeMetrics::new(),
+        profiling: ProfileRegistry::new(),
     };
 
     // ── Peer connection pool health checks (Issue #246) ─────────────────────
@@ -247,6 +252,10 @@ async fn main() {
         .route("/session/:id/generate", post(api::post_generate))
         .route("/session/:id/status", get(api::get_status))
         .route("/session/:id/proof", get(api::get_proof))
+        .route(
+            "/session/:id/profile",
+            post(api::post_enable_profiling).get(api::get_profile),
+        )
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
