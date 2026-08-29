@@ -160,6 +160,7 @@ struct HealthResponse {
         api::request_reveal,
         api::request_showdown,
         api::player_action,
+        api::transfer_chips,
         api::rit_opt_in,
         api::get_player_cards,
         api::get_table_state,
@@ -229,6 +230,8 @@ struct HealthResponse {
         api::types::WalletVerifyResponse,
         api::types::RitOptInRequest,
         api::types::RitOptInResponse,
+        api::types::TransferChipsRequest,
+        api::types::TransferChipsResponse,
         api::types::MpcNodeProgress,
         api::types::TableMpcStatusResponse,
     )),
@@ -1021,6 +1024,10 @@ async fn main() {
         .route(
             "/api/table/:table_id/player-action",
             post(api::player_action),
+        )
+        .route(
+            "/api/table/:table_id/transfer-chips",
+            post(api::transfer_chips),
         )
         .route(
             "/api/table/:table_id/rit-opt-in",
