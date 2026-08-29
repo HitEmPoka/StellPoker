@@ -237,3 +237,27 @@ pub struct WalletVerifyResponse {
     pub verified: bool,
 }
 
+/// Request body for cross-table chip transfer.
+/// Allows a player to transfer chips from one table to another they are seated at.
+/// A small fee is deducted from the transferred amount.
+#[derive(Deserialize, ToSchema)]
+pub struct TransferChipsRequest {
+    /// Destination table ID where chips will be transferred to.
+    pub destination_table_id: u32,
+    /// Amount of chips to transfer (before fee deduction).
+    pub amount: i128,
+}
+
+/// Response for cross-table chip transfer.
+#[derive(Serialize, ToSchema)]
+pub struct TransferChipsResponse {
+    pub status: String,
+    pub source_table_id: u32,
+    pub destination_table_id: u32,
+    pub amount: i128,
+    pub fee: i128,
+    pub net_amount: i128,
+    pub source_tx_hash: Option<String>,
+    pub dest_tx_hash: Option<String>,
+}
+
