@@ -67,7 +67,7 @@ fn main(
     // The VRF seed is added to party0's salts; the sum party0+party1+party2+seed
     // becomes the final salts used for deck derivation.
     // This ensures the derived deck is cryptographically bound to the VRF output.
-    let modified_party0_salts: [Field; 52] = [0; 52];
+    let mut modified_party0_salts: [Field; 52] = [0; 52];
     for i in 0..52 {
         modified_party0_salts[i] = party0_salts[i] + shuffle_seed;
     }

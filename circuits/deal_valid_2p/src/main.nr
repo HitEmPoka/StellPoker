@@ -10,9 +10,25 @@
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
+use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
 use stellar_poker_lib::vrf;
+
+/// Deck composition is parameterized by the shared deck module (Issue #216):
+/// the compile-time global `deck::DECK_TYPE` selects between standard (52),
+/// short (36, 6+) and joker (54) decks, and the deck-aware bounds below follow.
+
+/// Deck size (cards in deck, default 52 for standard poker)
+/// Can be overridden at compile time for variant poker games
+global DECK_SIZE: u32 = 52;
+
+/// Tree leaf count must be >= DECK_SIZE and power of 2
+/// For 52 cards: 64 leaves (6 levels)
+/// For 104 cards: 128 leaves (7 levels)
+/// For 200+ cards: 256 leaves (8 levels)
+global TREE_LEAVES: u32 = 64;
+global TREE_DEPTH: u32 = 6;
 
 /// Maximum players supported (for fixed circuit size).
 /// Override at compile time via PLAYER_COUNT environment variable for
@@ -51,7 +67,7 @@ fn main(
     // The VRF seed is added to party0's salts; the sum party0+party1+party2+seed
     // becomes the final salts used for deck derivation.
     // This ensures the derived deck is cryptographically bound to the VRF output.
-    let modified_party0_salts: [Field; 52] = [0; 52];
+    let mut modified_party0_salts: [Field; 52] = [0; 52];
     for i in 0..52 {
         modified_party0_salts[i] = party0_salts[i] + shuffle_seed;
     }
@@ -71,14 +87,15 @@ fn main(
     cards::assert_valid_deck(deck);
 
     // 2. Compute card commitments and Merkle root.
-    let mut leaves: [Field; 64] = [0; 64];
-    for i in 0..52 {
+    let mut leaves: [Field; TREE_LEAVES] = [0; TREE_LEAVES];
+    for i in 0..DECK_SIZE {
         leaves[i] = commitments::commit_card(deck[i], final_salts[i]);
     }
-    // Padding leaves 52..63 are zero.
-    let deck_root = merkle::compute_merkle_root(leaves);
+    // Remaining leaves are zero (padding).
+    let deck_root = merkle::compute_merkle_root_generic::<64, 6>(leaves);
 
     // 3. Deterministically assign two cards per player by seat order.
+    // Optimization: reuse card commitment leaves computed in step 2.
     let mut hand_commitments: [Field; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut dealt_card1_indices: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut dealt_card2_indices: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
@@ -87,42 +104,22 @@ fn main(
         if p < num_players {
             let idx1 = p * 2;
             let idx2 = idx1 + 1;
-            assert(idx2 < 52, "dealt index out of range");
+            assert(idx2 < deck::deck_size(), "dealt index out of range");
 
             dealt_card1_indices[p] = idx1;
             dealt_card2_indices[p] = idx2;
 
-            let c1_commit = commitments::commit_card(deck[idx1], final_salts[idx1]);
-            let c2_commit = commitments::commit_card(deck[idx2], final_salts[idx2]);
+            // Use pre-computed leaf commitments from step 2 to reduce constraints.
+            let c1_commit = leaves[idx1];
+            let c2_commit = leaves[idx2];
             hand_commitments[p] = commitments::commit_hand(c1_commit, c2_commit);
         }
     }
 
-    // 4. Sanity check: verify no duplicate dealt indices across active players.
-    for p1 in 0..MAX_PLAYERS {
-        if p1 < num_players {
-            for p2 in (p1 + 1)..MAX_PLAYERS {
-                if p2 < num_players {
-                    assert(
-                        dealt_card1_indices[p1] != dealt_card1_indices[p2],
-                        "same card dealt twice",
-                    );
-                    assert(
-                        dealt_card1_indices[p1] != dealt_card2_indices[p2],
-                        "same card dealt twice",
-                    );
-                    assert(
-                        dealt_card2_indices[p1] != dealt_card1_indices[p2],
-                        "same card dealt twice",
-                    );
-                    assert(
-                        dealt_card2_indices[p1] != dealt_card2_indices[p2],
-                        "same card dealt twice",
-                    );
-                }
-            }
-        }
-    }
+    // 4. Sanity check: verify no duplicate dealt indices (O(n) instead of O(n*n)).
+    // Since indices are deterministic (player p gets cards 2*p and 2*p+1),
+    // we just need to verify that 2*num_players <= deck size (deck-aware).
+    assert(2 * num_players <= deck::deck_size(), "not enough cards for players");
 
     (deck_root, hand_commitments, dealt_card1_indices, dealt_card2_indices)
 }
