@@ -121,6 +121,22 @@ pub struct UpgradeProposal {
     pub execute_after: u64, // ledger timestamp (seconds)
 }
 
+/// Record of the most recently *executed* upgrade for a table, kept so
+/// `revert_last_upgrade` can fast-rollback without a new timelock if the
+/// new code's error rate spikes post-rollout (issue #348 — see
+/// docs/adr/ADR-006-canary-contract-upgrades.md).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpgradeRecord {
+    /// Hash the contract was upgraded *from*. `None` when this is the
+    /// first upgrade this mechanism has ever tracked for the table — its
+    /// genesis wasm hash was never recorded on-chain, so there's nothing
+    /// to revert to.
+    pub previous_wasm_hash: Option<BytesN<32>>,
+    pub new_wasm_hash: BytesN<32>,
+    pub executed_at: u64, // ledger timestamp (seconds)
+}
+
 /// Position where a straddle is posted.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -603,6 +619,8 @@ pub enum DataKey {
     PlayerActionCounter(u32, Address),
     Queue(u32),  // waiting-list queue for a full table
     UpgradeProposal(u32),
+    /// The most recently *executed* upgrade for a table (issue #348).
+    LastUpgrade(u32),
     /// Per-table outcome distribution and variance state.
     VarianceStats(u32),
     /// Per-table variance-triggered jackpot funding configuration.
