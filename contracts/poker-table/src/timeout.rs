@@ -206,7 +206,7 @@ fn find_seat_by_address(
 
 /// Emergency refund: return all player stacks + pot split equally
 /// among non-folded players. Used when committee fails.
-fn emergency_refund(_env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+fn emergency_refund(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let active = game::active_player_count(table);
     if active == 0 {
         return Ok(());
@@ -245,5 +245,6 @@ fn emergency_refund(_env: &Env, table: &mut TableState) -> Result<(), PokerTable
 
     table.pot = 0;
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     Ok(())
 }

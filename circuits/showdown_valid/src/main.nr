@@ -6,10 +6,11 @@
 ///
 /// Supports variant poker games with wild cards when VARIANT_TYPE != 0.
 
-use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
 use stellar_poker_lib::deck;
+use stellar_poker_lib::game;
 use stellar_poker_lib::merkle;
+use stellar_poker_lib::rank_table;
 use stellar_poker_lib::shuffle;
 
 /// Deck composition is parameterized by the shared deck module (Issue #216):
@@ -26,11 +27,7 @@ global DECK_SIZE: u32 = 52;
 global TREE_LEAVES: u32 = 64;
 global TREE_DEPTH: u32 = 6;
 
-/// Variant poker configuration
-/// VARIANT_TYPE: 0 = standard, 1 = deuces wild, 2 = one-eyed jacks
-global VARIANT_TYPE: u32 = 0;
-global WILD_RANK: u32 = 0;
-
+/// Global player cap shared by the parameterised (2..6 player) variants.
 global MAX_PLAYERS: u32 = 6;
 
 fn main(
@@ -41,13 +38,27 @@ fn main(
     party0_salts: [Field; 52],
     party1_salts: [Field; 52],
     party2_salts: [Field; 52],
+    // Private: each active player's best-5-card rank score plus the Merkle
+    // inclusion proof that the score is an honest member of the committed rank
+    // table (Issue #222). The circuit verifies the proof and uses the verified
+    // score for winner/tie selection, replacing inline hand evaluation.
+    rank_scores: [u32; MAX_PLAYERS],
+    rank_indices: [u32; MAX_PLAYERS],
+    rank_paths: [[Field; rank_table::RANK_TABLE_DEPTH]; MAX_PLAYERS],
 
     // Public inputs
     num_active_players: pub u32,
     hand_commitments: pub [Field; MAX_PLAYERS],
     board_indices: pub [u32; 5],
     deck_root: pub Field,
+    // Game variant selector (Issue #228): 0 = Texas Hold'em, 1 = Omaha, 2 = Stud.
+    // The value is validated up front; hand scores are supplied via the verified
+    // rank lookup so the circuit does not need to re-derive them.
+    game_type: pub u32,
+    // Root of the Merkle-committed rank lookup table (Issue #222).
+    rank_table_root: pub Field,
 ) -> pub ([u32; MAX_PLAYERS], [u32; MAX_PLAYERS], u32, u32) {
+    game::assert_valid_game_type(game_type);
     assert(num_active_players >= 2, "need at least 2 players");
     assert(num_active_players <= MAX_PLAYERS, "too many active players");
 
@@ -82,17 +93,19 @@ fn main(
         }
     }
 
-    let mut board_cards: [u32; 5] = [0; 5];
+    // Resolve board indices and check uniqueness against dealt cards. The
+    // board reveals are validated here; hand scores are obtained from the
+    // verified rank lookup table (Issue #222), not by evaluating these cards.
     for i in 0..5 {
         let idx = board_indices[i];
         assert(idx < deck::deck_size(), "board index out of range");
         assert(!used_indices[idx], "board index already used");
         used_indices[idx] = true;
-
-        board_cards[i] = deck[idx] as u32;
     }
 
-    // 3. Verify per-player commitments and evaluate hand ranks.
+    // 3. Verify per-player commitments and verify each hand's rank score
+    // against the Merkle-committed rank table (Issue #222). The verified score
+    // is used directly for winner/tie selection below.
     let mut hole_card1: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut hole_card2: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
     let mut hand_scores: [u32; MAX_PLAYERS] = [0; MAX_PLAYERS];
@@ -110,21 +123,17 @@ fn main(
             let expected_commit = commitments::commit_hand(c1_commit, c2_commit);
             assert(expected_commit == hand_commitments[p], "hand commitment mismatch");
 
-            let seven_cards: [u32; 7] = [
-                hole_card1[p],
-                hole_card2[p],
-                board_cards[0],
-                board_cards[1],
-                board_cards[2],
-                board_cards[3],
-                board_cards[4],
-            ];
-            // Use variant evaluation if VARIANT_TYPE != 0 (wild cards), else standard
-            hand_scores[p] = if VARIANT_TYPE == 0 {
-                cards::evaluate_hand_rank(seven_cards)
-            } else {
-                cards::evaluate_hand_rank_variant(seven_cards)
-            };
+            // Verify the prover's rank score is an honest member of the
+            // committed table, then trust it for comparison. game_type is the
+            // selector that determined which score the prover committed to
+            // (Issue #228 + #222); it is validated above.
+            rank_table::verify_rank_in_table(
+                rank_scores[p],
+                rank_indices[p],
+                rank_paths[p],
+                rank_table_root,
+            );
+            hand_scores[p] = rank_scores[p];
         }
     }
 

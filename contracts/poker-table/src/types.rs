@@ -41,6 +41,17 @@ pub struct TableConfig {
     /// limits for each betting street (e.g. shorter for turbo tables).
     /// `None` falls back to the global `timeout_ledgers` converted to seconds.
     pub street_time_limit: Option<StreetTimeLimit>,
+    /// Treasury contract address for sweeping uncollected/dead chips.
+    /// When set, unclaimed chips from abandoned tables are transferred here
+    /// after the dead chip timeout expires.
+    pub treasury: Option<Address>,
+    /// Ledgers after which uncollected chips in Settlement phase are considered
+    /// "dead" and can be swept to the treasury. `0` disables dead chip sweeping.
+    pub dead_chip_timeout_ledgers: u32,
+    /// Ledgers after sweeping during which players can reclaim their swept chips
+    /// by proving ownership (calling `reclaim_dead_chips` with a signed message).
+    /// `0` disables reclaim period (chips are permanently transferred to treasury).
+    pub reclaim_period_ledgers: u32,
 }
 
 /// A single blinds/ante level in a table's schedule.
@@ -301,14 +312,34 @@ pub enum PokerTableError {
     TableClosureNoticeActive = 64,
     TableClosureNotReady = 65,
     TableClosureInProgress = 66,
-    InvalidStraddleConfig = 62,
-    EmergencyWithdrawalNotApplicable = 63,
-    EmergencyTimelockActive = 64,
-    AlreadyApprovedEmergencyWithdrawal = 65,
-    ActionAlreadyCommitted = 66,
-    ActionCommitmentNotFound = 67,
-    InvalidActionReveal = 68,
-    InvalidHandType = 69,
+    InvalidStraddleConfig = 67,
+    EmergencyWithdrawalNotApplicable = 68,
+    EmergencyTimelockActive = 69,
+    AlreadyApprovedEmergencyWithdrawal = 70,
+    ActionAlreadyCommitted = 71,
+    ActionCommitmentNotFound = 72,
+    InvalidActionReveal = 73,
+    InvalidHandType = 74,
+    /// Treasury contract not configured for this table.
+    TreasuryNotConfigured = 75,
+    /// Dead chip timeout not configured (dead_chip_timeout_ledgers is 0).
+    DeadChipTimeoutNotConfigured = 76,
+    /// Cannot sweep dead chips in current phase (only allowed in Settlement).
+    DeadChipsNotSweepable = 77,
+    /// Dead chip timeout not yet reached.
+    DeadChipTimeoutNotReached = 78,
+    /// Dead chips have already been swept for this table.
+    DeadChipsAlreadySwept = 79,
+    /// No dead chip sweep state found for this table.
+    DeadChipsNotSwept = 80,
+    /// Reclaim period not configured (reclaim_period_ledgers is 0).
+    ReclaimPeriodNotConfigured = 81,
+    /// Reclaim period has elapsed.
+    ReclaimPeriodElapsed = 82,
+    /// No dead chips to reclaim for this player.
+    NoDeadChipsToReclaim = 83,
+    /// Invalid signature provided for reclaim.
+    InvalidSignature = 84,
 }
 
 #[contracttype]
@@ -487,6 +518,18 @@ pub struct VarianceConfig {
     pub extra_jackpot_share_bps: u32,
 }
 
+/// Tracks the state of dead chip sweeping for a table.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SweepState {
+    /// Ledger sequence when the sweep was executed.
+    pub swept_at_ledger: u32,
+    /// Total amount swept to treasury.
+    pub total_swept: i128,
+    /// Per-player amounts that were swept (for reclaim verification).
+    pub swept_amounts: Vec<(Address, i128)>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableClosureProposal {
@@ -539,6 +582,9 @@ pub struct TableState {
     /// which the break ends and the next level becomes active. `0` means no
     /// break is in progress.
     pub break_ends_at: u64,
+    /// Ledger sequence when the table entered Settlement phase.
+    /// Used to calculate dead chip timeout for uncollected pots.
+    pub settlement_entered_ledger: u32,
 }
 
 #[contracttype]
@@ -575,4 +621,6 @@ pub enum DataKey {
     ActionCommitmentMeta(u32),
     /// Aggregate hand type distribution statistics (global).
     HandTypeDistribution,
+    /// Dead chip sweep state: (table_id) -> SweepState
+    DeadChipSweep(u32),
 }
