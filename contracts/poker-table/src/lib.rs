@@ -1,7 +1,7 @@
 #![no_std]
 #![allow(deprecated)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec, xdr::ToXdr};
 
 mod betting;
 #[cfg(test)]
@@ -100,6 +100,7 @@ fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, Poker
     table.pot = 0;
     table.side_pots = Vec::new(env);
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
     Ok(refunded)
 }
@@ -557,6 +558,7 @@ fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(),
     table.pot = 0;
     table.side_pots = Vec::new(env);
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
     env.storage()
         .instance()
@@ -627,6 +629,7 @@ impl PokerTableContract {
             current_blind_level: 0,
             level_started_at: env.ledger().timestamp(),
             break_ends_at: 0,
+            settlement_entered_ledger: 0,
         };
 
         save_table(&env, &table);
@@ -966,6 +969,9 @@ impl PokerTableContract {
         if table.players.len() < table.config.min_players {
             return Err(PokerTableError::NotEnoughPlayers);
         }
+
+        // Reset settlement_entered_ledger when a new hand starts
+        table.settlement_entered_ledger = 0;
 
         game::start_new_hand(&env, &mut table)?;
 
@@ -2153,5 +2159,199 @@ impl PokerTableContract {
             (table.admin.clone(), amount),
         );
         Ok(amount)
+    }
+
+    /// Sweep dead chips (uncollected player stacks and pot) to the treasury contract.
+    /// Can be called by anyone after the dead chip timeout has elapsed since the table
+    /// entered Settlement phase. The table must have a treasury configured and a non-zero
+    /// dead_chip_timeout_ledgers.
+    ///
+    /// Returns the total amount swept to treasury.
+    pub fn sweep_dead_chips(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
+        let mut table = load_table(&env, table_id)?;
+
+        // Verify treasury is configured
+        let treasury_addr = table.config.treasury.as_ref().ok_or(PokerTableError::TreasuryNotConfigured)?;
+
+        // Verify dead chip timeout is configured
+        let timeout_ledgers = table.config.dead_chip_timeout_ledgers;
+        if timeout_ledgers == 0 {
+            return Err(PokerTableError::DeadChipTimeoutNotConfigured);
+        }
+
+        // Verify table is in Settlement phase (chips can only be swept after a hand ends)
+        if !matches!(table.phase, GamePhase::Settlement) {
+            return Err(PokerTableError::DeadChipsNotSweepable);
+        }
+
+        // Check if enough ledgers have passed since entering Settlement
+        let current_ledger = env.ledger().sequence();
+        let elapsed = current_ledger.saturating_sub(table.settlement_entered_ledger);
+        if elapsed < timeout_ledgers {
+            return Err(PokerTableError::DeadChipTimeoutNotReached);
+        }
+
+        // Check if already swept
+        let sweep_key = DataKey::DeadChipSweep(table_id);
+        if env.storage().persistent().has(&sweep_key) {
+            return Err(PokerTableError::DeadChipsAlreadySwept);
+        }
+
+        let token = token::Client::new(&env, &table.config.token);
+        let mut total_swept: i128 = 0;
+        let mut swept_amounts: Vec<(Address, i128)> = Vec::new(&env);
+
+        // Sweep each player's stack (uncollected chips)
+        for i in 0..table.players.len() {
+            let mut player = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            let amount = player.stack;
+            if amount > 0 {
+                token.transfer(&env.current_contract_address(), treasury_addr, &amount);
+                total_swept += amount;
+                swept_amounts.push_back((player.address.clone(), amount));
+                player.stack = 0;
+                table.players.set(i, player);
+            }
+        }
+
+        // Sweep any remaining pot (should be 0 in Settlement, but just in case)
+        if table.pot > 0 {
+            token.transfer(&env.current_contract_address(), treasury_addr, &table.pot);
+            total_swept += table.pot;
+            table.pot = 0;
+        }
+
+        // Sweep side pots if any
+        for i in 0..table.side_pots.len() {
+            if let Some(pot) = table.side_pots.get(i) {
+                if pot.amount > 0 {
+                    token.transfer(&env.current_contract_address(), treasury_addr, &pot.amount);
+                    total_swept += pot.amount;
+                }
+            }
+        }
+        table.side_pots = Vec::new(&env);
+
+        // Record sweep state
+        let sweep_state = SweepState {
+            swept_at_ledger: current_ledger,
+            total_swept,
+            swept_amounts: swept_amounts.clone(),
+        };
+        env.storage().persistent().set(&sweep_key, &sweep_state);
+        env.storage()
+            .persistent()
+            .extend_ttl(&sweep_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+        // Update table state
+        table.phase = GamePhase::Settlement; // Already in Settlement, but explicit
+        save_table(&env, &table);
+
+        env.events().publish(
+            (Symbol::new(&env, "dead_chips_swept"), table_id),
+            (treasury_addr.clone(), total_swept, swept_amounts),
+        );
+
+        Ok(total_swept)
+    }
+
+    /// Reclaim dead chips that were swept to the treasury.
+    /// Can be called by the player whose chips were swept, within the reclaim period.
+    /// Requires the player to sign a message proving ownership of the address.
+    ///
+    /// The message format: "reclaim_dead_chips:{table_id}:{amount}:{swept_at_ledger}"
+    /// The signature is verified against the player's address.
+    pub fn reclaim_dead_chips(
+        env: Env,
+        table_id: u32,
+        player: Address,
+        signature: BytesN<64>,
+    ) -> Result<i128, PokerTableError> {
+        // Load sweep state
+        let sweep_key = DataKey::DeadChipSweep(table_id);
+        let sweep_state: SweepState = env
+            .storage()
+            .persistent()
+            .get(&sweep_key)
+            .ok_or(PokerTableError::DeadChipsNotSwept)?;
+
+        let table = load_table(&env, table_id)?;
+
+        // Verify reclaim period is configured
+        let reclaim_period = table.config.reclaim_period_ledgers;
+        if reclaim_period == 0 {
+            return Err(PokerTableError::ReclaimPeriodNotConfigured);
+        }
+
+        // Check if reclaim period has elapsed
+        let current_ledger = env.ledger().sequence();
+        let elapsed = current_ledger.saturating_sub(sweep_state.swept_at_ledger);
+        if elapsed > reclaim_period {
+            return Err(PokerTableError::ReclaimPeriodElapsed);
+        }
+
+        // Find the player's swept amount
+        let mut swept_amount: i128 = 0;
+        for i in 0..sweep_state.swept_amounts.len() {
+            if let Some((addr, amt)) = sweep_state.swept_amounts.get(i) {
+                if crate::constant_time::address_eq(&env, &addr, &player) {
+                    swept_amount = amt;
+                    break;
+                }
+            }
+        }
+        if swept_amount == 0 {
+            return Err(PokerTableError::NoDeadChipsToReclaim);
+        }
+
+        // Verify the signature
+        // Message format: "reclaim_dead_chips:{table_id}:{amount}:{swept_at_ledger}"
+        // Build message as bytes to avoid String conversion issues
+        let mut message = soroban_sdk::Bytes::new(&env);
+        message.append(&soroban_sdk::Bytes::from_slice(&env, b"reclaim_dead_chips:"));
+        message.append(&soroban_sdk::Bytes::from_slice(&env, &table_id.to_be_bytes()));
+        message.append(&soroban_sdk::Bytes::from_slice(&env, b":"));
+        message.append(&soroban_sdk::Bytes::from_slice(&env, &swept_amount.to_be_bytes()));
+        message.append(&soroban_sdk::Bytes::from_slice(&env, b":"));
+        message.append(&soroban_sdk::Bytes::from_slice(&env, &sweep_state.swept_at_ledger.to_be_bytes()));
+
+        // Verify Ed25519 signature
+        // The signature should be 64 bytes (Ed25519)
+        // Note: We use the player's address bytes as the public key for Ed25519.
+        // This assumes the Address is an Ed25519 public key (which is the case for
+        // Stellar accounts). The Address is converted to its 32-byte representation
+        // via XDR serialization and hashing.
+        let player_hash: BytesN<32> = env.crypto().keccak256(&player.clone().to_xdr(&env)).into();
+        env.crypto().ed25519_verify(
+            &player_hash,
+            &message,
+            &signature,
+        );
+
+        // Transfer swept amount back to player from treasury
+        let treasury_addr = table.config.treasury.as_ref().ok_or(PokerTableError::TreasuryNotConfigured)?;
+        let token = token::Client::new(&env, &table.config.token);
+        token.transfer(treasury_addr, &player, &swept_amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "dead_chips_reclaimed"), table_id),
+            (player.clone(), swept_amount),
+        );
+
+        Ok(swept_amount)
+    }
+
+    /// Get the dead chip sweep state for a table (view function).
+    pub fn get_dead_chip_sweep_state(env: Env, table_id: u32) -> Result<SweepState, PokerTableError> {
+        let sweep_key = DataKey::DeadChipSweep(table_id);
+        let sweep_state: SweepState = env
+            .storage()
+            .persistent()
+            .get(&sweep_key)
+            .ok_or(PokerTableError::DeadChipsNotSwept)?;
+        Ok(sweep_state)
     }
 }

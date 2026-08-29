@@ -1441,6 +1441,154 @@ pub async fn player_action(
     }))
 }
 
+/// POST /api/table/{table_id}/transfer-chips
+///
+/// Transfer chips from this table to another table where the player is also seated.
+/// A small fee (in basis points) is deducted from the transferred amount.
+/// Both tables must be in a state that allows transfers (e.g., not in active hand).
+#[utoipa::path(
+    post,
+    path = "/api/table/{table_id}/transfer-chips",
+    tag = "Tables",
+    params(
+        ("table_id" = u32, Path, description = "Source table ID")
+    ),
+    request_body = TransferChipsRequest,
+    responses(
+        (status = 200, description = "Chips transferred", body = TransferChipsResponse),
+        (status = 400, description = "Invalid parameters"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Table not found"),
+        (status = 409, description = "Player not seated at both tables or insufficient chips"),
+        (status = 503, description = "Soroban not configured")
+    ),
+    security(
+        ("WalletAuth" = [])
+    )
+)]
+pub async fn transfer_chips(
+    State(state): State<AppState>,
+    Path(source_table_id): Path<u32>,
+    headers: HeaderMap,
+    Json(req): Json<TransferChipsRequest>,
+) -> Result<Json<TransferChipsResponse>, StatusCode> {
+    validate_table_id(source_table_id)?;
+    validate_table_id(req.destination_table_id)?;
+
+    if source_table_id == req.destination_table_id {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    enforce_rate_limit(&state, &headers, source_table_id, "transfer_chips").await?;
+    let auth = validate_signed_request(&state, &headers, source_table_id, "transfer_chips", None).await?;
+
+    if !state.soroban_config.is_configured() {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // Check if player is seated at source table
+    let source_view = fetch_onchain_table_view(&state.soroban_config, source_table_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let is_seated_at_source = source_view.seats.iter().any(|(_, chain)| chain == &auth.address);
+    if !is_seated_at_source {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Check if player is seated at destination table
+    let dest_view = fetch_onchain_table_view(&state.soroban_config, req.destination_table_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let is_seated_at_dest = dest_view.seats.iter().any(|(_, chain)| chain == &auth.address);
+    if !is_seated_at_dest {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Validate amount
+    if req.amount <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Find player's stack at source table
+    let player_stack_at_source = source_view
+        .seats
+        .iter()
+        .find(|(_, chain)| chain == &auth.address)
+        .and_then(|(seat, _)| source_view.stacks.get(*seat as usize).copied())
+        .unwrap_or(0);
+
+    if player_stack_at_source < req.amount {
+        return Err(StatusCode::CONFLICT); // Insufficient chips
+    }
+
+    // Fee in basis points (default 100 = 1%)
+    let fee_basis_points = std::env::var("TRANSFER_FEE_BASIS_POINTS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(100);
+
+    let fee = (req.amount * fee_basis_points as i128) / 10000;
+    let net_amount = req.amount - fee;
+
+    // Execute on-chain transfer
+    let (source_tx_hash, dest_tx_hash) = soroban::transfer_chips(
+        &state.soroban_config,
+        source_table_id,
+        req.destination_table_id,
+        &auth.address,
+        req.amount,
+        fee_basis_points,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            "transfer_chips failed: source_table={}, dest_table={}, player={}, amount={}, err={}",
+            source_table_id,
+            req.destination_table_id,
+            auth.address,
+            req.amount,
+            e
+        );
+        if e.contains("Error(Contract,") {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_GATEWAY
+        }
+    })?;
+
+    // Log audit entry for the transfer
+    if let Some(pool) = &state.db_pool {
+        let request_id = uuid::Uuid::new_v4();
+        let _ = crate::audit_log::log_audit_entry(
+            pool,
+            request_id,
+            Some(&auth.address),
+            "transfer_chips",
+            &format!("/api/table/{}/transfer-chips", source_table_id),
+            &axum::http::Method::POST,
+            crate::audit_log::extract_ip_address(&headers),
+            Some(200),
+            None,
+            Some(source_table_id as i32),
+            None,
+        )
+        .await;
+    }
+
+    Ok(Json(TransferChipsResponse {
+        status: "transferred".to_string(),
+        source_table_id,
+        destination_table_id: req.destination_table_id,
+        amount: req.amount,
+        fee,
+        net_amount,
+        source_tx_hash: if source_tx_hash.is_empty() { None } else { Some(source_tx_hash) },
+        dest_tx_hash: if dest_tx_hash.is_empty() { None } else { Some(dest_tx_hash) },
+    }))
+}
+
 /// GET /api/table/{table_id}/player/{address}/cards
 ///
 /// Resolve and return a player's hole cards by chaining permutation lookups

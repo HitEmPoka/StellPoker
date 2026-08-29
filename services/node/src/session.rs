@@ -10,8 +10,53 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration, Instant};
+
+/// Runs `cmd` to completion. When `profile` is `Some`, also samples the
+/// child process's CPU/memory on a fixed interval for the duration of the
+/// run and records it under `phase` in the registry (issue #244). When
+/// `profile` is `None` (the default — profiling is opt-in per session),
+/// this is exactly `cmd.output().await` with no extra overhead.
+async fn run_profiled(
+    cmd: &mut Command,
+    session_id: &str,
+    phase: &str,
+    profile: Option<&crate::profiling::ProfileRegistry>,
+) -> std::io::Result<std::process::Output> {
+    let Some(registry) = profile else {
+        return cmd.output().await;
+    };
+
+    // .output() configures piped stdio internally; .spawn() does not, so
+    // it must be set explicitly here to still capture stdout/stderr for
+    // the error-reporting paths above.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+    let sampler = child.id().map(|pid| {
+        tokio::spawn(crate::profiling::sample_process_until_exit(
+            registry.clone(),
+            session_id.to_string(),
+            phase.to_string(),
+            pid,
+        ))
+    });
+
+    let output = child.wait_with_output().await?;
+
+    // The sampler notices the process exited (its next refresh finds no
+    // such pid) and finishes on its own; just make sure it has recorded
+    // the phase before returning so a caller reading the profile
+    // immediately afterward sees it.
+    if let Some(sampler) = sampler {
+        let _ = sampler.await;
+    }
+
+    Ok(output)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum SessionStatus {
@@ -209,6 +254,7 @@ pub async fn run_proof_generation(
     crs_path: String,
     limits: crate::limits::ResourceLimits,
     phase_timeouts: PhaseTimeouts,
+    profile: Option<crate::profiling::ProfileRegistry>,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
     let circuit_path = format!(
         "{}/{}/target/{}.json",
@@ -261,8 +307,7 @@ pub async fn run_proof_generation(
     merge_cmd.arg("--out").arg(&share_path);
     limits.apply_to_command(&mut merge_cmd);
 
-    let merge_output = merge_cmd
-        .output()
+    let merge_output = run_profiled(&mut merge_cmd, &session_id, "merge_shares", profile.as_ref())
         .await
         .map_err(|e| format!("failed to spawn co-noir merge-input-shares: {}", e))?;
 
@@ -320,8 +365,7 @@ pub async fn run_proof_generation(
         .arg("--out")
         .arg(&witness_path);
     limits.apply_to_command(&mut witness_cmd);
-    let witness_output = witness_cmd
-        .output()
+    let witness_output = run_profiled(&mut witness_cmd, &session_id, "witness_generation", profile.as_ref())
         .await
         .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
 
@@ -391,8 +435,7 @@ pub async fn run_proof_generation(
             .arg(&public_inputs_path)
             .arg("--fields-as-json");
         limits.apply_to_command(&mut proof_cmd);
-        let proof_output = proof_cmd
-            .output()
+        let proof_output = run_profiled(&mut proof_cmd, &session_id, "proof_generation", profile.as_ref())
             .await
             .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;
 

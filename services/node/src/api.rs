@@ -247,6 +247,27 @@ pub async fn post_shares(
         ));
     }
 
+    // Reject a replayed/duplicate initiation of a session that already
+    // finished proof generation. Without this, a coordinator (or an
+    // attacker replaying a captured request) could resubmit shares under a
+    // completed session_id, silently reopening it and letting a later
+    // /generate call overwrite the already-delivered proof (issue #241).
+    if state
+        .finalized_sessions
+        .read()
+        .await
+        .contains(&session_id)
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            "rejecting share submission for already-finalized session (replay)"
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            format!("session {} has already completed and cannot be reopened", session_id),
+        ));
+    }
+
     let session_lock = {
         let mut sessions = state.sessions.write().await;
         if let Some(existing) = sessions.get(&session_id) {
@@ -291,6 +312,27 @@ pub async fn post_shares(
             format!(
                 "session circuit mismatch: existing={}, got={}",
                 session.circuit_name, req.circuit_name
+            ),
+        ));
+    }
+
+    // Once a session has moved past share collection, reject any further
+    // share submissions outright rather than letting them silently reset
+    // the session back to SharesReceived — closes the same replay hole as
+    // the finalized_sessions check above, but also covers a session that's
+    // still mid-flight (WitnessGenerating/ProofGenerating) rather than only
+    // ones that have already reached Complete.
+    if session.status != SessionStatus::SharesReceived {
+        tracing::warn!(
+            session_id = %session_id,
+            status = ?session.status,
+            "rejecting share submission for session past the sharing phase (replay)"
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "session {} is past the share-collection phase ({:?}) and cannot accept new shares",
+                session_id, session.status
             ),
         ));
     }
@@ -348,6 +390,14 @@ pub async fn post_generate(
     let metrics = state.metrics.clone();
     metrics.active_sessions.inc();
     let circuit_label = circuit_name.clone();
+    let finalized_sessions = state.finalized_sessions.clone();
+
+    // Profiling is strictly opt-in per session (issue #244): only pass the
+    // registry through when this session_id was explicitly enabled via
+    // POST /session/:id/profile before generation started. A session
+    // nobody asked to profile pays no sampling overhead.
+    let profiling_enabled = state.profiling.is_enabled(&sid).await;
+    let profile = profiling_enabled.then(|| state.profiling.clone());
 
     tokio::spawn(async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
@@ -363,6 +413,7 @@ pub async fn post_generate(
             crs_path,
             limits,
             phase_timeouts,
+            profile,
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
@@ -406,6 +457,7 @@ pub async fn post_generate(
                 session.proof_path = Some(proof_path);
                 session.public_inputs = Some(public_inputs);
                 session.status = SessionStatus::Complete;
+                finalized_sessions.write().await.insert(sid.clone());
                 metrics
                     .proofs_generated
                     .with_label_values(&[&circuit_label])
@@ -497,4 +549,115 @@ pub struct ProofResponse {
     pub session_id: String,
     pub proof: String, // base64-encoded proof bytes
     pub public_inputs: Vec<String>,
+}
+
+/// Tests for #241 — coordinator replay protection on session initiation.
+#[cfg(test)]
+mod replay_protection_tests {
+    use super::*;
+    use crate::limits::ResourceLimits;
+    use crate::metrics::NodeMetrics;
+    use std::collections::{HashMap, HashSet};
+
+    fn test_state() -> NodeState {
+        NodeState {
+            node_id: 0,
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            tables: Arc::new(RwLock::new(HashMap::new())),
+            party_config_path: "unused".to_string(),
+            peer_http_endpoints: vec![],
+            limits: ResourceLimits::default(),
+            metrics: NodeMetrics::new(),
+            finalized_sessions: Arc::new(RwLock::new(HashSet::new())),
+        }
+    }
+
+    fn shares_req() -> SharesRequest {
+        SharesRequest {
+            circuit_name: "deal_valid".to_string(),
+            share_data: "dGVzdA==".to_string(), // base64("test")
+            source_party_id: 0,
+            total_parties: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_first_time_shares_for_a_fresh_session() {
+        let state = test_state();
+        let result = post_shares(State(state), Path("session-fresh".to_string()), Json(shares_req())).await;
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rejects_shares_for_a_session_already_marked_finalized() {
+        let state = test_state();
+        let session_id = "session-finalized".to_string();
+        state
+            .finalized_sessions
+            .write()
+            .await
+            .insert(session_id.clone());
+
+        let result = post_shares(State(state), Path(session_id), Json(shares_req())).await;
+
+        let err = result.expect_err("expected replay rejection");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert!(err.1.contains("already completed"), "unexpected message: {}", err.1);
+    }
+
+    #[tokio::test]
+    async fn rejects_shares_once_session_has_moved_past_the_sharing_phase() {
+        let state = test_state();
+        let session_id = "session-inflight".to_string();
+
+        // First submission creates and stores the session normally.
+        post_shares(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(shares_req()),
+        )
+        .await
+        .expect("initial submission should succeed");
+
+        // Simulate the coordinator having moved the session on to generation,
+        // the same way post_generate does.
+        {
+            let sessions = state.sessions.read().await;
+            let lock = sessions.get(&session_id).unwrap().clone();
+            let mut session = lock.write().await;
+            session.status = SessionStatus::WitnessGenerating;
+        }
+
+        // A replayed/duplicate share submission for the same session_id must
+        // now be rejected instead of resetting the session back to
+        // SharesReceived.
+        let result = post_shares(State(state), Path(session_id), Json(shares_req())).await;
+
+        let err = result.expect_err("expected replay rejection");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert!(
+            err.1.contains("share-collection phase"),
+            "unexpected message: {}",
+            err.1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_different_session_id_is_unaffected_by_another_sessions_finalization() {
+        let state = test_state();
+        state
+            .finalized_sessions
+            .write()
+            .await
+            .insert("session-other-finalized".to_string());
+
+        let result = post_shares(
+            State(state),
+            Path("session-brand-new".to_string()),
+            Json(shares_req()),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
 }

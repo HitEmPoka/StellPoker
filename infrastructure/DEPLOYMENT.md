@@ -4,6 +4,8 @@ This document provides comprehensive instructions for deploying StellPoker using
 
 For production Soroban data-plane operations, including self-hosted Stellar Core, Horizon, and Soroban RPC guidance, see [../docs/soroban-rpc-node.md](../docs/soroban-rpc-node.md).
 
+For deploying the 3 REP3 MPC nodes across separate cloud providers or physical data centers instead of one Kubernetes cluster — latency budgeting, firewall rules, DNS, and disaster recovery specific to that topology — see [../services/node/docs/CROSS_DATACENTER_DEPLOYMENT.md](../services/node/docs/CROSS_DATACENTER_DEPLOYMENT.md).
+
 ## Prerequisites
 
 ### Required Tools
