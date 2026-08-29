@@ -9,12 +9,14 @@ pub global DEBUG_ENABLED: bool = false;
 // Debug output for a single field value (name-value pair)
 pub fn debug_field<let N: u32>(label: str<N>, value: Field) {
     if DEBUG_ENABLED {
+        std::println(f"{label} = {value}");
     }
 }
 
 // Debug output for a single u32 value
 pub fn debug_u32<let N: u32>(label: str<N>, value: u32) {
     if DEBUG_ENABLED {
+        std::println(f"{label} = {value}");
     }
 }
 
