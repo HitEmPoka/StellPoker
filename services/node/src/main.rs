@@ -40,6 +40,7 @@ mod limits;
 mod metrics;
 mod pool;
 mod private_table;
+mod profiling;
 mod session;
 mod tls;
 mod heartbeat;
@@ -48,6 +49,7 @@ mod gossip;
 use limits::ResourceLimits;
 use metrics::NodeMetrics;
 use private_table::PrivateTableState;
+use profiling::ProfileRegistry;
 use session::MpcSessionState;
 
 #[derive(Clone)]
@@ -256,6 +258,10 @@ async fn main() {
         .route("/session/:id/generate", post(api::post_generate))
         .route("/session/:id/status", get(api::get_status))
         .route("/session/:id/proof", get(api::get_proof))
+        .route(
+            "/session/:id/profile",
+            post(api::post_enable_profiling).get(api::get_profile),
+        )
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);

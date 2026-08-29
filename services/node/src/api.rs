@@ -392,6 +392,13 @@ pub async fn post_generate(
     let circuit_label = circuit_name.clone();
     let finalized_sessions = state.finalized_sessions.clone();
 
+    // Profiling is strictly opt-in per session (issue #244): only pass the
+    // registry through when this session_id was explicitly enabled via
+    // POST /session/:id/profile before generation started. A session
+    // nobody asked to profile pays no sampling overhead.
+    let profiling_enabled = state.profiling.is_enabled(&sid).await;
+    let profile = profiling_enabled.then(|| state.profiling.clone());
+
     tokio::spawn(async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
         let proof_future = session::run_proof_generation(
@@ -406,6 +413,7 @@ pub async fn post_generate(
             crs_path,
             limits,
             phase_timeouts,
+            profile,
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
