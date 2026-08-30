@@ -72,8 +72,7 @@ pub fn init_tracer() -> Option<TracerGuard> {
 
     if !enabled {
         // No OTel — just set up the plain tracing subscriber.
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
         let subscriber = tracing_subscriber::registry().with(filter);
         if json_logs {
@@ -90,12 +89,10 @@ pub fn init_tracer() -> Option<TracerGuard> {
     match pipeline {
         Ok(tracer) => {
             let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-            let filter = EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"));
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-            let subscriber = tracing_subscriber::registry()
-                .with(filter)
-                .with(otel_layer);
+            let subscriber = tracing_subscriber::registry().with(filter).with(otel_layer);
 
             if json_logs {
                 subscriber
@@ -112,8 +109,8 @@ pub fn init_tracer() -> Option<TracerGuard> {
         Err(e) => {
             // OTel setup failure is not fatal — fall back to plain logging.
             eprintln!("WARNING: OpenTelemetry init failed: {e} — falling back to plain tracing");
-            let filter = EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"));
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
             let subscriber = tracing_subscriber::registry().with(filter);
             if json_logs {
                 subscriber
@@ -131,7 +128,10 @@ pub fn init_tracer() -> Option<TracerGuard> {
 
 fn is_otel_enabled() -> bool {
     let v = std::env::var("OTEL_ENABLED").unwrap_or_default();
-    matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn otel_endpoint() -> String {
@@ -140,8 +140,7 @@ fn otel_endpoint() -> String {
 }
 
 fn service_name() -> String {
-    std::env::var("OTEL_SERVICE_NAME")
-        .unwrap_or_else(|_| "stellar-poker-coordinator".to_string())
+    std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "stellar-poker-coordinator".to_string())
 }
 
 fn sample_rate() -> f64 {
@@ -207,6 +206,10 @@ pub fn current_traceparent() -> Option<String> {
     // W3C traceparent format: 00-<trace_id>-<span_id>-<flags>
     let trace_id = format!("{:032x}", sc.trace_id());
     let span_id = format!("{:016x}", sc.span_id());
-    let flags = if sc.trace_flags().is_sampled() { "01" } else { "00" };
+    let flags = if sc.trace_flags().is_sampled() {
+        "01"
+    } else {
+        "00"
+    };
     Some(format!("00-{}-{}-{}", trace_id, span_id, flags))
 }

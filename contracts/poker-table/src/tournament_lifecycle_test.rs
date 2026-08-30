@@ -84,7 +84,15 @@ fn tourn_setup() -> TSetup<'static> {
     let committee = Address::generate(&env);
     let verifier = env.register(crate::verifier::ZkVerifierContract, ());
 
-    TSetup { env, client, token, token_admin, committee, verifier, admin }
+    TSetup {
+        env,
+        client,
+        token,
+        token_admin,
+        committee,
+        verifier,
+        admin,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +241,8 @@ fn drive_to_settlement(
                 let actor = table.players.get(cur).unwrap();
                 let seq = get_seq(seqs, &actor.address);
                 if !actor.all_in && !actor.folded {
-                    s.client.player_action(&table_id, &actor.address, &seq, &Action::Check);
+                    s.client
+                        .player_action(&table_id, &actor.address, &seq, &Action::Check);
                 }
             }
 
@@ -288,6 +297,7 @@ fn test_tournament_lifecycle_4_players() {
         token: s.token.address.clone(),
         min_buy_in: 100,
         max_buy_in: 2_000,
+        betting_structure: crate::types::BettingStructure::NoLimit,
         blinds_schedule: BlindsSchedule::fixed(&s.env, 5, 10),
         min_players: 2,
         max_players: 4,
@@ -317,7 +327,6 @@ fn test_tournament_lifecycle_4_players() {
 
     assert_chip_conservation(&s, table_id, prize_pool);
 
-
     // Finish order: knocked-out player addresses, earliest elimination first.
     let mut finish_order: StdVec<Address> = vec![];
 
@@ -330,7 +339,6 @@ fn test_tournament_lifecycle_4_players() {
     // Strategy: P0 and P1 go all-in; P2 and P3 fold.
     // Winner: P0. P1 is eliminated (4th place).
     {
-
         s.client.start_hand(&table_id);
         let n = s.client.get_table(&table_id).players.len();
         commit_mock_deal_t(&s, table_id, n);
@@ -347,22 +355,42 @@ fn test_tournament_lifecycle_4_players() {
         // UTG = current_turn after commit_deal
         let p0_seat = table.current_turn; // seat 0
         let p0_addr = table.players.get(p0_seat).unwrap().address.clone();
-        s.client.player_action(&table_id, &p0_addr, &get_seq(&mut seqs, &p0_addr), &Action::AllIn);
+        s.client.player_action(
+            &table_id,
+            &p0_addr,
+            &get_seq(&mut seqs, &p0_addr),
+            &Action::AllIn,
+        );
 
         let table = s.client.get_table(&table_id);
         let p1_seat = table.current_turn; // seat 1
         let p1_addr = table.players.get(p1_seat).unwrap().address.clone();
-        s.client.player_action(&table_id, &p1_addr, &get_seq(&mut seqs, &p1_addr), &Action::AllIn);
+        s.client.player_action(
+            &table_id,
+            &p1_addr,
+            &get_seq(&mut seqs, &p1_addr),
+            &Action::AllIn,
+        );
 
         let table = s.client.get_table(&table_id);
         let p2_seat = table.current_turn; // seat 2 (SB)
         let p2_addr = table.players.get(p2_seat).unwrap().address.clone();
-        s.client.player_action(&table_id, &p2_addr, &get_seq(&mut seqs, &p2_addr), &Action::Fold);
+        s.client.player_action(
+            &table_id,
+            &p2_addr,
+            &get_seq(&mut seqs, &p2_addr),
+            &Action::Fold,
+        );
 
         let table = s.client.get_table(&table_id);
         let p3_seat = table.current_turn; // seat 3 (BB)
         let p3_addr = table.players.get(p3_seat).unwrap().address.clone();
-        s.client.player_action(&table_id, &p3_addr, &get_seq(&mut seqs, &p3_addr), &Action::Fold);
+        s.client.player_action(
+            &table_id,
+            &p3_addr,
+            &get_seq(&mut seqs, &p3_addr),
+            &Action::Fold,
+        );
 
         // P0 and P1 are all-in; the game advances through streets automatically.
         // Winner: P0 (seat index = p0_seat).
@@ -375,7 +403,10 @@ fn test_tournament_lifecycle_4_players() {
         assert_eq!(table.phase, GamePhase::Settlement);
 
         let p1 = table.players.get(p1_seat).unwrap();
-        assert_eq!(p1.stack, 0, "P1 should be eliminated after losing the all-in");
+        assert_eq!(
+            p1.stack, 0,
+            "P1 should be eliminated after losing the all-in"
+        );
         finish_order.push(p1.address.clone());
         s.client.leave_table(&table_id, &p1_addr);
 
@@ -391,7 +422,6 @@ fn test_tournament_lifecycle_4_players() {
     // P3 wins uncontested (fold-win, no showdown needed) — does NOT eliminate P3.
     // We then play hand 2b where P3 goes all-in and loses to P0.
     {
-
         s.client.start_hand(&table_id);
         let n = s.client.get_table(&table_id).players.len();
         commit_mock_deal_t(&s, table_id, n);
@@ -448,7 +478,6 @@ fn test_tournament_lifecycle_4_players() {
     // Strategy: P0 and one other go all-in; P0 wins via showdown.
     // Eliminates the losing player (3rd place).
     {
-
         s.client.start_hand(&table_id);
         let n = s.client.get_table(&table_id).players.len();
         commit_mock_deal_t(&s, table_id, n);
@@ -596,15 +625,15 @@ fn test_tournament_lifecycle_4_players() {
 
     // Champion: the last player standing.
     let champion = table.players.get(0).unwrap();
-    assert_eq!(
-        champion.stack, prize_pool,
-        "champion holds all chips"
-    );
+    assert_eq!(champion.stack, prize_pool, "champion holds all chips");
 
     // Ranking: finish_order holds players from 4th→2nd; champion is 1st.
     // Validate against the prize schedule.
     let all_places = finish_order.len() + 1; // +1 for champion
-    assert_eq!(all_places, n_players, "all players accounted for in finish order");
+    assert_eq!(
+        all_places, n_players,
+        "all players accounted for in finish order"
+    );
 
     // Compute and verify prize amounts.
     let champ_prize = prize_for_place(prize_pool, 0);

@@ -290,7 +290,10 @@ impl ZkVerifierContract {
 
     /// Check that a u32 value matches the field element at `field_index`.
     fn check_u32_field(public_inputs: &Bytes, field_index: u32, expected: u32) -> bool {
-        ct_u32_eq(Self::extract_u32_field(public_inputs, field_index), expected)
+        ct_u32_eq(
+            Self::extract_u32_field(public_inputs, field_index),
+            expected,
+        )
     }
 
     // ====================================================================

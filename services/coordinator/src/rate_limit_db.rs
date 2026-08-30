@@ -36,8 +36,9 @@ impl RateLimitBucket {
 
     pub fn check_and_add(&mut self) -> bool {
         let now = Instant::now();
-        self.timestamps.retain(|&ts| now.duration_since(ts) < self.window);
-        
+        self.timestamps
+            .retain(|&ts| now.duration_since(ts) < self.window);
+
         if self.timestamps.len() < self.max_requests {
             self.timestamps.push(now);
             true
@@ -53,7 +54,7 @@ pub async fn load_rate_limit_configs(pool: &PgPool) -> Result<Vec<RateLimitConfi
         "SELECT id, config_type, endpoint, wallet_address, max_requests, window_seconds, enabled 
          FROM rate_limit_configs 
          WHERE enabled = true 
-         ORDER BY config_type DESC"
+         ORDER BY config_type DESC",
     )
     .fetch_all(pool)
     .await
@@ -66,7 +67,7 @@ pub async fn get_rate_limit_for_request(
     wallet: Option<&str>,
 ) -> Result<Option<RateLimitConfig>, sqlx::Error> {
     // Priority: endpoint_wallet > wallet > endpoint > global
-    
+
     if let Some(wallet_addr) = wallet {
         // Check endpoint + wallet specific
         if let Some(config) = sqlx::query_as::<_, RateLimitConfig>(
@@ -85,7 +86,7 @@ pub async fn get_rate_limit_for_request(
         {
             return Ok(Some(config));
         }
-        
+
         // Check wallet-only
         if let Some(config) = sqlx::query_as::<_, RateLimitConfig>(
             "SELECT id, config_type, endpoint, wallet_address, max_requests, window_seconds, enabled 
@@ -102,7 +103,7 @@ pub async fn get_rate_limit_for_request(
             return Ok(Some(config));
         }
     }
-    
+
     // Check endpoint-only
     if let Some(config) = sqlx::query_as::<_, RateLimitConfig>(
         "SELECT id, config_type, endpoint, wallet_address, max_requests, window_seconds, enabled 
@@ -110,22 +111,22 @@ pub async fn get_rate_limit_for_request(
          WHERE config_type = 'endpoint' 
          AND endpoint = $1 
          AND enabled = true 
-         LIMIT 1"
+         LIMIT 1",
     )
     .bind(endpoint)
     .fetch_optional(pool)
-    .await? 
+    .await?
     {
         return Ok(Some(config));
     }
-    
+
     // Fall back to global
     sqlx::query_as::<_, RateLimitConfig>(
         "SELECT id, config_type, endpoint, wallet_address, max_requests, window_seconds, enabled 
          FROM rate_limit_configs 
          WHERE config_type = 'global' 
          AND enabled = true 
-         LIMIT 1"
+         LIMIT 1",
     )
     .fetch_optional(pool)
     .await
@@ -169,7 +170,7 @@ pub async fn delete_rate_limit_config(pool: &PgPool, id: i64) -> Result<bool, sq
         .bind(id)
         .execute(pool)
         .await?;
-    
+
     Ok(result.rows_affected() > 0)
 }
 
@@ -178,7 +179,7 @@ pub async fn list_rate_limit_configs(pool: &PgPool) -> Result<Vec<RateLimitConfi
     sqlx::query_as::<_, RateLimitConfig>(
         "SELECT id, config_type, endpoint, wallet_address, max_requests, window_seconds, enabled 
          FROM rate_limit_configs 
-         ORDER BY config_type, endpoint, wallet_address"
+         ORDER BY config_type, endpoint, wallet_address",
     )
     .fetch_all(pool)
     .await

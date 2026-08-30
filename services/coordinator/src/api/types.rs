@@ -260,4 +260,3 @@ pub struct TransferChipsResponse {
     pub source_tx_hash: Option<String>,
     pub dest_tx_hash: Option<String>,
 }
-

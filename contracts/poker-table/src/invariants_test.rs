@@ -88,6 +88,7 @@ fn build_table(env: &Env, gen: &[GenPlayer]) -> (TableState, i128) {
             token: admin.clone(),
             min_buy_in: 0,
             max_buy_in: i128::MAX,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 0, 0),
             min_players: 2,
             max_players: 9,

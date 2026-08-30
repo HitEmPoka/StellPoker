@@ -7,9 +7,7 @@
 //! Players must reach `min_hands` before appearing on the public leaderboard
 //! (anti-manipulation).
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 /// Default starting ELO rating.
 const DEFAULT_RATING: u32 = 1500;

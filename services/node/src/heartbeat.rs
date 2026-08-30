@@ -6,7 +6,7 @@ pub fn spawn_heartbeat_sender(node_id: u32, coordinator_url: String) {
         let client = crate::pool::peer_client();
         let url = format!("{}/api/mpc/heartbeat/{}", coordinator_url, node_id);
         let interval = Duration::from_secs(10);
-        
+
         loop {
             tokio::time::sleep(interval).await;
             match client.post(&url).send().await {

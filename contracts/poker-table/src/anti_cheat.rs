@@ -59,10 +59,7 @@ impl PlayerInteractionStats {
         }
 
         // Check for consistent small losses (potential intentional dumping)
-        if self.losses_to_opponent > 3
-            && self.avg_loss_amount > 0
-            && self.avg_loss_amount < 500
-        {
+        if self.losses_to_opponent > 3 && self.avg_loss_amount > 0 && self.avg_loss_amount < 500 {
             // Consistent small losses might indicate controlled dumping
             return true;
         }
@@ -119,10 +116,7 @@ pub fn detect_chip_dumping(
     }
 
     // Small consistent losses pattern
-    if stats.losses_to_opponent > 3
-        && stats.avg_loss_amount > 0
-        && stats.avg_loss_amount < 500
-    {
+    if stats.losses_to_opponent > 3 && stats.avg_loss_amount > 0 && stats.avg_loss_amount < 500 {
         confidence += 25;
     }
 

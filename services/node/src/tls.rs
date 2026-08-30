@@ -72,16 +72,10 @@ pub fn load_from_env() -> Result<Option<NodeTlsConfig>, String> {
         .map_err(|e| format!("invalid server private key: {}", e))?;
 
     // ── Coordinator pin (SPKI hash takes priority over full-cert pin) ───────
-    let pinned_spki_hash = if let Ok(hash_hex) =
-        std::env::var("COORDINATOR_TLS_PIN_PUBKEY_HASH")
-    {
+    let pinned_spki_hash = if let Ok(hash_hex) = std::env::var("COORDINATOR_TLS_PIN_PUBKEY_HASH") {
         let hash_hex = hash_hex.trim().to_string();
-        let bytes = hex::decode(&hash_hex).map_err(|e| {
-            format!(
-                "COORDINATOR_TLS_PIN_PUBKEY_HASH is not valid hex: {}",
-                e
-            )
-        })?;
+        let bytes = hex::decode(&hash_hex)
+            .map_err(|e| format!("COORDINATOR_TLS_PIN_PUBKEY_HASH is not valid hex: {}", e))?;
         if bytes.len() != 32 {
             return Err(format!(
                 "COORDINATOR_TLS_PIN_PUBKEY_HASH must be 32 bytes (64 hex chars), got {}",
@@ -96,8 +90,10 @@ pub fn load_from_env() -> Result<Option<NodeTlsConfig>, String> {
         None
     };
 
-    let pinned_cert_der =
-        load_der_from_env("COORDINATOR_TLS_PIN_CERT_PATH", "COORDINATOR_TLS_PIN_CERT_B64")?;
+    let pinned_cert_der = load_der_from_env(
+        "COORDINATOR_TLS_PIN_CERT_PATH",
+        "COORDINATOR_TLS_PIN_CERT_B64",
+    )?;
     if let Some(ref der) = pinned_cert_der {
         let fp = spki_hash_of_cert(der)?;
         tracing::info!(
@@ -189,10 +185,7 @@ impl rustls::server::danger::ClientCertVerifier for PinnedClientCertVerifier {
                     "coordinator certificate SPKI hash does not match pinned value".into(),
                 ));
             }
-            tracing::debug!(
-                "TLS pin ACCEPTED (SPKI hash {})",
-                hex::encode(actual_hash)
-            );
+            tracing::debug!("TLS pin ACCEPTED (SPKI hash {})", hex::encode(actual_hash));
             return Ok(rustls::server::danger::ClientCertVerified::assertion());
         }
 
@@ -277,9 +270,7 @@ fn pem_or_der(raw: Vec<u8>) -> Vec<u8> {
                 .filter(|l| !l.starts_with("-----"))
                 .collect::<Vec<_>>()
                 .join("");
-            if let Ok(der) =
-                base64::engine::general_purpose::STANDARD.decode(b64.trim())
-            {
+            if let Ok(der) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
                 return der;
             }
         }
@@ -325,8 +316,7 @@ mod tests {
     // Generated with:
     //   openssl req -new -x509 -key <(openssl ecparam -name prime256v1 -genkey -noout) \
     //     -subj /CN=test -days 3650 -outform DER | base64
-    const TEST_CERT_DER_B64: &str =
-        "MIIBkTCB+wIJAJEBuTYMbhAlMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMT\
+    const TEST_CERT_DER_B64: &str = "MIIBkTCB+wIJAJEBuTYMbhAlMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMT\
          BnRlc3QwHhcNMjUwMTAxMDAwMDAwWhcNMzUwMTAxMDAwMDAwWjARMQ8wDQYD\
          VQQDEwZ0ZXN0MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMY4kLlKqZLNQzI8\
          qPG5i+ZXbh3CtI0VJUvRNkZ5bFaGN6uFJI5GeMrr1qAMlIgFa7FJKV3IbGj\
@@ -358,7 +348,10 @@ mod tests {
         // Round-trip: encode DER as PEM, then strip it back.
         let der = vec![0x30, 0x00, 0x41, 0x42];
         let b64 = base64::engine::general_purpose::STANDARD.encode(&der);
-        let pem = format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", b64);
+        let pem = format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            b64
+        );
         let out = pem_or_der(pem.into_bytes());
         assert_eq!(out, der);
     }

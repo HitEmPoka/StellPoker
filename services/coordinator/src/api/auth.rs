@@ -108,7 +108,11 @@ pub(crate) async fn validate_signed_request(
     Ok(AuthContext { address })
 }
 
-pub(crate) fn verify_signature(address: &str, message: &str, signature_raw: &str) -> Result<(), StatusCode> {
+pub(crate) fn verify_signature(
+    address: &str,
+    message: &str,
+    signature_raw: &str,
+) -> Result<(), StatusCode> {
     let stellar_pk = stellar_strkey::ed25519::PublicKey::from_string(address)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let verifying_key =

@@ -47,9 +47,7 @@ pub async fn create_tournament(
 }
 
 /// GET /api/tournaments
-pub async fn list_tournaments(
-    State(state): State<AppState>,
-) -> Json<Vec<TournamentSummary>> {
+pub async fn list_tournaments(State(state): State<AppState>) -> Json<Vec<TournamentSummary>> {
     let store = state.tournaments.read().await;
     let mut list: Vec<TournamentSummary> = store.values().map(TournamentSummary::from).collect();
     // Most recently created first.

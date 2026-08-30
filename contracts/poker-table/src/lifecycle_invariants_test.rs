@@ -103,6 +103,7 @@ fn config(s: &Setup, player_count: u32, rake_bps: u32) -> TableConfig {
         token: s.token.address.clone(),
         min_buy_in: 100,
         max_buy_in: 2_000,
+        betting_structure: crate::types::BettingStructure::NoLimit,
         blinds_schedule: BlindsSchedule::fixed(&s.env, 5, 10),
         min_players: 2,
         max_players: player_count,

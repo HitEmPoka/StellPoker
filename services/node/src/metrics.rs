@@ -8,7 +8,7 @@
 //! `proof_generation` errors).
 
 use axum::{body::Body, http::Response};
-use prometheus::{Encoder, IntCounterVec, IntGauge, Gauge, GaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, GaugeVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
 pub struct NodeMetrics {
@@ -93,14 +93,24 @@ impl NodeMetrics {
         )
         .unwrap();
 
-        registry.register(Box::new(active_sessions.clone())).unwrap();
-        registry.register(Box::new(proofs_generated.clone())).unwrap();
+        registry
+            .register(Box::new(active_sessions.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(proofs_generated.clone()))
+            .unwrap();
         registry.register(Box::new(session_errors.clone())).unwrap();
         registry.register(Box::new(node_up.clone())).unwrap();
         registry.register(Box::new(memory_bytes.clone())).unwrap();
-        registry.register(Box::new(memory_limit_bytes.clone())).unwrap();
-        registry.register(Box::new(clock_skew_seconds.clone())).unwrap();
-        registry.register(Box::new(cert_expiry_days.clone())).unwrap();
+        registry
+            .register(Box::new(memory_limit_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(clock_skew_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cert_expiry_days.clone()))
+            .unwrap();
 
         Self {
             registry,

@@ -792,10 +792,9 @@ async fn main() {
             let cfg = mpc_config_jq.clone();
             tokio::spawn(async move {
                 let table_id = job.table_id;
-                let players: Vec<String> = serde_json::from_value(
-                    job.payload.get("players").cloned().unwrap_or_default(),
-                )
-                .unwrap_or_default();
+                let players: Vec<String> =
+                    serde_json::from_value(job.payload.get("players").cloned().unwrap_or_default())
+                        .unwrap_or_default();
                 let prepared = mpc::prepare_deal_from_nodes(
                     &client,
                     &cfg.node_endpoints,
@@ -840,12 +839,14 @@ async fn main() {
             let cfg = mpc_config_jq2.clone();
             tokio::spawn(async move {
                 let table_id = job.table_id;
-                let phase: String = serde_json::from_value(
-                    job.payload.get("phase").cloned().unwrap_or_default(),
-                )
-                .unwrap_or_default();
+                let phase: String =
+                    serde_json::from_value(job.payload.get("phase").cloned().unwrap_or_default())
+                        .unwrap_or_default();
                 let dealt_indices: Vec<u32> = serde_json::from_value(
-                    job.payload.get("dealt_indices").cloned().unwrap_or_default(),
+                    job.payload
+                        .get("dealt_indices")
+                        .cloned()
+                        .unwrap_or_default(),
                 )
                 .unwrap_or_default();
                 let deck_root: String = serde_json::from_value(
@@ -1005,10 +1006,7 @@ async fn main() {
         .route("/api/tables/open", get(api::list_open_tables))
         .route("/api/tables/overview", get(api::list_table_overview))
         .route("/api/stats/player/:address", get(get_player_hud_stats))
-        .route(
-            "/api/ratings/leaderboard",
-            get(get_rating_leaderboard),
-        )
+        .route("/api/ratings/leaderboard", get(get_rating_leaderboard))
         .route("/api/chain-config", get(api::get_chain_config))
         .route("/api/table/:table_id/join", post(api::join_table))
         .route("/api/table/:table_id/lobby", get(api::get_table_lobby))
@@ -1029,10 +1027,7 @@ async fn main() {
             "/api/table/:table_id/transfer-chips",
             post(api::transfer_chips),
         )
-        .route(
-            "/api/table/:table_id/rit-opt-in",
-            post(api::rit_opt_in),
-        )
+        .route("/api/table/:table_id/rit-opt-in", post(api::rit_opt_in))
         .route(
             "/api/table/:table_id/player/:address/cards",
             get(api::get_player_cards),
@@ -1049,10 +1044,7 @@ async fn main() {
         .route("/api/table/:table_id/mpc-status", get(api::get_mpc_status))
         .route("/api/committee/status", get(api::committee_status))
         .route("/api/table/:table_id/chat/ws", get(chat_ws_handler))
-        .route(
-            "/api/table/:table_id/state/ws",
-            get(game_state_ws_handler),
-        )
+        .route("/api/table/:table_id/state/ws", get(game_state_ws_handler))
         .route(
             "/api/session/:session_id/cancel",
             post(api::cancel_mpc_session),
@@ -1121,14 +1113,38 @@ async fn main() {
         )
         .route("/api/admin/archives/purge", post(api::admin_purge_archives))
         // Tournament (sit-and-go) endpoints (Issue #17)
-        .route("/api/tournaments", get(api::tournament_api::list_tournaments))
-        .route("/api/tournaments", post(api::tournament_api::create_tournament))
-        .route("/api/tournaments/:id", get(api::tournament_api::get_tournament))
-        .route("/api/tournaments/:id/register", post(api::tournament_api::register_player))
-        .route("/api/tournaments/:id/start", post(api::tournament_api::start_tournament))
-        .route("/api/tournaments/:id/hand-result", post(api::tournament_api::record_hand_result))
-        .route("/api/tournaments/:id/balancing", get(api::tournament_api::get_balancing))
-        .route("/api/tournaments/:id/cancel", post(api::tournament_api::cancel_tournament))
+        .route(
+            "/api/tournaments",
+            get(api::tournament_api::list_tournaments),
+        )
+        .route(
+            "/api/tournaments",
+            post(api::tournament_api::create_tournament),
+        )
+        .route(
+            "/api/tournaments/:id",
+            get(api::tournament_api::get_tournament),
+        )
+        .route(
+            "/api/tournaments/:id/register",
+            post(api::tournament_api::register_player),
+        )
+        .route(
+            "/api/tournaments/:id/start",
+            post(api::tournament_api::start_tournament),
+        )
+        .route(
+            "/api/tournaments/:id/hand-result",
+            post(api::tournament_api::record_hand_result),
+        )
+        .route(
+            "/api/tournaments/:id/balancing",
+            get(api::tournament_api::get_balancing),
+        )
+        .route(
+            "/api/tournaments/:id/cancel",
+            post(api::tournament_api::cancel_tournament),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.idempotency_store.clone(),
             idempotency::idempotency_middleware,
@@ -1478,7 +1494,11 @@ async fn handle_game_state_socket(socket: WebSocket, table_id: u32, state: AppSt
     // Greet the client with the current snapshot immediately, so it doesn't
     // have to wait for the next state-changing action.
     if let Some(snapshot) = api::current_game_state_json(&state, table_id).await {
-        if ws_sender.send(Message::Text(snapshot.into())).await.is_err() {
+        if ws_sender
+            .send(Message::Text(snapshot.into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -1571,7 +1591,9 @@ async fn register_node_version(
 /// GET /api/mpc/version/nodes
 ///
 /// Snapshot of every node's last-reported version capabilities.
-async fn list_node_versions(State(state): State<AppState>) -> Json<Vec<mpc_version::NodeCapabilities>> {
+async fn list_node_versions(
+    State(state): State<AppState>,
+) -> Json<Vec<mpc_version::NodeCapabilities>> {
     Json(mpc_version::list_capabilities(&state.version_registry).await)
 }
 
@@ -1589,7 +1611,10 @@ async fn negotiate_version(
         .map(|s| s.split(',').map(|n| n.trim().to_string()).collect())
         .unwrap_or_default();
     if node_ids.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "missing 'nodes' query param".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "missing 'nodes' query param".to_string(),
+        ));
     }
     let circuit_names: Vec<String> = params
         .get("circuits")
@@ -1635,7 +1660,9 @@ async fn get_node_benchmark_report(State(state): State<AppState>) -> Json<serde_
 /// Actively probes every configured MPC node's `/health` endpoint right now
 /// to measure network latency (and any self-reported resource metrics),
 /// recording the results.
-async fn run_node_benchmark_sweep(State(state): State<AppState>) -> Json<Vec<mpc_node_benchmark::NodeBenchmarkSample>> {
+async fn run_node_benchmark_sweep(
+    State(state): State<AppState>,
+) -> Json<Vec<mpc_node_benchmark::NodeBenchmarkSample>> {
     let nodes: Vec<(String, String)> = state
         .mpc_config
         .node_endpoints
@@ -1643,7 +1670,12 @@ async fn run_node_benchmark_sweep(State(state): State<AppState>) -> Json<Vec<mpc
         .enumerate()
         .map(|(i, endpoint)| (i.to_string(), endpoint.clone()))
         .collect();
-    let samples = mpc_node_benchmark::run_benchmark_sweep(&state.node_benchmark_store, &state.mpc_client, &nodes).await;
+    let samples = mpc_node_benchmark::run_benchmark_sweep(
+        &state.node_benchmark_store,
+        &state.mpc_client,
+        &nodes,
+    )
+    .await;
     Json(samples)
 }
 
@@ -1684,7 +1716,9 @@ async fn submit_partition_report(
 /// GET /api/mpc/partition/status
 ///
 /// Currently partitioned nodes and any sessions paused as a result.
-async fn get_partition_status(State(state): State<AppState>) -> Json<mpc_partition::PartitionStatus> {
+async fn get_partition_status(
+    State(state): State<AppState>,
+) -> Json<mpc_partition::PartitionStatus> {
     let detector = state.partition_store.read().await;
     Json(detector.status())
 }
@@ -1706,10 +1740,14 @@ async fn register_node_identity(
     State(state): State<AppState>,
     Json(req): Json<RegisterNodeIdentityRequest>,
 ) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
-    mpc_identity::register_node_identity(&state.committee_registry, &req.node_id, &req.stellar_address)
-        .await
-        .map(|_| axum::http::StatusCode::NO_CONTENT)
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))
+    mpc_identity::register_node_identity(
+        &state.committee_registry,
+        &req.node_id,
+        &req.stellar_address,
+    )
+    .await
+    .map(|_| axum::http::StatusCode::NO_CONTENT)
+    .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e))
 }
 
 /// GET /api/mpc/identity/nodes

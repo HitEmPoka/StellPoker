@@ -94,7 +94,15 @@ fn gas_env() -> G<'static> {
     let committee = Address::generate(&env);
     let verifier = env.register(crate::verifier::ZkVerifierContract, ());
 
-    G { env, client, token, token_admin, admin, committee, verifier }
+    G {
+        env,
+        client,
+        token,
+        token_admin,
+        admin,
+        committee,
+        verifier,
+    }
 }
 
 fn cfg(g: &G) -> TableConfig {
@@ -103,6 +111,7 @@ fn cfg(g: &G) -> TableConfig {
         token: g.token.address.clone(),
         min_buy_in: 100,
         max_buy_in: 1000,
+        betting_structure: crate::types::BettingStructure::NoLimit,
         blinds_schedule: BlindsSchedule::fixed(&g.env, 5, 10),
         min_players: 2,
         max_players: 6,
@@ -173,7 +182,9 @@ fn check(label: &str, cost: u64, budget: u64) {
 fn gas_create_table() {
     let g = gas_env();
     let config = cfg(&g);
-    let cost = measure(&g, || { g.client.create_table(&g.admin, &config); });
+    let cost = measure(&g, || {
+        g.client.create_table(&g.admin, &config);
+    });
     check("create_table", cost, BUDGET_CREATE_TABLE);
 }
 
@@ -184,7 +195,9 @@ fn gas_join_table() {
     let p = Address::generate(&g.env);
     g.token_admin.mint(&p, &500);
 
-    let cost = measure(&g, || { g.client.join_table(&table_id, &p, &500); });
+    let cost = measure(&g, || {
+        g.client.join_table(&table_id, &p, &500);
+    });
     check("join_table", cost, BUDGET_JOIN_TABLE);
 }
 
@@ -195,7 +208,9 @@ fn gas_start_hand() {
     mint_and_join(&g, table_id, 500);
     mint_and_join(&g, table_id, 500);
 
-    let cost = measure(&g, || { g.client.start_hand(&table_id); });
+    let cost = measure(&g, || {
+        g.client.start_hand(&table_id);
+    });
     check("start_hand", cost, BUDGET_START_HAND);
 }
 
@@ -210,13 +225,22 @@ fn gas_commit_deal() {
     let root = BytesN::from_array(&g.env, &[1u8; 32]);
     let mut comms: Vec<BytesN<32>> = Vec::new(&g.env);
     let mut idxs: Vec<u32> = Vec::new(&g.env);
-    for i in 0..4u32 { idxs.push_back(i); }
+    for i in 0..4u32 {
+        idxs.push_back(i);
+    }
     comms.push_back(BytesN::from_array(&g.env, &[2u8; 32]));
     comms.push_back(BytesN::from_array(&g.env, &[3u8; 32]));
 
     let cost = measure(&g, || {
-        g.client.commit_deal(&table_id, &g.committee, &root, &comms, &idxs,
-            &Bytes::new(&g.env), &Bytes::new(&g.env));
+        g.client.commit_deal(
+            &table_id,
+            &g.committee,
+            &root,
+            &comms,
+            &idxs,
+            &Bytes::new(&g.env),
+            &Bytes::new(&g.env),
+        );
     });
     check("commit_deal", cost, BUDGET_COMMIT_DEAL);
 }
@@ -234,7 +258,8 @@ fn gas_player_action_call() {
     let actor = table.players.get(table.current_turn).unwrap();
 
     let cost = measure(&g, || {
-        g.client.player_action(&table_id, &actor.address, &1u32, &Action::Call);
+        g.client
+            .player_action(&table_id, &actor.address, &1u32, &Action::Call);
     });
     check("player_action(Call)", cost, BUDGET_PLAYER_ACTION);
 }
@@ -252,7 +277,8 @@ fn gas_player_action_fold() {
     let actor = table.players.get(table.current_turn).unwrap();
 
     let cost = measure(&g, || {
-        g.client.player_action(&table_id, &actor.address, &1u32, &Action::Fold);
+        g.client
+            .player_action(&table_id, &actor.address, &1u32, &Action::Fold);
     });
     check("player_action(Fold)", cost, BUDGET_PLAYER_ACTION);
 }
@@ -269,14 +295,21 @@ fn gas_reveal_board() {
     // advance to DealingFlop: SB calls
     let table = g.client.get_table(&table_id);
     let actor = table.players.get(table.current_turn).unwrap();
-    g.client.player_action(&table_id, &actor.address, &1u32, &Action::Call);
+    g.client
+        .player_action(&table_id, &actor.address, &1u32, &Action::Call);
 
     let cards: Vec<u32> = Vec::from_array(&g.env, [10, 20, 30]);
     let idxs: Vec<u32> = Vec::from_array(&g.env, [4, 5, 6]);
 
     let cost = measure(&g, || {
-        g.client.reveal_board(&table_id, &g.committee, &cards, &idxs,
-            &Bytes::new(&g.env), &Bytes::new(&g.env));
+        g.client.reveal_board(
+            &table_id,
+            &g.committee,
+            &cards,
+            &idxs,
+            &Bytes::new(&g.env),
+            &Bytes::new(&g.env),
+        );
     });
     check("reveal_board", cost, BUDGET_REVEAL_BOARD);
 }
@@ -289,7 +322,9 @@ fn gas_leave_table() {
     g.token_admin.mint(&p, &500);
     g.client.join_table(&table_id, &p, &500);
 
-    let cost = measure(&g, || { g.client.leave_table(&table_id, &p); });
+    let cost = measure(&g, || {
+        g.client.leave_table(&table_id, &p);
+    });
     check("leave_table", cost, BUDGET_LEAVE_TABLE);
 }
 
@@ -308,7 +343,9 @@ fn gas_claim_timeout() {
     g.env.ledger().set_sequence_number(new_seq);
 
     let claimer = Address::generate(&g.env);
-    let cost = measure(&g, || { g.client.claim_timeout(&table_id, &claimer); });
+    let cost = measure(&g, || {
+        g.client.claim_timeout(&table_id, &claimer);
+    });
     check("claim_timeout", cost, BUDGET_CLAIM_TIMEOUT);
 }
 
@@ -320,6 +357,7 @@ fn gas_withdraw_rake() {
         token: g.token.address.clone(),
         min_buy_in: 100,
         max_buy_in: 100_000,
+        betting_structure: crate::types::BettingStructure::NoLimit,
         blinds_schedule: BlindsSchedule::fixed(&g.env, 100, 200),
         min_players: 2,
         max_players: 6,
@@ -342,9 +380,12 @@ fn gas_withdraw_rake() {
     // fold to generate rake
     let table = g.client.get_table(&table_id);
     let folder = table.players.get(table.current_turn).unwrap();
-    g.client.player_action(&table_id, &folder.address, &1u32, &Action::Fold);
+    g.client
+        .player_action(&table_id, &folder.address, &1u32, &Action::Fold);
 
-    let cost = measure(&g, || { g.client.withdraw_rake(&table_id); });
+    let cost = measure(&g, || {
+        g.client.withdraw_rake(&table_id);
+    });
     check("withdraw_rake", cost, BUDGET_WITHDRAW_RAKE);
 }
 

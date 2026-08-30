@@ -62,10 +62,9 @@ fn validate_tls_config(report: &mut ValidationReport) {
         match std::fs::read(path) {
             Ok(bytes) => {
                 if bytes.is_empty() {
-                    report.errors.push(format!(
-                        "TLS certificate file '{}' is empty",
-                        path
-                    ));
+                    report
+                        .errors
+                        .push(format!("TLS certificate file '{}' is empty", path));
                 }
             }
             Err(e) => {
@@ -81,10 +80,9 @@ fn validate_tls_config(report: &mut ValidationReport) {
         match std::fs::read(path) {
             Ok(bytes) => {
                 if bytes.is_empty() {
-                    report.errors.push(format!(
-                        "TLS key file '{}' is empty",
-                        path
-                    ));
+                    report
+                        .errors
+                        .push(format!("TLS key file '{}' is empty", path));
                 }
             }
             Err(e) => {
@@ -119,9 +117,9 @@ fn validate_stellar_keypair(report: &mut ValidationReport) {
             }
         }
         Err(_) => {
-            report.warnings.push(
-                "STELLAR_SECRET_KEY not set — node will not sign transactions".into(),
-            );
+            report
+                .warnings
+                .push("STELLAR_SECRET_KEY not set — node will not sign transactions".into());
         }
     }
 }
@@ -130,15 +128,17 @@ async fn validate_soroban_rpc(report: &mut ValidationReport) {
     let rpc_url = match std::env::var("SOROBAN_RPC_URL") {
         Ok(url) => url,
         Err(_) => {
-            report.warnings.push(
-                "SOROBAN_RPC_URL not set — Soroban integration disabled".into(),
-            );
+            report
+                .warnings
+                .push("SOROBAN_RPC_URL not set — Soroban integration disabled".into());
             return;
         }
     };
 
     if rpc_url.is_empty() {
-        report.errors.push("SOROBAN_RPC_URL is set but empty".into());
+        report
+            .errors
+            .push("SOROBAN_RPC_URL is set but empty".into());
         return;
     }
 
@@ -177,9 +177,9 @@ fn validate_committee_registry(report: &mut ValidationReport) {
         Ok(addr) => {
             let addr = addr.trim();
             if addr.is_empty() {
-                report.errors.push(
-                    "COMMITTEE_REGISTRY_CONTRACT is set but empty".into(),
-                );
+                report
+                    .errors
+                    .push("COMMITTEE_REGISTRY_CONTRACT is set but empty".into());
             } else if !addr.starts_with('C') || addr.len() != 56 {
                 report.warnings.push(format!(
                     "COMMITTEE_REGISTRY_CONTRACT='{}' does not look like a valid Stellar contract address",
@@ -188,9 +188,9 @@ fn validate_committee_registry(report: &mut ValidationReport) {
             }
         }
         Err(_) => {
-            report.warnings.push(
-                "COMMITTEE_REGISTRY_CONTRACT not set — using static node endpoints".into(),
-            );
+            report
+                .warnings
+                .push("COMMITTEE_REGISTRY_CONTRACT not set — using static node endpoints".into());
         }
     }
 }
@@ -208,9 +208,9 @@ fn validate_peer_endpoints(report: &mut ValidationReport) {
         .collect();
 
     if endpoints.is_empty() {
-        report.errors.push(
-            "NODE_HTTP_ENDPOINTS is set but contains no valid endpoints".into(),
-        );
+        report
+            .errors
+            .push("NODE_HTTP_ENDPOINTS is set but contains no valid endpoints".into());
     }
 
     for ep in &endpoints {

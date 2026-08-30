@@ -530,8 +530,7 @@ mod error_handling_tests {
 
     #[test]
     fn fields_json_rejects_invalid_entry() {
-        let err =
-            fields_to_bytes32_json(&["12".to_string(), "bad-field".to_string()]).unwrap_err();
+        let err = fields_to_bytes32_json(&["12".to_string(), "bad-field".to_string()]).unwrap_err();
         assert!(err.contains("failed to parse field element"), "got: {err}");
     }
 

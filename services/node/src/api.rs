@@ -252,19 +252,17 @@ pub async fn post_shares(
     // attacker replaying a captured request) could resubmit shares under a
     // completed session_id, silently reopening it and letting a later
     // /generate call overwrite the already-delivered proof (issue #241).
-    if state
-        .finalized_sessions
-        .read()
-        .await
-        .contains(&session_id)
-    {
+    if state.finalized_sessions.read().await.contains(&session_id) {
         tracing::warn!(
             session_id = %session_id,
             "rejecting share submission for already-finalized session (replay)"
         );
         return Err((
             StatusCode::CONFLICT,
-            format!("session {} has already completed and cannot be reopened", session_id),
+            format!(
+                "session {} has already completed and cannot be reopened",
+                session_id
+            ),
         ));
     }
 
@@ -584,7 +582,12 @@ mod replay_protection_tests {
     #[tokio::test]
     async fn accepts_first_time_shares_for_a_fresh_session() {
         let state = test_state();
-        let result = post_shares(State(state), Path("session-fresh".to_string()), Json(shares_req())).await;
+        let result = post_shares(
+            State(state),
+            Path("session-fresh".to_string()),
+            Json(shares_req()),
+        )
+        .await;
         assert_eq!(result.unwrap(), StatusCode::OK);
     }
 
@@ -602,7 +605,11 @@ mod replay_protection_tests {
 
         let err = result.expect_err("expected replay rejection");
         assert_eq!(err.0, StatusCode::CONFLICT);
-        assert!(err.1.contains("already completed"), "unexpected message: {}", err.1);
+        assert!(
+            err.1.contains("already completed"),
+            "unexpected message: {}",
+            err.1
+        );
     }
 
     #[tokio::test]

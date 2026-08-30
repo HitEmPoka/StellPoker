@@ -160,10 +160,7 @@ impl MpcSessionState {
     /// Check whether the current phase has exceeded its timeout.
     /// Returns `Ok(remaining)` if still within budget, or `Err(phase_name)` on timeout.
     pub fn check_phase_timeout(&self) -> Result<Duration, &'static str> {
-        let started = self
-            .phase_started_at
-            .as_ref()
-            .ok_or("no phase started")?;
+        let started = self.phase_started_at.as_ref().ok_or("no phase started")?;
         let elapsed = started.elapsed();
 
         let budget = match &self.status {
@@ -287,10 +284,8 @@ pub async fn run_proof_generation(
         "merging share fragments"
     );
     let merge_start = Instant::now();
-    let witness_deadline =
-        Instant::now() + Duration::from_secs(phase_timeouts.witness_generation);
-    let proof_deadline =
-        Instant::now() + Duration::from_secs(phase_timeouts.proof_generation);
+    let witness_deadline = Instant::now() + Duration::from_secs(phase_timeouts.witness_generation);
+    let proof_deadline = Instant::now() + Duration::from_secs(phase_timeouts.proof_generation);
 
     let mut merge_cmd = Command::new("co-noir");
     merge_cmd
@@ -307,9 +302,14 @@ pub async fn run_proof_generation(
     merge_cmd.arg("--out").arg(&share_path);
     limits.apply_to_command(&mut merge_cmd);
 
-    let merge_output = run_profiled(&mut merge_cmd, &session_id, "merge_shares", profile.as_ref())
-        .await
-        .map_err(|e| format!("failed to spawn co-noir merge-input-shares: {}", e))?;
+    let merge_output = run_profiled(
+        &mut merge_cmd,
+        &session_id,
+        "merge_shares",
+        profile.as_ref(),
+    )
+    .await
+    .map_err(|e| format!("failed to spawn co-noir merge-input-shares: {}", e))?;
 
     if !merge_output.status.success() {
         let stderr = String::from_utf8_lossy(&merge_output.stderr);
@@ -365,9 +365,14 @@ pub async fn run_proof_generation(
         .arg("--out")
         .arg(&witness_path);
     limits.apply_to_command(&mut witness_cmd);
-    let witness_output = run_profiled(&mut witness_cmd, &session_id, "witness_generation", profile.as_ref())
-        .await
-        .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
+    let witness_output = run_profiled(
+        &mut witness_cmd,
+        &session_id,
+        "witness_generation",
+        profile.as_ref(),
+    )
+    .await
+    .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
 
     if !witness_output.status.success() {
         let stderr = String::from_utf8_lossy(&witness_output.stderr);
@@ -435,9 +440,14 @@ pub async fn run_proof_generation(
             .arg(&public_inputs_path)
             .arg("--fields-as-json");
         limits.apply_to_command(&mut proof_cmd);
-        let proof_output = run_profiled(&mut proof_cmd, &session_id, "proof_generation", profile.as_ref())
-            .await
-            .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;
+        let proof_output = run_profiled(
+            &mut proof_cmd,
+            &session_id,
+            "proof_generation",
+            profile.as_ref(),
+        )
+        .await
+        .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;
 
         if proof_output.status.success() {
             last_proof_output = Some(proof_output);

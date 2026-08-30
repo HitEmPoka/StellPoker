@@ -57,6 +57,7 @@ mod upgrade_test {
             token: sac.address(),
             min_buy_in: 100,
             max_buy_in: 1000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(&env, 5, 10),
             min_players: 2,
             max_players: 6,
@@ -272,9 +273,7 @@ mod upgrade_test {
         s.client.execute_upgrade(&s.table_id);
 
         // One second past the window.
-        s.env
-            .ledger()
-            .set_timestamp(86_400 + 86_400 + 21_600 + 1);
+        s.env.ledger().set_timestamp(86_400 + 86_400 + 21_600 + 1);
         s.client.revert_last_upgrade(&s.table_id);
     }
 

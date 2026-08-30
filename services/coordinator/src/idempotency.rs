@@ -110,9 +110,7 @@ pub async fn idempotency_middleware(
 
     if let Some(cached) = {
         let map = store.read().await;
-        map.get(&scope_key)
-            .filter(|c| !c.is_expired())
-            .cloned()
+        map.get(&scope_key).filter(|c| !c.is_expired()).cloned()
     } {
         let status =
             StatusCode::from_u16(cached.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);

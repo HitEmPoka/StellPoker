@@ -136,11 +136,18 @@ fn decode_signature(signature_raw: &str) -> Result<Signature, String> {
     };
 
     let normalized: [u8; 64] = if decoded.len() == 64 {
-        decoded.as_slice().try_into().map_err(|_| "malformed signature".to_string())?
+        decoded
+            .as_slice()
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?
     } else if decoded.len() == 68 {
-        decoded[4..68].try_into().map_err(|_| "malformed signature".to_string())?
+        decoded[4..68]
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?
     } else if decoded.len() == 72 && decoded[4..8] == [0, 0, 0, 64] {
-        decoded[8..72].try_into().map_err(|_| "malformed signature".to_string())?
+        decoded[8..72]
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?
     } else {
         return Err("unrecognized signature length".to_string());
     };
@@ -156,8 +163,8 @@ mod tests {
     fn keypair() -> (SigningKey, String) {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
-        let address = stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes())
-            .to_string();
+        let address =
+            stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes()).to_string();
         (signing_key, address)
     }
 
@@ -167,7 +174,9 @@ mod tests {
 
         let (signing_key, address) = keypair();
         let registry = new_registry();
-        register_node_identity(&registry, "0", &address).await.unwrap();
+        register_node_identity(&registry, "0", &address)
+            .await
+            .unwrap();
 
         let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000);
         let sig = signing_key.sign(message.as_bytes());
@@ -201,7 +210,9 @@ mod tests {
 
         let (signing_key, address) = keypair();
         let registry = new_registry();
-        register_node_identity(&registry, "0", &address).await.unwrap();
+        register_node_identity(&registry, "0", &address)
+            .await
+            .unwrap();
 
         let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000);
         let sig = signing_key.sign(message.as_bytes());

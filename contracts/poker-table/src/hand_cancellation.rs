@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, Env, Symbol};
 use crate::types::*;
+use soroban_sdk::{Env, Symbol};
 
 /// Hand cancellation mechanism for invalid states
 /// Issue #194
@@ -46,7 +47,7 @@ pub fn cancel_hand(
         CancellationReason::PlayerDisconnect => Symbol::new(env, "hand_cancelled_disconnect"),
         CancellationReason::Timeout => Symbol::new(env, "hand_cancelled_timeout"),
     };
-    
+
     env.events().publish((event_name,), refunded);
 
     Ok(refunded)

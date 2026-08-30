@@ -79,6 +79,24 @@ pub fn process_action(
                 return Err(PokerTableError::NotEnoughChips);
             }
 
+            match table.config.betting_structure {
+                BettingStructure::NoLimit => {}
+                BettingStructure::PotLimit => {
+                    if *amount > table.pot {
+                        return Err(PokerTableError::ExceedsPotLimit);
+                    }
+                }
+                BettingStructure::FixedLimit(ref cfg) => {
+                    let allowed_bet = match table.phase {
+                        GamePhase::Preflop | GamePhase::Flop => cfg.small_bet,
+                        _ => cfg.big_bet,
+                    };
+                    if *amount != allowed_bet {
+                        return Err(PokerTableError::InvalidFixedLimitBet);
+                    }
+                }
+            }
+
             p.stack -= *amount;
             p.bet_this_round += *amount;
             p.committed += *amount;
@@ -117,6 +135,25 @@ pub fn process_action(
             }
             if total_needed > p.stack {
                 return Err(PokerTableError::NotEnoughChips);
+            }
+
+            match table.config.betting_structure {
+                BettingStructure::NoLimit => {}
+                BettingStructure::PotLimit => {
+                    let max_raise = table.pot + to_call;
+                    if *amount > max_raise {
+                        return Err(PokerTableError::ExceedsPotLimit);
+                    }
+                }
+                BettingStructure::FixedLimit(ref cfg) => {
+                    let allowed_bet = match table.phase {
+                        GamePhase::Preflop | GamePhase::Flop => cfg.small_bet,
+                        _ => cfg.big_bet,
+                    };
+                    if *amount != allowed_bet {
+                        return Err(PokerTableError::InvalidFixedLimitBet);
+                    }
+                }
             }
 
             p.stack -= total_needed;
@@ -187,7 +224,13 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
     }
 
     // Reset minimum raise size to one big blind for the new betting round.
-    table.last_raise_size = game::current_blind_level(table)?.big_blind;
+    table.last_raise_size = match table.config.betting_structure {
+        BettingStructure::FixedLimit(ref cfg) => match table.phase {
+            GamePhase::Preflop | GamePhase::Flop => cfg.small_bet,
+            _ => cfg.big_bet,
+        },
+        _ => game::current_blind_level(table)?.big_blind,
+    };
 
     // First active player after dealer acts first post-flop
     let num_players = table.players.len() as u32;
@@ -200,7 +243,7 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
             .players
             .get(seat)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if !p.folded && !p.all_in {
+        if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
             table.current_turn = seat;
             return Ok(());
         }
@@ -225,7 +268,7 @@ fn advance_turn(env: &Env, table: &mut TableState) -> Result<(), PokerTableError
             .players
             .get(next)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if !p.folded && !p.all_in {
+        if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
             break;
         }
         next = (next + 1) % num_players;
@@ -248,7 +291,7 @@ fn is_round_complete(table: &TableState) -> Result<bool, PokerTableError> {
             .players
             .get(i)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if p.folded || p.all_in {
+        if p.folded || p.all_in || p.sitting_out || p.stack == 0 {
             continue;
         }
         if p.bet_this_round != current_bet {
