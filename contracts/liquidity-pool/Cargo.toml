@@ -1,5 +1,5 @@
 [package]
-name = "jackpot-verifier"
+name = "liquidity-pool"
 version = "0.1.0"
 edition = "2021"
 

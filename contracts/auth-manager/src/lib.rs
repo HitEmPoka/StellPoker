@@ -919,7 +919,7 @@ mod test {
         // Second admin approves
         client.approve_action(&admin2, &pid);
         // Fast-forward past timelock
-        env.ledger().with_mut(|li| li.timestamp += 2);
+        env.ledger().set_timestamp(env.ledger().timestamp() + 2);
         client.execute_action(&admin, &pid);
         let prop = client.get_proposal(&pid).unwrap();
         assert!(prop.executed);
