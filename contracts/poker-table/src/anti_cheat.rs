@@ -5,7 +5,7 @@
 //! - Abnormal fold rates against specific opponents
 //! - Short-stack targeting behavior
 
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 /// Threshold for repeated losses to trigger flagging (number of hands)
 const REPEATED_LOSS_THRESHOLD: u32 = 5;
@@ -15,6 +15,7 @@ const ABNORMAL_FOLD_RATE_THRESHOLD: u32 = 80;
 const TRACKING_WINDOW: u32 = 20;
 
 /// Pattern detection data for a player pair
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct PlayerInteractionStats {
     /// Number of hands where player A lost to player B
@@ -68,6 +69,7 @@ impl PlayerInteractionStats {
 }
 
 /// Chip dumping detection result
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct ChipDumpingFlag {
     pub suspected_dumper: Address,
@@ -76,7 +78,8 @@ pub struct ChipDumpingFlag {
     pub confidence: u32, // 0-100 percentage
 }
 
-#[derive(Clone, Debug)]
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ChipDumpingReason {
     RepeatedLosses,
     AbnormalFoldRate,
@@ -156,12 +159,11 @@ pub fn record_hand_outcome(
         }
     }
 
-    // Keep window size limited
+    // Keep window size limited with integer decay (avoid floating point in no_std)
     if stats.total_interactions > TRACKING_WINDOW {
-        // Simple decay: reduce all counters proportionally
-        let decay_factor = TRACKING_WINDOW as f64 / stats.total_interactions as f64;
-        stats.losses_to_opponent = (stats.losses_to_opponent as f64 * decay_factor) as u32;
-        stats.folds_against_opponent = (stats.folds_against_opponent as f64 * decay_factor) as u32;
+        // Simple decay: reduce counters by 20% to keep window bounded
+        stats.losses_to_opponent = (stats.losses_to_opponent * 80) / 100;
+        stats.folds_against_opponent = (stats.folds_against_opponent * 80) / 100;
         stats.total_interactions = TRACKING_WINDOW;
     }
 }

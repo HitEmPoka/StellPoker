@@ -114,29 +114,113 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     env.storage()
         .instance()
         .remove(&DataKey::ActiveStraddleSeat(table.id));
+    env.storage()
+        .instance()
+        .remove(&DataKey::ActiveStraddleState(table.id));
+    // Replenish time banks at the start of the hand (if configured)
+    crate::time_bank::replenish_all(env, table);
+    // Handle optional straddle (including Mississippi any-position)
     if let Some(straddle) = env
         .storage()
         .instance()
         .get::<DataKey, StraddleConfig>(&DataKey::StraddleConfig(table.id))
     {
         if straddle.multiplier != 0 {
-            let (seat, amount) = match straddle.position {
-                StraddlePosition::BigBlind => {
-                    (bb_seat, level.big_blind * (straddle.multiplier - 1) as i128)
+            // Resolve seat and raw amount based on position
+            let resolved: Option<(u32, i128, bool)> = match straddle.position.clone() {
+                StraddlePosition::BigBlind => Some((
+                    bb_seat,
+                    straddle.effective_amount(level.big_blind, true),
+                    true,
+                )),
+                StraddlePosition::Utg => Some((
+                    (table.dealer_seat + 3) % num_players,
+                    straddle.effective_amount(level.big_blind, false),
+                    false,
+                )),
+                StraddlePosition::Button => Some((
+                    table.dealer_seat,
+                    straddle.effective_amount(level.big_blind, false),
+                    false,
+                )),
+                StraddlePosition::Mississippi | StraddlePosition::Any => {
+                    // Mississippi: check for a pending volunteer straddle
+                    if let Some(pending) = env.storage().instance().get::<
+                        DataKey,
+                        MississippiStraddle,
+                    >(&DataKey::MississippiPending(table.id))
+                    {
+                        let amt = if pending.amount > 0 {
+                            if straddle.amount_cap > 0 && pending.amount > straddle.amount_cap {
+                                straddle.amount_cap
+                            } else {
+                                pending.amount
+                            }
+                        } else {
+                            straddle.effective_amount(level.big_blind, false)
+                        };
+                        Some((pending.seat, amt, false))
+                    } else {
+                        // No volunteer — default to button for backward compat, or skip if no button desired
+                        // We post from button as the natural Mississippi default
+                        Some((
+                            table.dealer_seat,
+                            straddle.effective_amount(level.big_blind, false),
+                            false,
+                        ))
+                    }
                 }
-                StraddlePosition::Utg => (
-                    next_active_seat(table, bb_seat).unwrap(),
-                    level.big_blind * straddle.multiplier as i128,
-                ),
+                StraddlePosition::Custom(seat) => {
+                    if seat < num_players {
+                        Some((
+                            seat,
+                            straddle.effective_amount(level.big_blind, false),
+                            false,
+                        ))
+                    } else {
+                        None
+                    }
+                }
             };
-            post_blind(table, seat, amount)?;
-            env.storage()
-                .instance()
-                .set(&DataKey::ActiveStraddleSeat(table.id), &seat);
-            env.events().publish(
-                (Symbol::new(env, "straddle_posted"), table.id),
-                (seat, straddle.multiplier),
-            );
+            if let Some((seat, amount, is_bb)) = resolved {
+                // Enforce cap already via effective_amount; double-check
+                let capped = if straddle.amount_cap > 0 && amount > straddle.amount_cap {
+                    straddle.amount_cap
+                } else {
+                    amount
+                };
+                if capped > 0 {
+                    // For big-blind straddle, the amount is *additional* over the BB already posted
+                    let post_amount = if is_bb {
+                        // BB already posted level.big_blind, so only the extra
+                        capped
+                    } else {
+                        capped
+                    };
+                    post_blind(table, seat, post_amount)?;
+                    let active = ActiveStraddle {
+                        seat,
+                        amount: post_amount,
+                        live_only: straddle.live_only,
+                        allow_reraise: straddle.allow_reraise,
+                        position: straddle.position.clone(),
+                    };
+                    env.storage()
+                        .instance()
+                        .set(&DataKey::ActiveStraddleSeat(table.id), &seat);
+                    env.storage()
+                        .instance()
+                        .set(&DataKey::ActiveStraddleState(table.id), &active);
+                    // Clear Mississippi pending once consumed
+                    env.storage()
+                        .instance()
+                        .remove(&DataKey::MississippiPending(table.id));
+                    env.events().publish(
+                        (Symbol::new(env, "straddle_posted"), table.id),
+                        (seat, straddle.multiplier, straddle.live_only, capped, straddle.allow_reraise),
+                    );
+                }
+            }
         }
     }
 

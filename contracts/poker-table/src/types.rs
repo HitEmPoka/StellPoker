@@ -162,19 +162,106 @@ pub struct UpgradeRecord {
 }
 
 /// Position where a straddle is posted.
+///
+/// Mississippi straddle extends support so *any* position can straddle,
+/// not just the classic BigBlind/UTG spots. See docs for live/dormant semantics.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum StraddlePosition {
     BigBlind,
     Utg,
+    Button,
+    /// Mississippi straddle — any seated player may post the straddle.
+    /// When configured, the straddle seat is chosen dynamically via
+    /// `post_mississippi_straddle` or defaults to the button if nobody volunteers.
+    Mississippi,
+    /// Any position (alias for Mississippi for API ergonomics).
+    Any,
+    /// Explicit seat index.
+    Custom(u32),
 }
 
 /// Configuration for an optional straddle (2x or 3x big blind) that
 /// can be posted before cards are dealt.
+///
+/// Extended (v2) with Mississippi support and config flags:
+/// - `live_only`: when true the straddle is a live blind (straddler acts last preflop)
+/// - `amount_cap`: maximum straddle amount (0 = no cap). If the computed amount
+///   exceeds the cap, it is capped rather than reverting.
+/// - `allow_reraise`: when false the straddler has no re-raise option (must check
+///   if unraised).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StraddleConfig {
     pub multiplier: u32, // 0 = disabled, 2 = 2x, 3 = 3x
+    pub position: StraddlePosition,
+    pub live_only: bool,
+    pub amount_cap: i128,
+    pub allow_reraise: bool,
+}
+
+impl StraddleConfig {
+    pub fn new(
+        multiplier: u32,
+        position: StraddlePosition,
+        live_only: bool,
+        amount_cap: i128,
+        allow_reraise: bool,
+    ) -> Self {
+        Self {
+            multiplier,
+            position,
+            live_only,
+            amount_cap,
+            allow_reraise,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            multiplier: 0,
+            position: StraddlePosition::BigBlind,
+            live_only: false,
+            amount_cap: 0,
+            allow_reraise: true,
+        }
+    }
+
+    /// Effective straddle amount after applying the cap.
+    pub fn effective_amount(&self, big_blind: i128, is_big_blind_straddle: bool) -> i128 {
+        let raw = if is_big_blind_straddle {
+            big_blind * (self.multiplier as i128 - 1).max(0)
+        } else {
+            big_blind * self.multiplier as i128
+        };
+        if self.amount_cap > 0 && raw > self.amount_cap {
+            self.amount_cap
+        } else {
+            raw
+        }
+    }
+}
+
+/// Mississippi straddle pending entry — a player volunteers to straddle for the
+/// next hand.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MississippiStraddle {
+    pub player: Address,
+    pub seat: u32,
+    pub amount: i128,
+    pub live_only: bool,
+    pub allow_reraise: bool,
+}
+
+/// Active straddle state for the current hand (includes live/re-raise flags).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ActiveStraddle {
+    pub seat: u32,
+    pub amount: i128,
+    pub live_only: bool,
+    pub allow_reraise: bool,
     pub position: StraddlePosition,
 }
 
@@ -380,37 +467,27 @@ pub enum PokerTableError {
     NoDeadChipsToReclaim = 83,
     /// Invalid signature provided for reclaim.
     InvalidSignature = 84,
-    InvalidAntePercentage = 85,
-    GuaranteeNotFound = 86,
-    GuaranteeAlreadyConsumed = 87,
-    GuaranteeNotConsumed = 88,
-    GuaranteeExpired = 89,
-    GuaranteeNotExpired = 90,
-    InvalidBettingStructure = 91,
-    ExceedsPotLimit = 92,
-    InvalidFixedLimitBet = 93,
-    GuaranteeAlreadyExists = 94,
-    InvalidGuaranteeCollateral = 95,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub enum GuaranteeStatus {
-    Active,
-    Consumed,
-    Settled,
-    Liquidated,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct GuaranteeRecord {
-    pub player: Address,
-    pub principal: i128,
-    pub escrowed_collateral: i128,
-    pub settlement_deadline: u64,
-    pub penalty: i128,
-    pub status: GuaranteeStatus,
+    // --- Straddle extensions (Mississippi) ---
+    StraddleNotAllowed = 85,
+    StraddleCapExceeded = 86,
+    MississippiStraddleAlreadyPosted = 87,
+    NoMississippiStraddle = 88,
+    // --- Time bank ---
+    TimeBankNotConfigured = 89,
+    TimeBankExhausted = 90,
+    TimeBankAlreadyUsed = 91,
+    InvalidTimeBankConfig = 92,
+    NotYourTurnForTimeBank = 93,
+    // --- RBAC ---
+    RbacNotConfigured = 94,
+    InsufficientPermission = 95,
+    // --- Jackpot verifier ---
+    JackpotProofInvalid = 96,
+    JackpotNotEnabled = 97,
+    JackpotAlreadyClaimed = 98,
+    InvalidAction = 99,
+    NoUpgradeToRevert = 100,
+    RollbackWindowExpired = 101,
 }
 
 #[contracttype]
@@ -439,6 +516,7 @@ pub struct PlayerState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum GamePhase {
     Waiting,      // Waiting for players
+    WaitingForPlayers, // Alias for Waiting (legacy)
     Dealing,      // Committee is dealing
     Preflop,      // Betting round: preflop
     DealingFlop,  // Committee revealing flop
@@ -601,6 +679,70 @@ pub struct SweepState {
     pub swept_amounts: Vec<(Address, i128)>,
 }
 
+/// Per-player time bank for difficult decisions.
+///
+/// Each player has a personal reservoir of extra seconds that replenishes
+/// slowly and can be spent to extend the action deadline when they need more
+/// time to think. Enforcement is done at the contract level via deadline checks.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeBank {
+    /// Seconds remaining in the player's time bank.
+    pub remaining_seconds: u64,
+    /// Ledger sequence when the bank was last replenished.
+    pub last_replenish_ledger: u32,
+    /// Number of times this player has dipped into the time bank this hand.
+    pub extensions_used_this_hand: u32,
+    /// Whether time bank was used for the current decision.
+    pub active_extension: bool,
+    /// How many seconds the current extension added.
+    pub active_extension_seconds: u64,
+}
+
+/// Configuration for per-player time banks.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TimeBankConfig {
+    /// Initial time bank allocation when a player joins (seconds).
+    pub initial_seconds: u64,
+    /// Maximum time bank capacity (seconds).
+    pub max_seconds: u64,
+    /// Replenish rate: seconds added per hand completed.
+    pub replenish_per_hand: u64,
+    /// Replenish rate: seconds added per ledger (0 = no ledger-based replenish).
+    pub replenish_per_ledger: u64,
+    /// How many seconds a single extension grants.
+    pub extension_seconds: u64,
+    /// Maximum extensions a player may use per hand.
+    pub max_extensions_per_hand: u32,
+}
+
+impl TimeBankConfig {
+    pub fn default_config() -> Self {
+        TimeBankConfig {
+            initial_seconds: 60,
+            max_seconds: 120,
+            replenish_per_hand: 10,
+            replenish_per_ledger: 0,
+            extension_seconds: 30,
+            max_extensions_per_hand: 2,
+        }
+    }
+    pub fn disabled() -> Self {
+        TimeBankConfig {
+            initial_seconds: 0,
+            max_seconds: 0,
+            replenish_per_hand: 0,
+            replenish_per_ledger: 0,
+            extension_seconds: 0,
+            max_extensions_per_hand: 0,
+        }
+    }
+    pub fn is_enabled(&self) -> bool {
+        self.max_seconds > 0 && self.extension_seconds > 0
+    }
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableClosureProposal {
@@ -696,6 +838,20 @@ pub enum DataKey {
     HandTypeDistribution,
     /// Dead chip sweep state: (table_id) -> SweepState
     DeadChipSweep(u32),
-    /// Guarantee record: (table_id, player_address) -> GuaranteeRecord
-    Guarantee(u32, Address),
+    /// Per-player time bank: (table_id, player) -> TimeBank
+    TimeBank(u32, Address),
+    /// Time bank config per table: (table_id) -> TimeBankConfig
+    TimeBankConfig(u32),
+    /// Mississippi straddle pending: (table_id) -> MississippiStraddle
+    MississippiPending(u32),
+    /// Extended active straddle state including live/re-raise flags
+    ActiveStraddleState(u32),
+    /// RBAC: per-table auth manager override (instance storage mirror)
+    AuthManager(u32),
+    /// RBAC: role assignment audit log position
+    RbacAudit(u32),
+    /// Jackpot verifier contract per table
+    JackpotVerifier(u32),
+    /// Jackpot claim history: (table_id, hand_number) -> Address claimant
+    JackpotClaim(u32, u32),
 }
