@@ -91,6 +91,20 @@ pub fn process_action(
             table.players.set(seat, p);
         }
         Action::Raise(amount) => {
+            // Enforce straddle re-raise rights: when the active straddle is live-only
+            // but `allow_reraise` is false, the straddler cannot re-raise.
+            if env
+                .storage()
+                .instance()
+                .get::<DataKey, ActiveStraddle>(&DataKey::ActiveStraddleState(table.id))
+                .map(|a| a.seat == seat && !a.allow_reraise)
+                .unwrap_or(false)
+            {
+                // Only allow the forced reraise restriction during Preflop where the straddle matters
+                if matches!(table.phase, GamePhase::Preflop) {
+                    return Err(PokerTableError::RaiseTooSmall);
+                }
+            }
             let to_call = current_bet - p.bet_this_round;
             let total_needed = to_call + *amount;
             // Standard poker minimum-raise rule: the raise increment must be at
