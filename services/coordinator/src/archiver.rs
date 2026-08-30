@@ -97,10 +97,9 @@ pub async fn archive_session(
         idx.sessions.push(archived.clone());
     }
 
-    let file_path = config.storage_path.join(format!(
-        "{}.json",
-        archived.archive_id
-    ));
+    let file_path = config
+        .storage_path
+        .join(format!("{}.json", archived.archive_id));
 
     if let Some(parent) = file_path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -185,10 +184,7 @@ pub async fn query_archives(
     results.into_iter().skip(offset).take(limit).collect()
 }
 
-pub async fn purge_old_archives(
-    store: &ArchiveStore,
-    config: &ArchiveConfig,
-) -> usize {
+pub async fn purge_old_archives(store: &ArchiveStore, config: &ArchiveConfig) -> usize {
     let cutoff = Utc::now() - chrono::Duration::from_std(config.purge_ttl).unwrap_or_default();
     let mut idx = store.write().await;
 
@@ -247,21 +243,19 @@ pub async fn load_existing_archives(store: &ArchiveStore, config: &ArchiveConfig
         }
 
         match tokio::fs::read_to_string(&path).await {
-            Ok(content) => {
-                match serde_json::from_str::<ArchivedSession>(&content) {
-                    Ok(archived) => {
-                        idx.sessions.push(archived);
-                        loaded += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            err = %e,
-                            "failed to parse archive file"
-                        );
-                    }
+            Ok(content) => match serde_json::from_str::<ArchivedSession>(&content) {
+                Ok(archived) => {
+                    idx.sessions.push(archived);
+                    loaded += 1;
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        err = %e,
+                        "failed to parse archive file"
+                    );
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     path = %path.display(),

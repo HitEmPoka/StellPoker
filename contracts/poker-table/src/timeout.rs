@@ -70,10 +70,8 @@ pub fn process_timeout(
             };
             table.last_action_ledger = current_ledger;
             table.action_deadline = 0;
-            env.events().publish(
-                (Symbol::new(env, "rit_timeout"), table.id),
-                (),
-            );
+            env.events()
+                .publish((Symbol::new(env, "rit_timeout"), table.id), ());
         }
 
         // Committee timeout during dealing/reveal — dispute, return funds

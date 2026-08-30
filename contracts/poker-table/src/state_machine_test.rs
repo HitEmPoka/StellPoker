@@ -73,7 +73,9 @@ fn act(
     player: &Address,
     action: &Action,
 ) -> Result<(), PokerTableError> {
-    env.as_contract(poker, || betting::process_action(env, table, player, action))
+    env.as_contract(poker, || {
+        betting::process_action(env, table, player, action)
+    })
 }
 
 /// Maximum seated players per table (matches the contract cap).
@@ -184,6 +186,7 @@ fn build_preflop_state(
             token: admin.clone(),
             min_buy_in: 0,
             max_buy_in: i128::MAX,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, small_blind, big_blind),
             min_players: 2,
             max_players: MAX_PLAYERS_PER_TABLE,

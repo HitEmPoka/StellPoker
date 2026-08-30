@@ -662,10 +662,7 @@ pub fn spawn_share_refresh_task(
             }
         }
     });
-    tracing::info!(
-        "Share refresh task started (interval={}s)",
-        interval_secs
-    );
+    tracing::info!("Share refresh task started (interval={}s)", interval_secs);
 }
 
 /// Refresh shares for all active tables by generating new additive masks
@@ -706,7 +703,11 @@ async fn refresh_all_shares(
                 let mut mask_data: HashMap<u32, String> = HashMap::new();
                 let total = peer_http_endpoints.len() as u32;
                 for party in 0..total {
-                    let mask_bytes = refreshed.mask_shares.get(&party).cloned().unwrap_or_default();
+                    let mask_bytes = refreshed
+                        .mask_shares
+                        .get(&party)
+                        .cloned()
+                        .unwrap_or_default();
                     use base64::Engine;
                     mask_data.insert(
                         party,

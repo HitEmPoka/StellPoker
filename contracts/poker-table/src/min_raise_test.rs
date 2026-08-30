@@ -84,6 +84,7 @@ fn two_player_table(
             token: admin.clone(),
             min_buy_in: 0,
             max_buy_in: i128::MAX,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, small_blind, big_blind),
             min_players: 2,
             max_players: 6,
@@ -151,7 +152,9 @@ fn act(
     player: &Address,
     action: &Action,
 ) -> Result<(), PokerTableError> {
-    env.as_contract(poker, || betting::process_action(env, table, player, action))
+    env.as_contract(poker, || {
+        betting::process_action(env, table, player, action)
+    })
 }
 
 // ---------------------------------------------------------------------------

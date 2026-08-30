@@ -152,9 +152,10 @@ impl CommitteeRegistryContract {
                 showdown_ledgers: 120,
             },
         );
-        env.storage()
-            .instance()
-            .set(&RegistryKey::DelegationCooldown, &delegation_cooldown_ledgers);
+        env.storage().instance().set(
+            &RegistryKey::DelegationCooldown,
+            &delegation_cooldown_ledgers,
+        );
     }
 
     /// Admin configures timeout windows for the phases that depend on MPC nodes.
@@ -259,7 +260,10 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
+        assert!(
+            constant_time::address_eq(&env, &admin, &stored_admin),
+            "not admin"
+        );
         env.storage().instance().set(&RegistryKey::Paused, &true);
         env.events()
             .publish((Symbol::new(&env, "registry_paused"),), admin);
@@ -274,7 +278,10 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
+        assert!(
+            constant_time::address_eq(&env, &admin, &stored_admin),
+            "not admin"
+        );
         env.storage().instance().set(&RegistryKey::Paused, &false);
         env.events()
             .publish((Symbol::new(&env, "registry_unpaused"),), admin);
@@ -424,7 +431,10 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
+        assert!(
+            constant_time::address_eq(&env, &admin, &stored_admin),
+            "not admin"
+        );
         assert!(
             !env.storage()
                 .instance()
@@ -462,7 +472,10 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(constant_time::address_eq(&env, &admin, &stored_admin), "not admin");
+        assert!(
+            constant_time::address_eq(&env, &admin, &stored_admin),
+            "not admin"
+        );
         assert!(
             !env.storage()
                 .instance()
@@ -737,10 +750,8 @@ impl CommitteeRegistryContract {
         let token = token::Client::new(&env, &token_addr);
         token.transfer(&env.current_contract_address(), &member, &amount);
 
-        env.events().publish(
-            (Symbol::new(&env, "rewards_withdrawn"),),
-            (member, amount),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "rewards_withdrawn"),), (member, amount));
         amount
     }
 
@@ -834,7 +845,10 @@ impl CommitteeRegistryContract {
             .instance()
             .get(&RegistryKey::Admin)
             .expect("not initialized");
-        assert!(constant_time::address_eq(env, admin, &stored_admin), "not admin");
+        assert!(
+            constant_time::address_eq(env, admin, &stored_admin),
+            "not admin"
+        );
     }
 
     fn timeout_for_phase(config: &TimeoutConfig, phase: &GamePhase) -> u32 {
@@ -866,7 +880,11 @@ impl CommitteeRegistryContract {
         for i in 0..delegators.len() {
             let delegator = delegators.get(i).unwrap();
             let del_key = RegistryKey::Delegation(delegator.clone(), member.clone());
-            if let Some(mut rec) = env.storage().persistent().get::<RegistryKey, DelegationRecord>(&del_key) {
+            if let Some(mut rec) = env
+                .storage()
+                .persistent()
+                .get::<RegistryKey, DelegationRecord>(&del_key)
+            {
                 // Checkpoint rewards before slashing the amount.
                 rec.pending_rewards += Self::calc_pending(&rec, m.rewards_per_stake);
                 rec.debt_snapshot = m.rewards_per_stake;
@@ -878,7 +896,11 @@ impl CommitteeRegistryContract {
             }
             // Also haircut any pending (cooling-down) undelegation.
             let pend_key = RegistryKey::PendingUndelegation(delegator.clone(), member.clone());
-            if let Some(mut pend) = env.storage().persistent().get::<RegistryKey, UndelegationRequest>(&pend_key) {
+            if let Some(mut pend) = env
+                .storage()
+                .persistent()
+                .get::<RegistryKey, UndelegationRequest>(&pend_key)
+            {
                 let slash_amount = pend.amount / 2;
                 pend.amount -= slash_amount;
                 total_delegation_slashed += slash_amount;
@@ -1328,9 +1350,7 @@ mod test {
 mod test_paused {
     use super::*;
     use soroban_sdk::{
-        testutils::Address as _,
-        token::StellarAssetClient,
-        Address, Env, String, Vec,
+        testutils::Address as _, token::StellarAssetClient, Address, Env, String, Vec,
     };
 
     /// A freshly initialized registry with no members yet.
@@ -1602,7 +1622,7 @@ mod test_delegation {
         let returned = client.withdraw_undelegation(&delegator, &node);
         assert_eq!(returned, 400);
         assert_eq!(token.balance(&delegator), 1_400); // started 2000, delegated 1000, got 400 back
-        // Pending undelegation gone.
+                                                      // Pending undelegation gone.
         assert!(client.get_pending_undelegation(&delegator, &node).is_none());
     }
 

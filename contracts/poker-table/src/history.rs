@@ -71,9 +71,7 @@ pub fn archive_hand(
 
     let mut resolved: Vec<Payout> = Vec::new(env);
     for i in 0..payouts.len() {
-        let (seat, amount) = payouts
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let (seat, amount) = payouts.get(i).ok_or(PokerTableError::InvalidPlayerIndex)?;
         let player = table
             .players
             .get(seat)
@@ -163,8 +161,7 @@ pub fn get_history_chunk(env: &Env, table_id: u32, offset: u32, limit: u32) -> V
 
     // Walk backwards from the most recently written slot, skipping `offset`
     // records, then taking `take` records.
-    let newest_slot =
-        (meta.next_slot + HAND_HISTORY_CAPACITY - 1) % HAND_HISTORY_CAPACITY;
+    let newest_slot = (meta.next_slot + HAND_HISTORY_CAPACITY - 1) % HAND_HISTORY_CAPACITY;
     let start_slot = (newest_slot + HAND_HISTORY_CAPACITY - offset) % HAND_HISTORY_CAPACITY;
 
     let mut slot = start_slot;

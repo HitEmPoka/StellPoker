@@ -58,10 +58,7 @@ impl PlayerInteractionStats {
         }
 
         // Check for consistent small losses (potential intentional dumping)
-        if self.losses_to_opponent > 3
-            && self.avg_loss_amount > 0
-            && self.avg_loss_amount < 500
-        {
+        if self.losses_to_opponent > 3 && self.avg_loss_amount > 0 && self.avg_loss_amount < 500 {
             // Consistent small losses might indicate controlled dumping
             return true;
         }
@@ -116,10 +113,7 @@ pub fn detect_chip_dumping(
     }
 
     // Small consistent losses pattern
-    if stats.losses_to_opponent > 3
-        && stats.avg_loss_amount > 0
-        && stats.avg_loss_amount < 500
-    {
+    if stats.losses_to_opponent > 3 && stats.avg_loss_amount > 0 && stats.avg_loss_amount < 500 {
         confidence += 25;
     }
 
@@ -166,10 +160,8 @@ pub fn record_hand_outcome(
     if stats.total_interactions > TRACKING_WINDOW {
         // Simple decay: reduce all counters proportionally
         let decay_factor = TRACKING_WINDOW as f64 / stats.total_interactions as f64;
-        stats.losses_to_opponent =
-            (stats.losses_to_opponent as f64 * decay_factor) as u32;
-        stats.folds_against_opponent =
-            (stats.folds_against_opponent as f64 * decay_factor) as u32;
+        stats.losses_to_opponent = (stats.losses_to_opponent as f64 * decay_factor) as u32;
+        stats.folds_against_opponent = (stats.folds_against_opponent as f64 * decay_factor) as u32;
         stats.total_interactions = TRACKING_WINDOW;
     }
 }

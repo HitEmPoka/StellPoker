@@ -628,7 +628,10 @@ pub async fn request_deal(
     {
         let mut used = state.used_session_ids.write().await;
         if !used.insert(proof_session_id.clone()) {
-            tracing::error!("Duplicate MPC session ID rejected (replay attack guard): {}", proof_session_id);
+            tracing::error!(
+                "Duplicate MPC session ID rejected (replay attack guard): {}",
+                proof_session_id
+            );
             return Err(StatusCode::CONFLICT);
         }
     }
@@ -656,8 +659,7 @@ pub async fn request_deal(
             // deal instead of a generic gateway error. Issue #235: attempt to
             // checkpoint state and line up a replacement node for that retry.
             if mpc::is_node_unavailable_error(&e) {
-                attempt_partial_recovery(&state, session, &node_endpoints, &e, &deal_circuit)
-                    .await;
+                attempt_partial_recovery(&state, session, &node_endpoints, &e, &deal_circuit).await;
                 return Err(StatusCode::CONFLICT);
             }
             return Err(StatusCode::BAD_GATEWAY);
@@ -726,11 +728,8 @@ pub async fn request_deal(
     let reveal_circuit = "reveal_board_valid".to_string();
     let showdown_circuit_name = parameterised_circuit_name("showdown_valid", player_count);
     let deal_circuit_name = deal_circuit.clone();
-    let circuits_to_pin: Vec<&str> = vec![
-        &deal_circuit_name,
-        &reveal_circuit,
-        &showdown_circuit_name,
-    ];
+    let circuits_to_pin: Vec<&str> =
+        vec![&deal_circuit_name, &reveal_circuit, &showdown_circuit_name];
     match circuit_pins::pin_artifacts(&state.mpc_config.circuit_dir, &circuits_to_pin) {
         Ok(pins) => {
             tracing::info!(
@@ -890,7 +889,10 @@ pub async fn request_reveal(
     {
         let mut used = state.used_session_ids.write().await;
         if !used.insert(proof_session_id.clone()) {
-            tracing::error!("Duplicate MPC session ID rejected (replay attack guard): {}", proof_session_id);
+            tracing::error!(
+                "Duplicate MPC session ID rejected (replay attack guard): {}",
+                proof_session_id
+            );
             return Err(StatusCode::CONFLICT);
         }
     }
@@ -1059,11 +1061,12 @@ pub async fn request_showdown(
     // For Run 2 showdown, the correct board indices are the last 5 elements
     // of board_indices, because Run 2's reveals include all 5 of its board cards
     // (shared cards re-revealed + Run 2's new cards) at the end of the sequence.
-    let showdown_board_indices: Vec<u32> = if session.phase == "showdown_run2" && session.board_indices.len() >= 5 {
-        session.board_indices[session.board_indices.len() - 5..].to_vec()
-    } else {
-        session.board_indices.clone()
-    };
+    let showdown_board_indices: Vec<u32> =
+        if session.phase == "showdown_run2" && session.board_indices.len() >= 5 {
+            session.board_indices[session.board_indices.len() - 5..].to_vec()
+        } else {
+            session.board_indices.clone()
+        };
 
     let showdown_span = tracing::info_span!(
         "mpc.showdown",
@@ -1095,12 +1098,14 @@ pub async fn request_showdown(
     {
         let mut used = state.used_session_ids.write().await;
         if !used.insert(proof_session_id.clone()) {
-            tracing::error!("Duplicate MPC session ID rejected (replay attack guard): {}", proof_session_id);
+            tracing::error!(
+                "Duplicate MPC session ID rejected (replay attack guard): {}",
+                proof_session_id
+            );
             return Err(StatusCode::CONFLICT);
         }
     }
-    let showdown_circuit =
-        parameterised_circuit_name("showdown_valid", session.player_order.len());
+    let showdown_circuit = parameterised_circuit_name("showdown_valid", session.player_order.len());
     showdown_span.record("circuit", showdown_circuit.as_str());
     showdown_span.record("proof_session_id", proof_session_id.as_str());
     let _guard = SessionGuard::new(state.metrics.active_mpc_sessions.clone());
@@ -1294,31 +1299,31 @@ pub async fn rit_opt_in(
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    let tx_hash = soroban::submit_rit_opt_in(
-        &state.soroban_config,
-        table_id,
-        &auth.address,
-        req.opt_in,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!(
-            "rit_opt_in failed: table={}, player={}, opt_in={}, err={}",
-            table_id,
-            auth.address,
-            req.opt_in,
-            e
-        );
-        if e.contains("Error(Contract,") {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::BAD_GATEWAY
-        }
-    })?;
+    let tx_hash =
+        soroban::submit_rit_opt_in(&state.soroban_config, table_id, &auth.address, req.opt_in)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    "rit_opt_in failed: table={}, player={}, opt_in={}, err={}",
+                    table_id,
+                    auth.address,
+                    req.opt_in,
+                    e
+                );
+                if e.contains("Error(Contract,") {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::BAD_GATEWAY
+                }
+            })?;
 
     Ok(Json(RitOptInResponse {
         status: "success".to_string(),
-        tx_hash: if tx_hash.is_empty() { None } else { Some(tx_hash) },
+        tx_hash: if tx_hash.is_empty() {
+            None
+        } else {
+            Some(tx_hash)
+        },
     }))
 }
 
@@ -1422,13 +1427,8 @@ pub async fn player_action(
             })
             .unwrap_or(true)
     };
-    crate::stats::record_player_action(
-        &state.stats,
-        &player_address,
-        &normalized,
-        is_preflop,
-    )
-    .await;
+    crate::stats::record_player_action(&state.stats, &player_address, &normalized, is_preflop)
+        .await;
 
     broadcast_table_state(&state, table_id).await;
 
@@ -1480,7 +1480,8 @@ pub async fn transfer_chips(
     }
 
     enforce_rate_limit(&state, &headers, source_table_id, "transfer_chips").await?;
-    let auth = validate_signed_request(&state, &headers, source_table_id, "transfer_chips", None).await?;
+    let auth =
+        validate_signed_request(&state, &headers, source_table_id, "transfer_chips", None).await?;
 
     if !state.soroban_config.is_configured() {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -1491,7 +1492,10 @@ pub async fn transfer_chips(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let is_seated_at_source = source_view.seats.iter().any(|(_, chain)| chain == &auth.address);
+    let is_seated_at_source = source_view
+        .seats
+        .iter()
+        .any(|(_, chain)| chain == &auth.address);
     if !is_seated_at_source {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -1501,7 +1505,10 @@ pub async fn transfer_chips(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let is_seated_at_dest = dest_view.seats.iter().any(|(_, chain)| chain == &auth.address);
+    let is_seated_at_dest = dest_view
+        .seats
+        .iter()
+        .any(|(_, chain)| chain == &auth.address);
     if !is_seated_at_dest {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -1584,8 +1591,16 @@ pub async fn transfer_chips(
         amount: req.amount,
         fee,
         net_amount,
-        source_tx_hash: if source_tx_hash.is_empty() { None } else { Some(source_tx_hash) },
-        dest_tx_hash: if dest_tx_hash.is_empty() { None } else { Some(dest_tx_hash) },
+        source_tx_hash: if source_tx_hash.is_empty() {
+            None
+        } else {
+            Some(source_tx_hash)
+        },
+        dest_tx_hash: if dest_tx_hash.is_empty() {
+            None
+        } else {
+            Some(dest_tx_hash)
+        },
     }))
 }
 
@@ -1637,12 +1652,13 @@ pub async fn get_player_cards(
     let positions = vec![*pos1, *pos2];
     drop(tables); // release read lock before async call
 
-    let (cards, salts) = mpc::resolve_hole_cards(&state.mpc_client, &node_endpoints, table_id, &positions)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to resolve hole cards: {}", e);
-            StatusCode::BAD_GATEWAY
-        })?;
+    let (cards, salts) =
+        mpc::resolve_hole_cards(&state.mpc_client, &node_endpoints, table_id, &positions)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to resolve hole cards: {}", e);
+                StatusCode::BAD_GATEWAY
+            })?;
 
     if cards.len() < 2 || salts.len() < 2 {
         return Err(StatusCode::BAD_GATEWAY);
@@ -1802,13 +1818,12 @@ pub async fn get_hand_history_chunk(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(5).min(16);
-    let raw =
-        soroban::get_hand_history_chunk(&state.soroban_config, table_id, offset, limit)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to read hand history chunk: {}", e);
-                StatusCode::SERVICE_UNAVAILABLE
-            })?;
+    let raw = soroban::get_hand_history_chunk(&state.soroban_config, table_id, offset, limit)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to read hand history chunk: {}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
 
     let records: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or(serde_json::Value::Array(vec![]));
@@ -1817,9 +1832,7 @@ pub async fn get_hand_history_chunk(
     let meta_raw = soroban::get_table_state(&state.soroban_config, table_id)
         .await
         .ok()
-        .and_then(|r| {
-            serde_json::from_str::<serde_json::Value>(&r).ok()
-        });
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r).ok());
     let total = meta_raw
         .as_ref()
         .and_then(|v| v.get("hand_number"))
@@ -2225,13 +2238,9 @@ pub async fn admin_list_archives(
     headers: HeaderMap,
     Query(query): Query<ArchiveQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_list_archives",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_list_archives", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
     let from_ts = query
@@ -2277,13 +2286,9 @@ pub async fn admin_get_archive(
     headers: HeaderMap,
     Path(archive_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_get_archive",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_get_archive", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
     match crate::archiver::restore_archived_session(&state.archive_store, &archive_id).await {
@@ -2300,16 +2305,13 @@ pub async fn admin_purge_archives(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let auth = admin::validate_admin_request(
-        &state,
-        &headers,
-        "admin_purge_archives",
-        &state.admin_state,
-    )
-    .await?;
+    let auth =
+        admin::validate_admin_request(&state, &headers, "admin_purge_archives", &state.admin_state)
+            .await?;
     admin::require_role(&auth, admin::AdminRole::Operator)?;
 
-    let purged = crate::archiver::purge_old_archives(&state.archive_store, &state.archive_config).await;
+    let purged =
+        crate::archiver::purge_old_archives(&state.archive_store, &state.archive_config).await;
 
     Ok(Json(serde_json::json!({
         "purged": purged,
@@ -2327,4 +2329,3 @@ pub struct ArchiveQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
-

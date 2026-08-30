@@ -8,8 +8,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::api::admin::{require_role, validate_admin_request, AdminRole};
 use crate::api_keys::{self, ApiKey};
-use crate::api::admin::{validate_admin_request, require_role, AdminRole};
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -65,10 +65,14 @@ pub async fn create_api_key(
     headers: axum::http::HeaderMap,
     Json(req): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, StatusCode> {
-    let auth = validate_admin_request(&state, &headers, "create_api_key", &state.admin_state).await?;
+    let auth =
+        validate_admin_request(&state, &headers, "create_api_key", &state.admin_state).await?;
     require_role(&auth, AdminRole::Operator)?;
 
-    let pool = state.db_pool.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let (api_key, key_record) = api_keys::create_api_key(
         pool,
         &req.node_id,
@@ -90,10 +94,14 @@ pub async fn list_api_keys(
     headers: axum::http::HeaderMap,
     Path(node_id): Path<String>,
 ) -> Result<Json<Vec<ApiKeyInfo>>, StatusCode> {
-    let auth = validate_admin_request(&state, &headers, "list_api_keys", &state.admin_state).await?;
+    let auth =
+        validate_admin_request(&state, &headers, "list_api_keys", &state.admin_state).await?;
     require_role(&auth, AdminRole::ReadOnly)?;
 
-    let pool = state.db_pool.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     let keys = api_keys::list_api_keys(pool, &node_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -109,17 +117,17 @@ pub async fn revoke_api_key(
     Path(key_id): Path<String>,
     Json(req): Json<RevokeApiKeyRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let auth = validate_admin_request(&state, &headers, "revoke_api_key", &state.admin_state).await?;
+    let auth =
+        validate_admin_request(&state, &headers, "revoke_api_key", &state.admin_state).await?;
     require_role(&auth, AdminRole::Operator)?;
 
-    let pool = state.db_pool.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let success = api_keys::revoke_api_key(
-        pool,
-        &key_id,
-        req.reason.as_deref(),
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let success = api_keys::revoke_api_key(pool, &key_id, req.reason.as_deref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if success {
         Ok(StatusCode::OK)

@@ -44,7 +44,10 @@ fn get_cache() -> &'static RwLock<CircuitCacheState> {
 }
 
 /// Compute the SHA-256 hex digest and modified time of a single circuit artifact file.
-fn hash_artifact_with_mtime(circuit_dir: &str, circuit_name: &str) -> Result<(String, SystemTime), String> {
+fn hash_artifact_with_mtime(
+    circuit_dir: &str,
+    circuit_name: &str,
+) -> Result<(String, SystemTime), String> {
     let path = format!(
         "{}/{}/target/{}.json",
         circuit_dir.trim_end_matches('/'),
@@ -79,7 +82,9 @@ pub fn warm_circuit_cache(circuit_dir: &str) -> Vec<String> {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = if path.is_dir() {
-            path.file_name().and_then(|s| s.to_str()).map(|s| s.to_string())
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
         } else {
             None
         };
@@ -94,9 +99,13 @@ pub fn warm_circuit_cache(circuit_dir: &str) -> Vec<String> {
                 if is_new_or_modified {
                     state.active_hashes.insert(
                         circuit_name.clone(),
-                        WarmedArtifact { hash: hash.clone(), mtime },
+                        WarmedArtifact {
+                            hash: hash.clone(),
+                            mtime,
+                        },
                     );
-                    state.known_hashes
+                    state
+                        .known_hashes
                         .entry(circuit_name.clone())
                         .or_default()
                         .insert(hash.clone());

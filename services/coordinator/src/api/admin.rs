@@ -69,10 +69,7 @@ impl AdminConfig {
                 .unwrap_or_default()
         };
 
-        let key_by_address = entries
-            .iter()
-            .map(|e| (e.key.clone(), e.role))
-            .collect();
+        let key_by_address = entries.iter().map(|e| (e.key.clone(), e.role)).collect();
 
         if !entries.is_empty() {
             tracing::info!(

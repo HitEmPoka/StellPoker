@@ -154,10 +154,7 @@ pub async fn record_player_action(
         entry.pfr_this_hand = false;
     }
 
-    let voluntary = matches!(
-        act.as_str(),
-        "call" | "bet" | "raise" | "allin" | "all_in"
-    );
+    let voluntary = matches!(act.as_str(), "call" | "bet" | "raise" | "allin" | "all_in");
     if voluntary && !entry.vpip_this_hand {
         entry.vpip_hands += 1;
         entry.vpip_this_hand = true;
@@ -232,11 +229,7 @@ pub async fn get_player_hud(store: &StatsStore, address: &str) -> PlayerHudStats
 }
 
 /// Replace the cached on-chain rating leaderboard (Issue #70).
-pub async fn set_rating_leaderboard(
-    store: &StatsStore,
-    entries: Vec<RatingEntry>,
-    min_hands: u32,
-) {
+pub async fn set_rating_leaderboard(store: &StatsStore, entries: Vec<RatingEntry>, min_hands: u32) {
     let mut guard = store.write().await;
     guard.ratings = entries;
     guard.ratings_min_hands = min_hands;
@@ -280,7 +273,10 @@ pub async fn ensure_demo_ratings(store: &StatsStore) {
             let pen = (p.hands_played.saturating_sub(p.hands_won) as u32).saturating_mul(3);
             RatingEntry {
                 address: p.address.clone(),
-                rating: base.saturating_add(bonus).saturating_sub(pen).clamp(100, 4000),
+                rating: base
+                    .saturating_add(bonus)
+                    .saturating_sub(pen)
+                    .clamp(100, 4000),
                 hands_played: p.hands_played.min(u32::MAX as u64) as u32,
                 hands_won: p.hands_won.min(u32::MAX as u64) as u32,
             }
@@ -312,7 +308,11 @@ pub async fn get_stats(store: &StatsStore, ttl: Duration) -> StatsResponse {
     }
 
     let mut leaderboard: Vec<PlayerStats> = guard.players.values().cloned().collect();
-    leaderboard.sort_by(|a, b| b.hands_won.cmp(&a.hands_won).then(b.hands_played.cmp(&a.hands_played)));
+    leaderboard.sort_by(|a, b| {
+        b.hands_won
+            .cmp(&a.hands_won)
+            .then(b.hands_played.cmp(&a.hands_played))
+    });
     leaderboard.truncate(10);
 
     let now = std::time::SystemTime::now()
@@ -339,7 +339,7 @@ struct HorizonEvent {
     paging_token: String,
     #[serde(rename = "type")]
     kind: String,
-    topic: Vec<String>,  // base64 XDR ScVal
+    topic: Vec<String>,    // base64 XDR ScVal
     value: Option<String>, // base64 XDR ScVal
 }
 
@@ -374,7 +374,9 @@ fn decode_symbol(b64: &str) -> Option<String> {
     if bytes.len() < 8 + len {
         return None;
     }
-    std::str::from_utf8(&bytes[8..8 + len]).ok().map(|s| s.to_string())
+    std::str::from_utf8(&bytes[8..8 + len])
+        .ok()
+        .map(|s| s.to_string())
 }
 
 /// Extract an address string from a base64-XDR ScVal (SCV_ADDRESS).
@@ -407,8 +409,7 @@ fn decode_i128_as_i64(b64: &str) -> Option<i64> {
     }
     // High 8 bytes + low 8 bytes (big-endian)
     let lo = i64::from_be_bytes([
-        bytes[12], bytes[13], bytes[14], bytes[15],
-        bytes[16], bytes[17], bytes[18], bytes[19],
+        bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19],
     ]);
     Some(lo)
 }
@@ -471,8 +472,12 @@ async fn poll_once(store: &StatsStore, horizon_url: &str, contract_id: &str) {
         if ev.kind != "contract" {
             continue;
         }
-        let Some(topic0) = ev.topic.first() else { continue };
-        let Some(name) = decode_symbol(topic0) else { continue };
+        let Some(topic0) = ev.topic.first() else {
+            continue;
+        };
+        let Some(name) = decode_symbol(topic0) else {
+            continue;
+        };
 
         match name.as_str() {
             // hand_started(table_id) -> increment global hands
@@ -487,10 +492,14 @@ async fn poll_once(store: &StatsStore, horizon_url: &str, contract_id: &str) {
                 guard.global.total_players_joined += 1;
                 if let Some(val) = &ev.value {
                     if let Some(addr) = decode_address(val) {
-                        let entry = guard.players.entry(addr.clone()).or_insert_with(|| PlayerStats {
-                            address: addr,
-                            ..Default::default()
-                        });
+                        let entry =
+                            guard
+                                .players
+                                .entry(addr.clone())
+                                .or_insert_with(|| PlayerStats {
+                                    address: addr,
+                                    ..Default::default()
+                                });
                         entry.hands_played += 1;
                     }
                 }

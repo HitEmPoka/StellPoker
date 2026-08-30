@@ -13,13 +13,7 @@
 //! See `docs/API_VERSIONING.md` for the full versioning scheme, deprecation
 //! policy, and the coordinator/contracts/circuits compatibility matrix.
 
-use axum::{
-    body::Body,
-    extract::Request,
-    http::HeaderValue,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::HeaderValue, middleware::Next, response::Response};
 
 pub const CURRENT_API_VERSION: &str = "v1";
 const VERSION_PREFIX: &str = "/api/v1";

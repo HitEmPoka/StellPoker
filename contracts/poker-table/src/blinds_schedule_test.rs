@@ -91,6 +91,7 @@ mod blinds_schedule_test {
             token: s.token.address.clone(),
             min_buy_in: 100,
             max_buy_in: 100_000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: schedule,
             min_players: 2,
             max_players: 6,
@@ -141,12 +142,13 @@ mod blinds_schedule_test {
         let table = s.client.get_table(&table_id);
         let folder = table.players.get(table.current_turn).unwrap();
         let seq = get_seq(seqs, &folder.address);
-        s.client
-            .player_action(&table_id, &folder.address, &seq, &crate::types::Action::Fold);
-        assert_eq!(
-            s.client.get_table(&table_id).phase,
-            GamePhase::Settlement
+        s.client.player_action(
+            &table_id,
+            &folder.address,
+            &seq,
+            &crate::types::Action::Fold,
         );
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
     }
 
     #[test]
@@ -178,13 +180,13 @@ mod blinds_schedule_test {
         levels.push_back(BlindLevel {
             small_blind: 5,
             big_blind: 10,
-            ante: 0,
+            ante: crate::types::AnteMode::None,
             duration_seconds: 100,
         });
         levels.push_back(BlindLevel {
             small_blind: 10,
             big_blind: 20,
-            ante: 0,
+            ante: crate::types::AnteMode::None,
             duration_seconds: 0, // final level: lasts indefinitely
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
@@ -205,8 +207,12 @@ mod blinds_schedule_test {
         assert_eq!(table.pot, 15);
         let folder = table.players.get(table.current_turn).unwrap();
         let seq = get_seq(&mut seqs, &folder.address);
-        s.client
-            .player_action(&table_id, &folder.address, &seq, &crate::types::Action::Fold);
+        s.client.player_action(
+            &table_id,
+            &folder.address,
+            &seq,
+            &crate::types::Action::Fold,
+        );
 
         // Not enough time has passed yet — still level 0.
         s.client.start_hand(&table_id);
@@ -215,8 +221,12 @@ mod blinds_schedule_test {
         let table = s.client.get_table(&table_id);
         let folder = table.players.get(table.current_turn).unwrap();
         let seq = get_seq(&mut seqs, &folder.address);
-        s.client
-            .player_action(&table_id, &folder.address, &seq, &crate::types::Action::Fold);
+        s.client.player_action(
+            &table_id,
+            &folder.address,
+            &seq,
+            &crate::types::Action::Fold,
+        );
 
         // Advance past the 100s level duration, then start a new hand.
         s.env.ledger().set_timestamp(150);
@@ -235,7 +245,7 @@ mod blinds_schedule_test {
         levels.push_back(BlindLevel {
             small_blind: 5,
             big_blind: 10,
-            ante: 2,
+            ante: crate::types::AnteMode::Fixed(2),
             duration_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
@@ -289,7 +299,12 @@ mod blinds_schedule_test {
     #[should_panic(expected = "Error(Contract, #42)")] // EmptyBlindsSchedule
     fn create_table_rejects_empty_blinds_schedule() {
         let s = setup();
-        let config = config_with_schedule(&s, BlindsSchedule { levels: Vec::new(&s.env) });
+        let config = config_with_schedule(
+            &s,
+            BlindsSchedule {
+                levels: Vec::new(&s.env),
+            },
+        );
         s.client.create_table(&s.admin, &config);
     }
 
@@ -301,7 +316,7 @@ mod blinds_schedule_test {
         levels.push_back(BlindLevel {
             small_blind: 10,
             big_blind: 10,
-            ante: 0,
+            ante: crate::types::AnteMode::None,
             duration_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
@@ -316,13 +331,13 @@ mod blinds_schedule_test {
         levels.push_back(BlindLevel {
             small_blind: 5,
             big_blind: 10,
-            ante: 0,
+            ante: crate::types::AnteMode::None,
             duration_seconds: 0, // invalid: not the final level
         });
         levels.push_back(BlindLevel {
             small_blind: 10,
             big_blind: 20,
-            ante: 0,
+            ante: crate::types::AnteMode::None,
             duration_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });

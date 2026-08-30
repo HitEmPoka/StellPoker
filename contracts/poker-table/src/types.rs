@@ -1,11 +1,27 @@
 use soroban_sdk::{contracterror, contracttype, Address, Bytes, BytesN, Env, Vec};
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum BettingStructure {
+    NoLimit,
+    PotLimit,
+    FixedLimit(FixedLimitConfig),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FixedLimitConfig {
+    pub small_bet: i128,
+    pub big_bet: i128,
+}
+
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableConfig {
     pub token: Address, // Payment token (e.g., USDC)
     pub min_buy_in: i128,
     pub max_buy_in: i128,
+    pub betting_structure: BettingStructure,
     /// Blinds/ante structure for this table. A single-level schedule with
     /// `duration_seconds: 0` behaves as fixed blinds; multiple levels with
     /// nonzero `duration_seconds` produce an escalating (tournament-style)
@@ -54,6 +70,14 @@ pub struct TableConfig {
     pub reclaim_period_ledgers: u32,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnteMode {
+    Fixed(i128),
+    Percentage(u32), // percentage of big blind
+    None,
+}
+
 /// A single blinds/ante level in a table's schedule.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -61,8 +85,8 @@ pub struct BlindLevel {
     pub small_blind: i128,
     pub big_blind: i128,
     /// Ante collected from every seated player at the start of each hand
-    /// while this level is active. `0` means no ante.
-    pub ante: i128,
+    /// while this level is active.
+    pub ante: AnteMode,
     /// How long this level lasts once active, in seconds, before the
     /// schedule advances to the next level. Ignored on the final level
     /// (which lasts indefinitely once reached). `0` on a single-level
@@ -92,7 +116,7 @@ impl BlindsSchedule {
         levels.push_back(BlindLevel {
             small_blind,
             big_blind,
-            ante: 0,
+            ante: AnteMode::None,
             duration_seconds: 0,
             break_seconds: 0,
         });
@@ -356,6 +380,37 @@ pub enum PokerTableError {
     NoDeadChipsToReclaim = 83,
     /// Invalid signature provided for reclaim.
     InvalidSignature = 84,
+    InvalidAntePercentage = 85,
+    GuaranteeNotFound = 86,
+    GuaranteeAlreadyConsumed = 87,
+    GuaranteeNotConsumed = 88,
+    GuaranteeExpired = 89,
+    GuaranteeNotExpired = 90,
+    InvalidBettingStructure = 91,
+    ExceedsPotLimit = 92,
+    InvalidFixedLimitBet = 93,
+    GuaranteeAlreadyExists = 94,
+    InvalidGuaranteeCollateral = 95,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum GuaranteeStatus {
+    Active,
+    Consumed,
+    Settled,
+    Liquidated,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GuaranteeRecord {
+    pub player: Address,
+    pub principal: i128,
+    pub escrowed_collateral: i128,
+    pub settlement_deadline: u64,
+    pub penalty: i128,
+    pub status: GuaranteeStatus,
 }
 
 #[contracttype]
@@ -397,9 +452,9 @@ pub enum GamePhase {
     Dispute,      // Something went wrong; funds frozen
     // Run-It-Twice phases
     AwaitingRunItTwice, // Waiting for all-in players to decide on RIT
-    ShowdownRun1,     // First run's showdown
-    ShowdownRun2,     // Second run's showdown
-    RitSettlement,    // Pot split between two runs
+    ShowdownRun1,       // First run's showdown
+    ShowdownRun2,       // Second run's showdown
+    RitSettlement,      // Pot split between two runs
 }
 
 #[contracttype]
@@ -617,7 +672,7 @@ pub enum DataKey {
     /// Per-player per-table monotonically increasing action sequence counter.
     /// Used to reject stale or replayed betting actions.
     PlayerActionCounter(u32, Address),
-    Queue(u32),  // waiting-list queue for a full table
+    Queue(u32), // waiting-list queue for a full table
     UpgradeProposal(u32),
     /// The most recently *executed* upgrade for a table (issue #348).
     LastUpgrade(u32),
@@ -641,4 +696,6 @@ pub enum DataKey {
     HandTypeDistribution,
     /// Dead chip sweep state: (table_id) -> SweepState
     DeadChipSweep(u32),
+    /// Guarantee record: (table_id, player_address) -> GuaranteeRecord
+    Guarantee(u32, Address),
 }

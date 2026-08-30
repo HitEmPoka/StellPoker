@@ -36,6 +36,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 mod api;
+mod gossip;
+mod heartbeat;
 mod limits;
 mod metrics;
 mod pool;
@@ -43,8 +45,6 @@ mod private_table;
 mod profiling;
 mod session;
 mod tls;
-mod heartbeat;
-mod gossip;
 
 use limits::ResourceLimits;
 use metrics::NodeMetrics;
@@ -183,11 +183,7 @@ async fn main() {
     pool::spawn_health_checks(peer_http_endpoints.clone());
 
     // ── Proactive share refresh task (Issue #242) ───────────────────────────
-    private_table::spawn_share_refresh_task(
-        state.tables.clone(),
-        peer_http_endpoints,
-        node_id,
-    );
+    private_table::spawn_share_refresh_task(state.tables.clone(), peer_http_endpoints, node_id);
 
     // ── Background metric updaters ────────────────────────────────────────────
     {
@@ -228,7 +224,10 @@ async fn main() {
                         (ts - now) as f64 / 86400.0
                     })
                     .unwrap_or(365.0);
-                metrics.cert_expiry_days.with_label_values(&["server"]).set(expiry);
+                metrics
+                    .cert_expiry_days
+                    .with_label_values(&["server"])
+                    .set(expiry);
                 tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
             }
         });
@@ -334,11 +333,7 @@ async fn serve_tls(
                 Err(e) => {
                     // TLS handshake failures are expected when misconfigured
                     // clients connect; log at debug level to avoid noise.
-                    tracing::debug!(
-                        "TLS handshake failed from {}: {}",
-                        remote_addr,
-                        e
-                    );
+                    tracing::debug!("TLS handshake failed from {}: {}", remote_addr, e);
                     return;
                 }
             };
@@ -353,11 +348,7 @@ async fn serve_tls(
                 .serve_connection(io, svc)
                 .await
             {
-                tracing::debug!(
-                    "HTTP/TLS connection error from {}: {}",
-                    remote_addr,
-                    e
-                );
+                tracing::debug!("HTTP/TLS connection error from {}: {}", remote_addr, e);
             }
         });
     }

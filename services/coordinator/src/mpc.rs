@@ -106,10 +106,7 @@ fn load_coordinator_identity() -> Result<Option<reqwest::Identity>, String> {
         "COORDINATOR_CLIENT_CERT_PATH",
         "COORDINATOR_CLIENT_CERT_B64",
     )?;
-    let key_der = load_der_from_env(
-        "COORDINATOR_CLIENT_KEY_PATH",
-        "COORDINATOR_CLIENT_KEY_B64",
-    )?;
+    let key_der = load_der_from_env("COORDINATOR_CLIENT_KEY_PATH", "COORDINATOR_CLIENT_KEY_B64")?;
 
     match (cert_der, key_der) {
         (Some(cert), Some(key)) => {
@@ -360,9 +357,10 @@ async fn prepare_from_nodes(
                 ));
             }
 
-            let prepared: NodePreparedSharesResponse = resp.json().await.map_err(|e| {
-                format!("failed to parse node {} {} response: {}", idx, op, e)
-            })?;
+            let prepared: NodePreparedSharesResponse = resp
+                .json()
+                .await
+                .map_err(|e| format!("failed to parse node {} {} response: {}", idx, op, e))?;
 
             Ok::<(usize, String), String>((idx, prepared.share_set_id))
         });
@@ -477,9 +475,14 @@ pub async fn generate_proof_from_share_sets(
     let dispatch_ms = dispatch_start.elapsed().as_millis() as u64;
 
     let proof_start = std::time::Instant::now();
-    let result =
-        trigger_and_collect_proof(client, session_id, circuit_name, circuit_dir, node_endpoints)
-            .await;
+    let result = trigger_and_collect_proof(
+        client,
+        session_id,
+        circuit_name,
+        circuit_dir,
+        node_endpoints,
+    )
+    .await;
     let proof_ms = proof_start.elapsed().as_millis() as u64;
 
     let phase_timings = PhaseTimings {
@@ -779,12 +782,10 @@ async fn trigger_and_collect_proof(
         let handle = tokio::spawn(async move {
             let mut last_conn_error: Option<String> = None;
             for attempt in 1..=TRIGGER_RETRY_ATTEMPTS {
-                let mut req = client
-                    .post(&url)
-                    .json(&serde_json::json!({
-                        "circuit_dir": circuit_dir,
-                        "crs_path": crs_dir,
-                    }));
+                let mut req = client.post(&url).json(&serde_json::json!({
+                    "circuit_dir": circuit_dir,
+                    "crs_path": crs_dir,
+                }));
                 // Issue #255: propagate trace context to MPC nodes.
                 if let Some(tp) = crate::telemetry::current_traceparent() {
                     req = req.header("traceparent", tp);
@@ -966,9 +967,15 @@ mod error_handling_tests {
     #[tokio::test]
     async fn prepare_deal_errors_when_node_unreachable() {
         let endpoints = vec![DEAD_NODE.to_string()];
-        let err = prepare_deal_from_nodes(&test_client(), &endpoints, "/circuits", 1, &["P1".to_string()])
-            .await
-            .unwrap_err();
+        let err = prepare_deal_from_nodes(
+            &test_client(),
+            &endpoints,
+            "/circuits",
+            1,
+            &["P1".to_string()],
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("prepare-deal"), "got: {err}");
     }
 
@@ -1007,7 +1014,10 @@ mod error_handling_tests {
         let err = trigger_and_collect_proof(&test_client(), "sess", "deal_valid", "/circuits", &[])
             .await
             .unwrap_err();
-        assert!(err.contains("no MPC node endpoints configured"), "got: {err}");
+        assert!(
+            err.contains("no MPC node endpoints configured"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1022,9 +1032,15 @@ mod error_handling_tests {
             DEAD_NODE.to_string(),
             DEAD_NODE.to_string(),
         ];
-        let err = trigger_and_collect_proof(&test_client(), "sess", "deal_valid", "/circuits", &endpoints)
-            .await
-            .unwrap_err();
+        let err = trigger_and_collect_proof(
+            &test_client(),
+            "sess",
+            "deal_valid",
+            "/circuits",
+            &endpoints,
+        )
+        .await
+        .unwrap_err();
         assert!(is_node_unavailable_error(&err), "got: {err}");
     }
 
@@ -1033,8 +1049,12 @@ mod error_handling_tests {
         assert!(is_node_unavailable_error(
             "NODE_UNAVAILABLE: node 1 unreachable after 3 attempts triggering generate: connect error"
         ));
-        assert!(!is_node_unavailable_error("node 1 trigger failed: HTTP 500: internal error"));
-        assert!(!is_node_unavailable_error("proof generation timed out after 300 seconds"));
+        assert!(!is_node_unavailable_error(
+            "node 1 trigger failed: HTTP 500: internal error"
+        ));
+        assert!(!is_node_unavailable_error(
+            "proof generation timed out after 300 seconds"
+        ));
     }
 
     #[tokio::test]
@@ -1049,8 +1069,7 @@ mod error_handling_tests {
 
     #[tokio::test]
     async fn collect_prepared_share_sets_detects_out_of_range_index() {
-        let handle =
-            tokio::spawn(async { Ok::<(usize, String), String>((5, "id".to_string())) });
+        let handle = tokio::spawn(async { Ok::<(usize, String), String>((5, "id".to_string())) });
         let err = collect_prepared_share_sets(vec![handle], 1)
             .await
             .unwrap_err();
@@ -1104,9 +1123,15 @@ mod byzantine_fault_tolerance_tests {
         );
         let endpoint = spawn_test_server(router).await;
 
-        let err = prepare_deal_from_nodes(&test_client(), &[endpoint], "/circuits", 1, &["P1".to_string()])
-            .await
-            .unwrap_err();
+        let err = prepare_deal_from_nodes(
+            &test_client(),
+            &[endpoint],
+            "/circuits",
+            1,
+            &["P1".to_string()],
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             err.contains("missing share_set_id"),
@@ -1130,8 +1155,14 @@ mod byzantine_fault_tolerance_tests {
         );
         let endpoint = spawn_test_server(router).await;
 
-        let result =
-            prepare_deal_from_nodes(&test_client(), &[endpoint], "/circuits", 1, &["P1".to_string()]).await;
+        let result = prepare_deal_from_nodes(
+            &test_client(),
+            &[endpoint],
+            "/circuits",
+            1,
+            &["P1".to_string()],
+        )
+        .await;
 
         match result {
             Err(e) => assert!(
@@ -1164,9 +1195,15 @@ mod byzantine_fault_tolerance_tests {
         );
         let endpoint = spawn_test_server(router).await;
 
-        let err = prepare_deal_from_nodes(&test_client(), &[endpoint], "/circuits", 1, &["P1".to_string()])
-            .await
-            .unwrap_err();
+        let err = prepare_deal_from_nodes(
+            &test_client(),
+            &[endpoint],
+            "/circuits",
+            1,
+            &["P1".to_string()],
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             err.contains("HTTP 500") || err.contains("rejected"),
@@ -1262,7 +1299,13 @@ mod byzantine_fault_tolerance_tests {
 
         let result = tokio::time::timeout(
             Duration::from_secs(2),
-            prepare_deal_from_nodes(&test_client(), &[endpoint], "/circuits", 1, &["P1".to_string()]),
+            prepare_deal_from_nodes(
+                &test_client(),
+                &[endpoint],
+                "/circuits",
+                1,
+                &["P1".to_string()],
+            ),
         )
         .await;
 
@@ -1305,9 +1348,11 @@ mod byzantine_fault_tolerance_tests {
         let e1 = spawn_test_server(stalling).await; // Byzantine staller
         let e2 = spawn_test_server(honest()).await;
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(2), resolve_hole_cards(&test_client(), &[e0, e1, e2], 1, &[0, 1]))
-                .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            resolve_hole_cards(&test_client(), &[e0, e1, e2], 1, &[0, 1]),
+        )
+        .await;
 
         assert!(
             result.is_err(),
@@ -1320,9 +1365,15 @@ mod byzantine_fault_tolerance_tests {
     /// This fires immediately without any network call.
     #[tokio::test]
     async fn zero_node_committee_rejected_before_proof_generation() {
-        let err = trigger_and_collect_proof(&test_client(), "sess_zero_nodes", "deal_valid", "/circuits", &[])
-            .await
-            .unwrap_err();
+        let err = trigger_and_collect_proof(
+            &test_client(),
+            "sess_zero_nodes",
+            "deal_valid",
+            "/circuits",
+            &[],
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             err.contains("no MPC node endpoints configured"),
@@ -1343,9 +1394,7 @@ mod byzantine_fault_tolerance_tests {
         let make_colluding = |id: &'static str| {
             Router::new().route(
                 "/table/:table_id/prepare-deal",
-                post(move || async move {
-                    axum::Json(serde_json::json!({ "share_set_id": id }))
-                }),
+                post(move || async move { axum::Json(serde_json::json!({ "share_set_id": id })) }),
             )
         };
 

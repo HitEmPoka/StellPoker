@@ -26,9 +26,7 @@ use crate::AppState;
         (status = 200, description = "Feature flag snapshot", body = HashMap<String, bool>)
     )
 )]
-pub async fn list_flags(
-    State(state): State<AppState>,
-) -> Json<HashMap<String, bool>> {
+pub async fn list_flags(State(state): State<AppState>) -> Json<HashMap<String, bool>> {
     let snap = state.feature_flags.snapshot().await;
     Json(snap)
 }

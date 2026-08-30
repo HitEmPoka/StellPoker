@@ -96,7 +96,9 @@ impl Ord for JobEntry {
     }
 }
 
-pub type JobHandler = Arc<dyn Fn(JobState) -> tokio::task::JoinHandle<Result<serde_json::Value, String>> + Send + Sync>;
+pub type JobHandler = Arc<
+    dyn Fn(JobState) -> tokio::task::JoinHandle<Result<serde_json::Value, String>> + Send + Sync,
+>;
 
 pub struct JobQueue {
     jobs: RwLock<HashMap<String, Arc<Mutex<JobState>>>>,
@@ -150,14 +152,11 @@ impl JobQueue {
             .await
             .insert(job_id.clone(), Arc::new(Mutex::new(state)));
 
-        self.pending
-            .lock()
-            .await
-            .push(JobEntry {
-                job_id: job_id.clone(),
-                priority,
-                created_at: Instant::now(),
-            });
+        self.pending.lock().await.push(JobEntry {
+            job_id: job_id.clone(),
+            priority,
+            created_at: Instant::now(),
+        });
 
         tracing::info!(job_id = %job_id, job_type = %job_type, priority = ?priority, "job enqueued");
         job_id
@@ -193,10 +192,7 @@ impl JobQueue {
         Some(status)
     }
 
-    pub async fn get_status_by_table(
-        &self,
-        table_id: u32,
-    ) -> Vec<JobState> {
+    pub async fn get_status_by_table(&self, table_id: u32) -> Vec<JobState> {
         let jobs = self.jobs.read().await;
         jobs.values()
             .filter_map(|s| {
@@ -224,11 +220,7 @@ impl JobQueue {
             .count()
     }
 
-    pub async fn update_progress(
-        &self,
-        job_id: &str,
-        progress: f64,
-    ) -> Result<(), String> {
+    pub async fn update_progress(&self, job_id: &str, progress: f64) -> Result<(), String> {
         let jobs = self.jobs.read().await;
         let state = jobs
             .get(job_id)
@@ -408,12 +400,15 @@ mod tests {
         let queue = Arc::new(JobQueue::new(1));
         let queue_clone = Arc::clone(&queue);
 
-        queue.register_handler("test", Arc::new(move |job| {
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                Ok(serde_json::json!({ "status": "done" }))
-            })
-        }));
+        queue.register_handler(
+            "test",
+            Arc::new(move |job| {
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    Ok(serde_json::json!({ "status": "done" }))
+                })
+            }),
+        );
 
         let job_id = queue
             .enqueue("test", 1, JobPriority::Normal, 2, serde_json::json!({}))
@@ -468,17 +463,20 @@ mod tests {
         let queue = Arc::new(JobQueue::new(1));
         let queue_clone = Arc::clone(&queue);
 
-        queue.register_handler("flaky", Arc::new(move |_job| {
-            let attempts = Arc::clone(&attempts);
-            tokio::spawn(async move {
-                let prev = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if prev < 2 {
-                    Err("transient error".to_string())
-                } else {
-                    Ok(serde_json::json!({ "status": "success" }))
-                }
-            })
-        }));
+        queue.register_handler(
+            "flaky",
+            Arc::new(move |_job| {
+                let attempts = Arc::clone(&attempts);
+                tokio::spawn(async move {
+                    let prev = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if prev < 2 {
+                        Err("transient error".to_string())
+                    } else {
+                        Ok(serde_json::json!({ "status": "success" }))
+                    }
+                })
+            }),
+        );
 
         let job_id = queue_clone
             .enqueue("flaky", 1, JobPriority::Normal, 3, serde_json::json!({}))
@@ -487,7 +485,12 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let state = queue_clone.get_status(&job_id).await.unwrap();
-        assert_eq!(state.status, JobStatus::Completed, "job should eventually succeed: {:?}", state);
+        assert_eq!(
+            state.status,
+            JobStatus::Completed,
+            "job should eventually succeed: {:?}",
+            state
+        );
         assert!(state.retry_count <= 3, "should not exceed max retries");
     }
 

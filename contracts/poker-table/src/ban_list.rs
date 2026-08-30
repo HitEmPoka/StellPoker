@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env, Map, Symbol};
 use crate::types::*;
+use soroban_sdk::{Address, Env, Map, Symbol};
 
 /// Player ban/unban list for table owners
 /// Issue #195
@@ -17,7 +17,7 @@ pub fn ban_player(
     if caller != &table.admin {
         return Err(PokerTableError::NotAuthorizedCommittee);
     }
-    
+
     caller.require_auth();
 
     let mut ban_list: Map<Address, bool> = env
@@ -47,7 +47,7 @@ pub fn unban_player(
     if caller != &table.admin {
         return Err(PokerTableError::NotAuthorizedCommittee);
     }
-    
+
     caller.require_auth();
 
     let mut ban_list: Map<Address, bool> = env

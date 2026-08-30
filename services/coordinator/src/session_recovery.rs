@@ -72,7 +72,9 @@ pub fn recover_from_node_failure(
         .collect();
 
     if remaining.len() >= threshold {
-        return RecoveryOutcome::ContinueWithRemaining { endpoints: remaining };
+        return RecoveryOutcome::ContinueWithRemaining {
+            endpoints: remaining,
+        };
     }
 
     match available_replacements

@@ -1,7 +1,9 @@
 #![no_std]
 #![allow(deprecated)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Bytes, BytesN, Env, Symbol, Vec, xdr::ToXdr};
+use soroban_sdk::{
+    contract, contractimpl, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
+};
 
 mod anti_cheat;
 mod ban_list;
@@ -19,6 +21,8 @@ mod history;
 mod invariants_test;
 #[cfg(test)]
 mod lifecycle_invariants_test;
+#[cfg(test)]
+mod min_raise_test;
 mod multi_currency;
 mod pot;
 #[cfg(test)]
@@ -29,8 +33,6 @@ mod test;
 mod timeout;
 #[cfg(test)]
 mod tournament_lifecycle_test;
-#[cfg(test)]
-mod min_raise_test;
 mod types;
 #[cfg(test)]
 mod upgrade_test;
@@ -115,21 +117,17 @@ pub(crate) fn record_outcome(
     winner_seat: u32,
 ) -> Result<VarianceFunding, PokerTableError> {
     let key = DataKey::VarianceStats(table.id);
-    let mut stats: VarianceStats = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| {
-            let mut winner_counts = Vec::new(env);
-            for _ in 0..MAX_PLAYERS_PER_TABLE {
-                winner_counts.push_back(0);
-            }
-            VarianceStats {
-                hands: 0,
-                winner_counts,
-                variance_bps: 0,
-            }
-        });
+    let mut stats: VarianceStats = env.storage().persistent().get(&key).unwrap_or_else(|| {
+        let mut winner_counts = Vec::new(env);
+        for _ in 0..MAX_PLAYERS_PER_TABLE {
+            winner_counts.push_back(0);
+        }
+        VarianceStats {
+            hands: 0,
+            winner_counts,
+            variance_bps: 0,
+        }
+    });
     if winner_seat >= stats.winner_counts.len() {
         return Err(PokerTableError::InvalidPlayerIndex);
     }
@@ -401,9 +399,10 @@ fn compute_rit_board_indices(
     // For shared board cards, replace the first N indices with the actual shared indices
     let shared_count = rit.shared_board_count as usize;
     for i in 0..shared_count {
-        if let Some(idx) = table.dealt_indices.get(
-            table.dealt_indices.len() - shared_count as u32 + i as u32,
-        ) {
+        if let Some(idx) = table
+            .dealt_indices
+            .get(table.dealt_indices.len() - shared_count as u32 + i as u32)
+        {
             run1_indices[i] = idx;
             run2_indices[i] = idx;
         }
@@ -634,6 +633,7 @@ impl PokerTableContract {
             level_started_at: env.ledger().timestamp(),
             break_ends_at: 0,
             settlement_entered_ledger: 0,
+            settlement_entered_ledger: 0,
         };
 
         save_table(&env, &table);
@@ -829,11 +829,7 @@ impl PokerTableContract {
     /// Update the per-session rebuy limit (admin only). `0` means unlimited.
     /// Lowering the limit below what a player has already used simply stops
     /// them rebuying again; it never claws chips back.
-    pub fn set_max_rebuys(
-        env: Env,
-        table_id: u32,
-        max_rebuys: u32,
-    ) -> Result<(), PokerTableError> {
+    pub fn set_max_rebuys(env: Env, table_id: u32, max_rebuys: u32) -> Result<(), PokerTableError> {
         let mut table = load_table(&env, table_id)?;
         table.admin.require_auth();
         table.config.max_rebuys = max_rebuys;
@@ -1055,11 +1051,20 @@ impl PokerTableContract {
         table.last_action_ledger = env.ledger().sequence();
 
         // Set first player to act (left of big blind).
-        let num_players = table.players.len() as u32;
-        if num_players < 2 {
+        let active_players = game::active_player_count_for_new_hand(&table);
+        if active_players < 2 {
             return Err(PokerTableError::NotEnoughPlayers);
         }
-        table.current_turn = (table.dealer_seat + 3) % num_players;
+
+        let is_heads_up = active_players == 2;
+        if is_heads_up {
+            table.current_turn = table.dealer_seat;
+        } else {
+            let sb_seat = game::next_active_seat(&table, table.dealer_seat).unwrap();
+            let bb_seat = game::next_active_seat(&table, sb_seat).unwrap();
+            table.current_turn = game::next_active_seat(&table, bb_seat).unwrap();
+        }
+
         // Set action deadline for the first player to act
         table.action_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
 
@@ -1091,18 +1096,12 @@ impl PokerTableContract {
 
         // Validate action sequence number to prevent replay/stale attacks.
         let counter_key = DataKey::PlayerActionCounter(table_id, player.clone());
-        let last_seq: u32 = env
-            .storage()
-            .persistent()
-            .get(&counter_key)
-            .unwrap_or(0);
+        let last_seq: u32 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         if seq != last_seq.wrapping_add(1) {
             return Err(PokerTableError::StaleActionSequence);
         }
         // Bump counter and extend TTL.
-        env.storage()
-            .persistent()
-            .set(&counter_key, &seq);
+        env.storage().persistent().set(&counter_key, &seq);
         env.storage()
             .persistent()
             .extend_ttl(&counter_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
@@ -1163,8 +1162,12 @@ impl PokerTableContract {
             return Err(PokerTableError::NotHeadsUpAllIn);
         }
 
-        let p1_seat = non_folded_all_in.get(0).ok_or(PokerTableError::InvalidPlayerIndex)?;
-        let p2_seat = non_folded_all_in.get(1).ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let p1_seat = non_folded_all_in
+            .get(0)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        let p2_seat = non_folded_all_in
+            .get(1)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
 
         if seat != p1_seat && seat != p2_seat {
             return Err(PokerTableError::NotHeadsUpAllIn);
@@ -1455,9 +1458,9 @@ impl PokerTableContract {
                 }
             }
             table.board_cards = shared;
-        // Settle using the proved winner and optional tie mask from the proof
-        // (not re-evaluating hands on-chain).
-        game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
+            // Settle using the proved winner and optional tie mask from the proof
+            // (not re-evaluating hands on-chain).
+            game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
 
             table.phase = GamePhase::DealingFlop;
             table.last_action_ledger = env.ledger().sequence();
@@ -1753,7 +1756,12 @@ impl PokerTableContract {
         let table = load_table(&env, table_id)?;
         require_table_owner_or_governance(&table, &caller)?;
         let key = DataKey::TableClosure(table_id);
-        if env.storage().persistent().get::<DataKey, TableClosureProposal>(&key).is_some() {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, TableClosureProposal>(&key)
+            .is_some()
+        {
             return Err(PokerTableError::TableClosureInProgress);
         }
         let execute_after = env
@@ -1775,10 +1783,7 @@ impl PokerTableContract {
 
     /// Execute a forced closure after its notice period. Anyone may execute
     /// once the notice period has elapsed.
-    pub fn execute_table_closure(
-        env: Env,
-        table_id: u32,
-    ) -> Result<i128, PokerTableError> {
+    pub fn execute_table_closure(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
         let mut table = load_table(&env, table_id)?;
         let key = DataKey::TableClosure(table_id);
         let proposal: TableClosureProposal = env
@@ -1792,10 +1797,8 @@ impl PokerTableContract {
         let refunded = refund_table_players(&env, &mut table)?;
         env.storage().persistent().remove(&key);
         save_table(&env, &table);
-        env.events().publish(
-            (Symbol::new(&env, "table_closed"), table_id),
-            refunded,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "table_closed"), table_id), refunded);
         Ok(refunded)
     }
 
@@ -1901,11 +1904,9 @@ impl PokerTableContract {
             executed_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&last_key, &record);
-        env.storage().persistent().extend_ttl(
-            &last_key,
-            TABLE_TTL_THRESHOLD,
-            TABLE_TTL_EXTEND,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&last_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 
         env.deployer()
             .update_current_contract_wasm(proposal.new_wasm_hash.clone());
@@ -1946,10 +1947,7 @@ impl PokerTableContract {
             .clone()
             .ok_or(PokerTableError::NoUpgradeToRevert)?;
 
-        let elapsed = env
-            .ledger()
-            .timestamp()
-            .saturating_sub(record.executed_at);
+        let elapsed = env.ledger().timestamp().saturating_sub(record.executed_at);
         if elapsed > ROLLBACK_WINDOW_SECONDS {
             return Err(PokerTableError::RollbackWindowExpired);
         }
@@ -1979,7 +1977,12 @@ impl PokerTableContract {
         table.admin.require_auth();
 
         let key = DataKey::UpgradeProposal(table_id);
-        if env.storage().persistent().get::<DataKey, UpgradeProposal>(&key).is_none() {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, UpgradeProposal>(&key)
+            .is_none()
+        {
             return Err(PokerTableError::NoUpgradeProposal);
         }
         env.storage().persistent().remove(&key);
@@ -2049,10 +2052,7 @@ impl PokerTableContract {
     }
 
     /// Read the jackpot configuration parameters for a table (view function).
-    pub fn get_jackpot_config(
-        env: Env,
-        table_id: u32,
-    ) -> Result<(u32, u32, u32), PokerTableError> {
+    pub fn get_jackpot_config(env: Env, table_id: u32) -> Result<(u32, u32, u32), PokerTableError> {
         let table = load_table(&env, table_id)?;
         Ok((
             table.config.jackpot_rake_share_bps,
@@ -2062,10 +2062,7 @@ impl PokerTableContract {
     }
 
     /// Read cumulative winner distribution and normalized variance.
-    pub fn get_variance_stats(
-        env: Env,
-        table_id: u32,
-    ) -> Result<VarianceStats, PokerTableError> {
+    pub fn get_variance_stats(env: Env, table_id: u32) -> Result<VarianceStats, PokerTableError> {
         load_table(&env, table_id)?;
         Ok(env
             .storage()
@@ -2079,10 +2076,7 @@ impl PokerTableContract {
     }
 
     /// Read variance-triggered jackpot funding configuration.
-    pub fn get_variance_config(
-        env: Env,
-        table_id: u32,
-    ) -> Result<VarianceConfig, PokerTableError> {
+    pub fn get_variance_config(env: Env, table_id: u32) -> Result<VarianceConfig, PokerTableError> {
         load_table(&env, table_id)?;
         Ok(env
             .storage()
@@ -2180,7 +2174,11 @@ impl PokerTableContract {
         let mut table = load_table(&env, table_id)?;
 
         // Verify treasury is configured
-        let treasury_addr = table.config.treasury.as_ref().ok_or(PokerTableError::TreasuryNotConfigured)?;
+        let treasury_addr = table
+            .config
+            .treasury
+            .as_ref()
+            .ok_or(PokerTableError::TreasuryNotConfigured)?;
 
         // Verify dead chip timeout is configured
         let timeout_ledgers = table.config.dead_chip_timeout_ledgers;
@@ -2320,12 +2318,24 @@ impl PokerTableContract {
         // Message format: "reclaim_dead_chips:{table_id}:{amount}:{swept_at_ledger}"
         // Build message as bytes to avoid String conversion issues
         let mut message = soroban_sdk::Bytes::new(&env);
-        message.append(&soroban_sdk::Bytes::from_slice(&env, b"reclaim_dead_chips:"));
-        message.append(&soroban_sdk::Bytes::from_slice(&env, &table_id.to_be_bytes()));
+        message.append(&soroban_sdk::Bytes::from_slice(
+            &env,
+            b"reclaim_dead_chips:",
+        ));
+        message.append(&soroban_sdk::Bytes::from_slice(
+            &env,
+            &table_id.to_be_bytes(),
+        ));
         message.append(&soroban_sdk::Bytes::from_slice(&env, b":"));
-        message.append(&soroban_sdk::Bytes::from_slice(&env, &swept_amount.to_be_bytes()));
+        message.append(&soroban_sdk::Bytes::from_slice(
+            &env,
+            &swept_amount.to_be_bytes(),
+        ));
         message.append(&soroban_sdk::Bytes::from_slice(&env, b":"));
-        message.append(&soroban_sdk::Bytes::from_slice(&env, &sweep_state.swept_at_ledger.to_be_bytes()));
+        message.append(&soroban_sdk::Bytes::from_slice(
+            &env,
+            &sweep_state.swept_at_ledger.to_be_bytes(),
+        ));
 
         // Verify Ed25519 signature
         // The signature should be 64 bytes (Ed25519)
@@ -2334,14 +2344,15 @@ impl PokerTableContract {
         // Stellar accounts). The Address is converted to its 32-byte representation
         // via XDR serialization and hashing.
         let player_hash: BytesN<32> = env.crypto().keccak256(&player.clone().to_xdr(&env)).into();
-        env.crypto().ed25519_verify(
-            &player_hash,
-            &message,
-            &signature,
-        );
+        env.crypto()
+            .ed25519_verify(&player_hash, &message, &signature);
 
         // Transfer swept amount back to player from treasury
-        let treasury_addr = table.config.treasury.as_ref().ok_or(PokerTableError::TreasuryNotConfigured)?;
+        let treasury_addr = table
+            .config
+            .treasury
+            .as_ref()
+            .ok_or(PokerTableError::TreasuryNotConfigured)?;
         let token = token::Client::new(&env, &table.config.token);
         token.transfer(treasury_addr, &player, &swept_amount);
 
@@ -2354,7 +2365,10 @@ impl PokerTableContract {
     }
 
     /// Get the dead chip sweep state for a table (view function).
-    pub fn get_dead_chip_sweep_state(env: Env, table_id: u32) -> Result<SweepState, PokerTableError> {
+    pub fn get_dead_chip_sweep_state(
+        env: Env,
+        table_id: u32,
+    ) -> Result<SweepState, PokerTableError> {
         let sweep_key = DataKey::DeadChipSweep(table_id);
         let sweep_state: SweepState = env
             .storage()
@@ -2396,10 +2410,8 @@ impl PokerTableContract {
         let table = load_table(&env, table_id)?;
         table.admin.require_auth();
         multi_currency::remove_currency(&env, table_id, &currency);
-        env.events().publish(
-            (Symbol::new(&env, "currency_removed"), table_id),
-            currency,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "currency_removed"), table_id), currency);
         Ok(())
     }
 
@@ -2418,12 +2430,8 @@ impl PokerTableContract {
         let table = load_table(&env, table_id)?;
 
         // Convert currency to base token amount using oracle
-        let base_amount = multi_currency::convert_to_base_token(
-            &env,
-            table_id,
-            &currency,
-            currency_amount,
-        )?;
+        let base_amount =
+            multi_currency::convert_to_base_token(&env, table_id, &currency, currency_amount)?;
 
         // Validate buy-in amount
         if base_amount < table.config.min_buy_in || base_amount > table.config.max_buy_in {
@@ -2439,11 +2447,7 @@ impl PokerTableContract {
     }
 
     /// Check if a currency is whitelisted for a table.
-    pub fn is_currency_whitelisted(
-        env: Env,
-        table_id: u32,
-        currency: Address,
-    ) -> bool {
+    pub fn is_currency_whitelisted(env: Env, table_id: u32, currency: Address) -> bool {
         multi_currency::is_whitelisted(&env, table_id, &currency)
     }
 
@@ -2507,38 +2511,25 @@ impl PokerTableContract {
     }
 
     /// Unban a player (admin only).
-    pub fn unban_player(
-        env: Env,
-        table_id: u32,
-        player: Address,
-    ) -> Result<(), PokerTableError> {
+    pub fn unban_player(env: Env, table_id: u32, player: Address) -> Result<(), PokerTableError> {
         let table = load_table(&env, table_id)?;
         table.admin.require_auth();
 
         ban_list::unban_player(&env, table_id, &player);
 
-        env.events().publish(
-            (Symbol::new(&env, "player_unbanned"), table_id),
-            player,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "player_unbanned"), table_id), player);
 
         Ok(())
     }
 
     /// Check if a player is banned from the table.
-    pub fn is_player_banned(
-        env: Env,
-        table_id: u32,
-        player: Address,
-    ) -> bool {
+    pub fn is_player_banned(env: Env, table_id: u32, player: Address) -> bool {
         ban_list::is_banned(&env, table_id, &player)
     }
 
     /// Get all banned players for a table (view function).
-    pub fn get_banned_players(
-        env: Env,
-        table_id: u32,
-    ) -> Vec<(Address, Symbol)> {
+    pub fn get_banned_players(env: Env, table_id: u32) -> Vec<(Address, Symbol)> {
         ban_list::get_banned_players(&env, table_id)
     }
 
@@ -2570,6 +2561,186 @@ impl PokerTableContract {
             (suspected_dumper, suspected_receiver, confidence),
         );
 
+        Ok(())
+    }
+
+    // ========================================================================
+    // Deferred Payment Guarantees
+    // ========================================================================
+
+    pub fn create_guarantee(
+        env: Env,
+        table_id: u32,
+        player: Address,
+        principal: i128,
+        collateral: i128,
+        deadline: u64,
+        penalty: i128,
+    ) -> Result<(), PokerTableError> {
+        player.require_auth();
+        let key = DataKey::Guarantee(table_id, player.clone());
+        if env.storage().persistent().has(&key) {
+            let existing: GuaranteeRecord = env.storage().persistent().get(&key).unwrap();
+            if existing.status == GuaranteeStatus::Active
+                || existing.status == GuaranteeStatus::Consumed
+            {
+                return Err(PokerTableError::GuaranteeAlreadyExists);
+            }
+        }
+
+        if collateral < principal + penalty {
+            return Err(PokerTableError::InvalidGuaranteeCollateral);
+        }
+
+        let table = load_table(&env, table_id)?;
+        let token = token::Client::new(&env, &table.config.token);
+
+        token.transfer(&player, &env.current_contract_address(), &collateral);
+
+        let record = GuaranteeRecord {
+            player: player.clone(),
+            principal,
+            escrowed_collateral: collateral,
+            settlement_deadline: deadline,
+            penalty,
+            status: GuaranteeStatus::Active,
+        };
+
+        env.storage().persistent().set(&key, &record);
+
+        env.events().publish(
+            (Symbol::new(&env, "guarantee_created"), table_id),
+            (player, principal, collateral),
+        );
+        Ok(())
+    }
+
+    pub fn consume_guarantee(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<i128, PokerTableError> {
+        player.require_auth();
+        let key = DataKey::Guarantee(table_id, player.clone());
+        let mut record: GuaranteeRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::GuaranteeNotFound)?;
+
+        if record.status != GuaranteeStatus::Active {
+            return Err(PokerTableError::GuaranteeAlreadyConsumed);
+        }
+
+        record.status = GuaranteeStatus::Consumed;
+        env.storage().persistent().set(&key, &record);
+
+        let mut table = load_table(&env, table_id)?;
+        let seat = find_seat(&env, &table, &player)?;
+        let mut p = table
+            .players
+            .get(seat)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+
+        p.stack += record.principal;
+        p.total_buy_in += record.principal;
+        table.players.set(seat, p);
+        save_table(&env, &table);
+
+        env.events().publish(
+            (Symbol::new(&env, "guarantee_consumed"), table_id),
+            (player, record.principal),
+        );
+        Ok(record.principal)
+    }
+
+    pub fn settle_guarantee(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<(), PokerTableError> {
+        player.require_auth();
+        let key = DataKey::Guarantee(table_id, player.clone());
+        let mut record: GuaranteeRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::GuaranteeNotFound)?;
+
+        if record.status != GuaranteeStatus::Consumed {
+            return Err(PokerTableError::GuaranteeNotConsumed);
+        }
+
+        let now = env.ledger().timestamp();
+        if now > record.settlement_deadline {
+            return Err(PokerTableError::GuaranteeExpired);
+        }
+
+        let table = load_table(&env, table_id)?;
+        let token = token::Client::new(&env, &table.config.token);
+
+        token.transfer(&player, &env.current_contract_address(), &record.principal);
+        token.transfer(
+            &env.current_contract_address(),
+            &player,
+            &record.escrowed_collateral,
+        );
+
+        record.status = GuaranteeStatus::Settled;
+        env.storage().persistent().set(&key, &record);
+
+        env.events()
+            .publish((Symbol::new(&env, "guarantee_settled"), table_id), player);
+        Ok(())
+    }
+
+    pub fn liquidate_guarantee(
+        env: Env,
+        table_id: u32,
+        player: Address,
+        liquidator: Address,
+    ) -> Result<(), PokerTableError> {
+        liquidator.require_auth();
+        let key = DataKey::Guarantee(table_id, player.clone());
+        let mut record: GuaranteeRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PokerTableError::GuaranteeNotFound)?;
+
+        if record.status != GuaranteeStatus::Consumed {
+            return Err(PokerTableError::GuaranteeNotConsumed);
+        }
+
+        let now = env.ledger().timestamp();
+        if now <= record.settlement_deadline {
+            return Err(PokerTableError::GuaranteeNotExpired);
+        }
+
+        let table = load_table(&env, table_id)?;
+        let token = token::Client::new(&env, &table.config.token);
+
+        let total_deduction = record.principal + record.penalty;
+        let remaining = record.escrowed_collateral - total_deduction;
+
+        if record.penalty > 0 {
+            token.transfer(
+                &env.current_contract_address(),
+                &liquidator,
+                &record.penalty,
+            );
+        }
+        if remaining > 0 {
+            token.transfer(&env.current_contract_address(), &player, &remaining);
+        }
+
+        record.status = GuaranteeStatus::Liquidated;
+        env.storage().persistent().set(&key, &record);
+
+        env.events().publish(
+            (Symbol::new(&env, "guarantee_liquidated"), table_id),
+            (player, liquidator),
+        );
         Ok(())
     }
 }

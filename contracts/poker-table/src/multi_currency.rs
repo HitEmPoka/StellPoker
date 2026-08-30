@@ -19,7 +19,7 @@ pub fn whitelist_currency(env: &Env, token: Address, oracle: Address) {
         .persistent()
         .get(&CURRENCIES)
         .unwrap_or(Map::new(env));
-    
+
     currencies.set(
         token.clone(),
         CurrencyInfo {
@@ -28,7 +28,7 @@ pub fn whitelist_currency(env: &Env, token: Address, oracle: Address) {
             oracle_address: oracle,
         },
     );
-    
+
     env.storage().persistent().set(&CURRENCIES, &currencies);
 }
 
@@ -38,7 +38,7 @@ pub fn is_currency_whitelisted(env: &Env, token: &Address) -> bool {
         .persistent()
         .get(&CURRENCIES)
         .unwrap_or(Map::new(env));
-    
+
     currencies
         .get(token.clone())
         .map(|info| info.enabled)
@@ -51,8 +51,10 @@ pub fn get_currency_oracle(env: &Env, token: &Address) -> Option<Address> {
         .persistent()
         .get(&CURRENCIES)
         .unwrap_or(Map::new(env));
-    
-    currencies.get(token.clone()).map(|info| info.oracle_address)
+
+    currencies
+        .get(token.clone())
+        .map(|info| info.oracle_address)
 }
 
 /// Convert anchor asset amount to XLM using oracle price
@@ -64,7 +66,7 @@ pub fn convert_to_xlm(env: &Env, token: &Address, amount: i128) -> i128 {
         let rate: i128 = env
             .invoke_contract(&oracle, &Symbol::new(env, "get_price"), (token,).into())
             .unwrap_or(10_000_000); // Default 1:1 if oracle fails
-        
+
         (amount * rate) / 10_000_000
     } else {
         amount // 1:1 if no oracle configured

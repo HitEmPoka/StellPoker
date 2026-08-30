@@ -208,7 +208,10 @@ fn split(secret: &[u8], t: u8, n: u8) -> Result<Vec<(u8, Vec<u8>)>, String> {
             let mut x_power = 1u8;
             for degree in 0..(t as usize - 1) {
                 x_power = gf_mul(x_power, x);
-                y ^= gf_mul(coefficients[byte_index * (t as usize - 1) + degree], x_power);
+                y ^= gf_mul(
+                    coefficients[byte_index * (t as usize - 1) + degree],
+                    x_power,
+                );
             }
             share.push(y);
         }
@@ -365,7 +368,9 @@ fn combine_cmd(out_dir: PathBuf, share_paths: Vec<PathBuf>) -> Result<(), String
         .try_into()
         .map_err(|_| format!("reconstructed seed is {} bytes, expected 32", seed.len()))?;
     let recovered = stellar_strkey::ed25519::PublicKey(
-        SigningKey::from_bytes(&seed_array).verifying_key().to_bytes(),
+        SigningKey::from_bytes(&seed_array)
+            .verifying_key()
+            .to_bytes(),
     )
     .to_string();
     let secret = stellar_strkey::ed25519::PrivateKey(seed_array).to_string();
@@ -430,7 +435,10 @@ fn register(
     if !status.success() {
         return Err(format!("stellar CLI exited with {status}"));
     }
-    println!("registered {} with the committee registry", manifest.public_key);
+    println!(
+        "registered {} with the committee registry",
+        manifest.public_key
+    );
     Ok(())
 }
 
@@ -453,7 +461,15 @@ fn main() {
             stake,
             fee_rate_bps,
             execute,
-        } => register(out_dir, registry, source, network, stake, fee_rate_bps, execute),
+        } => register(
+            out_dir,
+            registry,
+            source,
+            network,
+            stake,
+            fee_rate_bps,
+            execute,
+        ),
     };
 
     if let Err(e) = result {

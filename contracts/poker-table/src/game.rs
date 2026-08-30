@@ -11,11 +11,17 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     table.hand_number += 1;
 
     // Rotate dealer button
-    let num_players = table.players.len() as u32;
-    if num_players < table.config.min_players {
-        return Err(PokerTableError::NotEnoughPlayers);
+    let previous_dealer = table.dealer_seat;
+    let next_dealer =
+        next_active_seat(table, table.dealer_seat).ok_or(PokerTableError::NotEnoughPlayers)?;
+    table.dealer_seat = next_dealer;
+
+    if previous_dealer != next_dealer {
+        env.events().publish(
+            (Symbol::new(env, "button_position_changed"), table.id),
+            (previous_dealer, next_dealer),
+        );
     }
-    table.dealer_seat = (table.dealer_seat + 1) % num_players;
 
     // Reset player states
     for i in 0..table.players.len() {
@@ -57,19 +63,50 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
 
     let level = current_blind_level(table)?;
 
+    let num_players = table.players.len() as u32;
+
     // Collect antes from every seated player before blinds. Antes go
     // straight to the pot and do not count toward `bet_this_round` (unlike
     // blinds), matching standard tournament ante semantics: they aren't
     // part of what a player must call to stay in the hand.
-    if level.ante > 0 {
-        for seat in 0..num_players {
-            post_ante(table, seat, level.ante)?;
+    let ante_amount = match level.ante {
+        AnteMode::Fixed(a) => a,
+        AnteMode::Percentage(p) => {
+            if p > 100 {
+                return Err(PokerTableError::InvalidAntePercentage);
+            }
+            (level.big_blind * p as i128) / 100
+        }
+        AnteMode::None => 0,
+    };
+
+    if ante_amount > 0 {
+        for i in 0..table.players.len() {
+            if let Some(p) = table.players.get(i) {
+                if !p.sitting_out && p.stack > 0 {
+                    post_ante(table, p.seat_index, ante_amount)?;
+                }
+            }
         }
     }
 
     // Post blinds
-    let sb_seat = (table.dealer_seat + 1) % num_players;
-    let bb_seat = (table.dealer_seat + 2) % num_players;
+    let active_players = active_player_count_for_new_hand(table);
+    if active_players < 2 {
+        return Err(PokerTableError::NotEnoughPlayers);
+    }
+
+    let is_heads_up = active_players == 2;
+    let sb_seat;
+    let bb_seat;
+
+    if is_heads_up {
+        sb_seat = table.dealer_seat;
+        bb_seat = next_active_seat(table, table.dealer_seat).unwrap();
+    } else {
+        sb_seat = next_active_seat(table, table.dealer_seat).unwrap();
+        bb_seat = next_active_seat(table, sb_seat).unwrap();
+    }
 
     post_blind(table, sb_seat, level.small_blind)?;
     post_blind(table, bb_seat, level.big_blind)?;
@@ -84,12 +121,11 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     {
         if straddle.multiplier != 0 {
             let (seat, amount) = match straddle.position {
-                StraddlePosition::BigBlind => (
-                    bb_seat,
-                    level.big_blind * (straddle.multiplier - 1) as i128,
-                ),
+                StraddlePosition::BigBlind => {
+                    (bb_seat, level.big_blind * (straddle.multiplier - 1) as i128)
+                }
                 StraddlePosition::Utg => (
-                    (table.dealer_seat + 3) % num_players,
+                    next_active_seat(table, bb_seat).unwrap(),
                     level.big_blind * straddle.multiplier as i128,
                 ),
             };
@@ -255,6 +291,34 @@ pub fn last_player_standing(table: &TableState) -> Option<u32> {
     None
 }
 
+pub(crate) fn active_player_count_for_new_hand(table: &TableState) -> u32 {
+    let mut count = 0;
+    for i in 0..table.players.len() {
+        if let Some(p) = table.players.get(i) {
+            if !p.sitting_out && p.stack > 0 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32> {
+    let num_players = table.players.len() as u32;
+    if num_players == 0 {
+        return None;
+    }
+    for i in 1..=num_players {
+        let seat = (from_seat + i) % num_players;
+        if let Some(p) = table.players.get(seat) {
+            if !p.sitting_out && p.stack > 0 {
+                return Some(seat);
+            }
+        }
+    }
+    None
+}
+
 /// Settle the showdown using the winner_index proved by the ZK circuit.
 ///
 /// The winner_index is a 0-based seat index determined by the showdown_valid
@@ -291,8 +355,7 @@ pub fn settle_showdown(
         pot::split_jackpot_rake(rake, table.config.jackpot_rake_share_bps);
     let variance = crate::record_outcome(env, table, winner_seat)?;
     if variance.triggered && house_rake > 0 {
-        let extra_jackpot =
-            (house_rake * variance.extra_jackpot_share_bps as i128) / 10_000;
+        let extra_jackpot = (house_rake * variance.extra_jackpot_share_bps as i128) / 10_000;
         house_rake -= extra_jackpot;
         jackpot_rake += extra_jackpot;
         env.events().publish(
@@ -334,7 +397,13 @@ pub fn settle_showdown(
     if rake > 0 {
         env.events().publish(
             (Symbol::new(env, "rake_collected"), table.id),
-            (table.hand_number, house_rake, jackpot_rake, table.rake_balance, table.jackpot_balance),
+            (
+                table.hand_number,
+                house_rake,
+                jackpot_rake,
+                table.rake_balance,
+                table.jackpot_balance,
+            ),
         );
     }
     Ok(())
@@ -355,7 +424,7 @@ const JACKPOT_OTHERS_SHARE_BPS: i128 = 2000;
 /// A bad beat is triggered when at least one non-winner player at showdown has
 /// a hand score >= the qualifying threshold (computed from
 /// `min_bad_beat_category` and `min_bad_beat_rank`).  The *best* such
- /// qualifying losing hand receives the largest share (60%), the winner
+/// qualifying losing hand receives the largest share (60%), the winner
 /// receives 20%, and the remaining dealt-in players split 20% equally.
 ///
 /// The jackpot balance is reset to zero after payout.

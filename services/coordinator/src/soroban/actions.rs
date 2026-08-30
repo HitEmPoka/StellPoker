@@ -4,8 +4,8 @@ use tokio::process::Command;
 
 use super::{
     invoke_committee_registry_with_source, invoke_contract_with_retries,
-    invoke_contract_with_source_retries, parse_i128_value, parse_tx_result,
-    parse_u32_from_stdout, parse_u32_value, resolve_onchain_table_id, SorobanConfig,
+    invoke_contract_with_source_retries, parse_i128_value, parse_tx_result, parse_u32_from_stdout,
+    parse_u32_value, resolve_onchain_table_id, SorobanConfig,
 };
 use crate::key_rotation::CommitteeKey;
 
@@ -620,10 +620,7 @@ pub async fn get_players_paginated(
 }
 
 /// Read the total player count via `get_player_count`.
-pub async fn get_player_count(
-    config: &SorobanConfig,
-    table_id: u32,
-) -> Result<String, String> {
+pub async fn get_player_count(config: &SorobanConfig, table_id: u32) -> Result<String, String> {
     if !config.is_configured() {
         return Err("Soroban not configured".to_string());
     }

@@ -62,6 +62,7 @@ mod test {
             token: token.clone(),
             min_buy_in: 100,
             max_buy_in: 1000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 5, 10),
             min_players: 2,
             max_players: 6,
@@ -133,6 +134,7 @@ mod test {
             token: token.clone(),
             min_buy_in: 100,
             max_buy_in: 100_000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 100, 200),
             min_players: 2,
             max_players: 6,
@@ -1518,13 +1520,7 @@ mod test {
         play_fold_hand(&s, table_id);
         assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
 
-        let stack_before = s
-            .client
-            .get_table(&table_id)
-            .players
-            .get(0)
-            .unwrap()
-            .stack;
+        let stack_before = s.client.get_table(&table_id).players.get(0).unwrap().stack;
         let new_stack = rebuy(&s, table_id, &p1, 100);
         assert_eq!(new_stack, stack_before + 100);
     }

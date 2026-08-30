@@ -66,10 +66,8 @@ impl SessionCache {
         let hand_commitments_json =
             serde_json::to_string(&session.hand_commitments).unwrap_or_default();
         let player_order_json = serde_json::to_string(&session.player_order).unwrap_or_default();
-        let dealt_indices_json =
-            serde_json::to_string(&session.dealt_indices).unwrap_or_default();
-        let board_indices_json =
-            serde_json::to_string(&session.board_indices).unwrap_or_default();
+        let dealt_indices_json = serde_json::to_string(&session.dealt_indices).unwrap_or_default();
+        let board_indices_json = serde_json::to_string(&session.board_indices).unwrap_or_default();
         let reveal_tx_hashes_json =
             serde_json::to_string(&session.reveal_tx_hashes).unwrap_or_default();
 
@@ -191,8 +189,10 @@ impl SessionCache {
     }
 
     pub fn delete_session(&self, session_id: &str) -> SqliteResult<()> {
-        self.conn
-            .execute("DELETE FROM mpc_sessions WHERE session_id = ?", params![session_id])?;
+        self.conn.execute(
+            "DELETE FROM mpc_sessions WHERE session_id = ?",
+            params![session_id],
+        )?;
         Ok(())
     }
 

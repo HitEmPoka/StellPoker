@@ -95,10 +95,12 @@ pub async fn negotiate_circuit_version(
         let caps = guard
             .get(id)
             .ok_or_else(|| format!("no version handshake on file for node {}", id))?;
-        let versions = caps
-            .circuit_versions
-            .get(circuit_name)
-            .ok_or_else(|| format!("node {} did not report versions for circuit {}", id, circuit_name))?;
+        let versions = caps.circuit_versions.get(circuit_name).ok_or_else(|| {
+            format!(
+                "node {} did not report versions for circuit {}",
+                id, circuit_name
+            )
+        })?;
         sets.push(versions.iter().copied().collect());
     }
     highest_common_version(&sets).ok_or_else(|| {
@@ -152,10 +154,7 @@ mod tests {
 
     #[test]
     fn no_common_version_returns_none() {
-        let sets = vec![
-            [1u32].into_iter().collect(),
-            [2u32].into_iter().collect(),
-        ];
+        let sets = vec![[1u32].into_iter().collect(), [2u32].into_iter().collect()];
         assert_eq!(highest_common_version(&sets), None);
     }
 
@@ -195,6 +194,8 @@ mod tests {
     async fn missing_handshake_errors() {
         let registry = new_registry();
         let node_ids = vec!["ghost".to_string()];
-        assert!(negotiate_protocol_version(&registry, &node_ids).await.is_err());
+        assert!(negotiate_protocol_version(&registry, &node_ids)
+            .await
+            .is_err());
     }
 }

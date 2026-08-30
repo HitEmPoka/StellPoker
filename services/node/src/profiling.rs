@@ -192,7 +192,10 @@ mod tests {
         registry.enable("s1").await;
 
         assert!(registry.is_enabled("s1").await);
-        assert!(!registry.is_enabled("s2").await, "enabling s1 must not affect s2");
+        assert!(
+            !registry.is_enabled("s2").await,
+            "enabling s1 must not affect s2"
+        );
     }
 
     #[tokio::test]
@@ -200,7 +203,10 @@ mod tests {
         let registry = ProfileRegistry::new();
         registry.enable("s1").await;
 
-        let profile = registry.get("s1").await.expect("enable must create a profile entry");
+        let profile = registry
+            .get("s1")
+            .await
+            .expect("enable must create a profile entry");
         assert_eq!(profile.session_id, "s1");
         assert!(profile.phases.is_empty());
     }
@@ -261,7 +267,10 @@ mod tests {
 
         let profile = registry.get("s1").await.unwrap();
         let phases: Vec<&str> = profile.phases.iter().map(|p| p.phase.as_str()).collect();
-        assert_eq!(phases, vec!["merge_shares", "witness_generation", "proof_generation"]);
+        assert_eq!(
+            phases,
+            vec!["merge_shares", "witness_generation", "proof_generation"]
+        );
     }
 
     // Spawns a real short-lived child process and confirms the sampler
