@@ -4,6 +4,7 @@ import {
   Contract,
   TransactionBuilder,
   nativeToScVal,
+  scValToNative,
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
@@ -217,5 +218,135 @@ export async function playerActionOnChain(
     nativeToScVal(tableId, { type: "u32" }),
     new Address(wallet.address).toScVal(),
     toActionScVal(action, amount),
+  ]);
+}
+
+/**
+ * Simulates a read-only call against the given contract, using
+ * `sourceAddress`'s account purely to build a syntactically valid
+ * transaction envelope for simulation — no signature or submission
+ * happens, matching the account-not-required nature of a getter.
+ */
+async function simulateReadCall(
+  sourceAddress: string,
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<unknown> {
+  const cfg = await getConfig();
+  const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
+  const account = await server.getAccount(sourceAddress);
+  const contract = new Contract(contractId);
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: cfg.networkPassphrase,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed for ${method}: ${sim.error}`);
+  }
+  const result = (sim as rpc.Api.SimulateTransactionSuccessResponse).result;
+  if (!result) {
+    throw new Error(`No result returned for ${method}`);
+  }
+  return scValToNative(result.retval);
+}
+
+/** Subset of contracts/poker-table's TableConfig needed by auto-rebuy (Issue #164). */
+export interface RebuyRelevantTableConfig {
+  minBuyIn: bigint;
+  maxBuyIn: bigint;
+  maxRebuys: number;
+  /** Payment token contract for this table (used to check wallet balance). */
+  tokenContract: string;
+  /**
+   * Big blind of the schedule's first level. Correct for the common
+   * fixed-blinds case; an escalating (tournament-style) multi-level
+   * schedule's *currently active* level requires the same level-selection
+   * logic the contract applies internally, which this does not replicate —
+   * auto-rebuy's "below N big blinds" threshold on such a table will use
+   * the starting level's big blind, not the current one.
+   */
+  bigBlind: bigint;
+}
+
+/**
+ * Reads the subset of a table's on-chain config relevant to auto-rebuy
+ * decisions, via `get_table` (Issue #164).
+ */
+export async function getTableConfig(
+  sourceAddress: string,
+  tableId: number
+): Promise<RebuyRelevantTableConfig> {
+  const cfg = await getConfig();
+  const native = (await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ])) as {
+    config: {
+      min_buy_in: bigint;
+      max_buy_in: bigint;
+      max_rebuys: number;
+      token: string;
+      blinds_schedule: { levels: Array<{ big_blind: bigint }> };
+    };
+  };
+
+  const firstLevel = native.config.blinds_schedule.levels[0];
+  return {
+    minBuyIn: BigInt(native.config.min_buy_in),
+    maxBuyIn: BigInt(native.config.max_buy_in),
+    maxRebuys: Number(native.config.max_rebuys),
+    tokenContract: native.config.token,
+    bigBlind: firstLevel ? BigInt(firstLevel.big_blind) : BigInt(0),
+  };
+}
+
+/** Reads a seated player's rebuy count so far this session, via `get_player_buy_in` (Issue #164). */
+export async function getPlayerRebuyCount(
+  sourceAddress: string,
+  tableId: number,
+  playerAddress: string
+): Promise<number> {
+  const cfg = await getConfig();
+  const native = (await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_player_buy_in", [
+    nativeToScVal(tableId, { type: "u32" }),
+    new Address(playerAddress).toScVal(),
+  ])) as [bigint, number];
+
+  return Number(native[1]);
+}
+
+/**
+ * Reads a wallet's balance of the given SEP-41 token contract, via the
+ * token contract's standard `balance` method (Issue #164) — the same
+ * interface every Soroban token contract implements, including the one
+ * `contracts/poker-table` transfers buy-ins/rebuys through.
+ */
+export async function getTokenBalance(
+  sourceAddress: string,
+  tokenContract: string
+): Promise<bigint> {
+  const native = (await simulateReadCall(sourceAddress, tokenContract, "balance", [
+    new Address(sourceAddress).toScVal(),
+  ])) as bigint;
+
+  return BigInt(native);
+}
+
+/** Submits an on-chain rebuy for the connected wallet (Issue #164). */
+export async function rebuyOnChain(
+  wallet: WalletSession,
+  tableId: number,
+  amount: bigint
+): Promise<string | undefined> {
+  return submitWalletTx(wallet, "rebuy", [
+    nativeToScVal(tableId, { type: "u32" }),
+    new Address(wallet.address).toScVal(),
+    nativeToScVal(amount, { type: "i128" }),
   ]);
 }
