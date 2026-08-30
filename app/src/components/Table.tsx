@@ -48,6 +48,7 @@ import {
 } from "@/lib/use-notifications";
 import { useTutorial } from "@/lib/use-tutorial";
 import { TutorialOverlay, TutorialHelpButton } from "./TutorialOverlay";
+import { EmoteRadialMenu } from "./EmoteRadialMenu";
 import { playSound } from "@/lib/sound-engine";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
@@ -713,6 +714,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     handleAction,
   ]);
 
+  const [emoteRadialOpen, setEmoteRadialOpen] = useState(false);
   const EMOTES = ["😃", "😢", "😠", "😎", "🤔", "🎉"];
 
   useEffect(() => {
@@ -785,7 +787,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     return () => {
       active = false;
       clearTimeout(reconnectTimeout);
-      ws?.close();
+      if (ws) ws.close();
     };
   }, [tableId, chatOpen]);
 
@@ -809,20 +811,26 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   };
 
   const sendEmote = (emote: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
     const mySeat = userPlayer ? userPlayer.seat : 0;
     const myAlias = userAddress ? (getAlias(userAddress) || `Seat ${mySeat}`) : `Seat ${mySeat}`;
 
-    const payload = {
-      seat_index: mySeat,
-      alias: myAlias,
-      emote,
-    };
+    setSeatEmotes((prev) => ({ ...prev, [mySeat]: emote }));
+    setTimeout(() => {
+      setSeatEmotes((prev) => {
+        const copy = { ...prev };
+        delete copy[mySeat];
+        return copy;
+      });
+    }, 3000);
 
-    wsRef.current.send(JSON.stringify(payload));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const payload = {
+        seat_index: mySeat,
+        alias: myAlias,
+        emote,
+      };
+      wsRef.current.send(JSON.stringify(payload));
+    }
   };
 
   return (
@@ -1277,6 +1285,24 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
         </div>
       )}
+
+      {/* Emote Radial Menu Toggle Button */}
+      <button
+        type="button"
+        onClick={() => setEmoteRadialOpen((prev) => !prev)}
+        className="emote-toggle-btn pixel-btn pixel-btn-yellow text-[9px] fixed bottom-4 right-28 z-40 flex items-center gap-1"
+        style={{ padding: "8px 12px" }}
+        title="Open Emote Radial Menu"
+      >
+        <span>💬</span> EMOTE
+      </button>
+
+      {/* Emote Radial Menu */}
+      <EmoteRadialMenu
+        isOpen={emoteRadialOpen}
+        onClose={() => setEmoteRadialOpen(false)}
+        onSelectEmote={(emoteText) => sendEmote(emoteText)}
+      />
 
       {/* Chat Overlay Toggle Button */}
       <button

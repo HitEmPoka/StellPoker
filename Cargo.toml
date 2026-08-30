@@ -12,6 +12,8 @@ members = [
     "contracts/liquidity-pool",
     "contracts/tournament-prize-pool",
     "contracts/protocol-governance",
+    "contracts/rakeback-rewards",
+    "contracts/hand-verifier",
     "stellar-zk-cards",
     "services/coordinator",
     "services/node",
