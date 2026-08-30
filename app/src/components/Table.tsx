@@ -1444,6 +1444,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         <TransactionSimulation
           simulation={joinSimulation.simulation}
           loading={joinSimulation.loading}
+          buyInAmount={joinSimulation.params?.buyIn}
           onConfirm={() => {
             joinSimulation.confirmJoin();
           }}

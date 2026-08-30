@@ -949,6 +949,7 @@ export default function Home() {
           <TransactionSimulation
             simulation={joinTableSim.simulation}
             loading={joinTableSim.loading}
+            buyInAmount={joinTableSim.params?.buyIn}
             onConfirm={() => {
               if (pendingTableId) {
                 const buyIn = parseXlmToStroops(buyInXlm);
