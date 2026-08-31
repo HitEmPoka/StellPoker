@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card } from "./Card";
 import { stellarExpertUrl } from "@/lib/explorer";
 import { replayUrl } from "@/lib/replay";
+import { HandShareButton } from "./HandShareButton";
 import type { HandHistoryEntry, Street } from "@/lib/hand-history";
 
 interface HandHistoryPanelProps {
@@ -113,6 +114,15 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
                       ▶ REPLAY
                     </button>
                   )}
+                  <HandShareButton
+                    entry={{
+                      tableId: entry.tableId,
+                      handNumber: entry.handNumber,
+                      finalPot: entry.finalPot,
+                      handRankName: entry.handRankName,
+                      txHash: entry.txHash,
+                    }}
+                  />
                 </div>
               </div>
 

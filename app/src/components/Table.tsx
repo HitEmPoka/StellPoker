@@ -22,6 +22,8 @@ import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
 import { HandReplayer } from "./HandReplayer";
+import { HandTimeline } from "./HandTimeline";
+import { MobileActionBar } from "./MobileActionBar";
 import { TransactionSimulation } from "./TransactionSimulation";
 import { MpcNodeIndicator } from "./MpcNodeIndicator";
 import { TableTabs } from "./TableTabs";
@@ -46,10 +48,21 @@ import {
   useTurnNotification,
   requestPermissionOnJoin,
 } from "@/lib/use-notifications";
+import {
+  appendEvent,
+  observeEvent,
+  snapshotAt,
+  loadTimeline,
+  saveTimeline,
+  type TimelineEvent,
+  type TimelineStreet,
+} from "@/lib/hand-timeline";
 import { useTutorial } from "@/lib/use-tutorial";
 import { TutorialOverlay, TutorialHelpButton } from "./TutorialOverlay";
 import { EmoteRadialMenu } from "./EmoteRadialMenu";
 import { playSound } from "@/lib/sound-engine";
+import { useAutoRebuy } from "@/lib/use-auto-rebuy";
+import { AutoRebuySettings } from "./AutoRebuySettings";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -123,11 +136,20 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [botLine, setBotLine] = useState<string | null>(null);
   const [gameboyOpen, setGameboyOpen] = useState(false);
+  const [autoRebuyOpen, setAutoRebuyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingSkeletonTest, setLoadingSkeletonTest] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HandHistoryEntry[]>(() =>
     loadHandHistory(tableId)
   );
+  // Hand chosen for step-through replay from the history panel (#62). The
+  // replayer and the panel's `onReplay` callback were both wired up already,
+  // but the state connecting them was missing, which broke the type-check.
+  const [replayEntry, setReplayEntry] = useState<HandHistoryEntry | null>(null);
+  // Live hand timeline (#176): every moment of the hand in progress, plus the
+  // moment currently being reviewed (null while pinned to live).
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [, bumpAliasTick] = useState(0);
   const [betAmount, setBetAmount] = useState(0);
@@ -158,6 +180,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     ? userAddress
     : onChainTurnAddress;
   const isMyTurn = !!userAddress && displayedTurnAddress === userAddress;
+
+  // Issue #164: check the player's auto-rebuy preference whenever the table
+  // settles into "waiting" between hands, and submit an on-chain rebuy if
+  // their configured rule triggers.
+  useAutoRebuy({
+    tableId,
+    wallet,
+    phase: game.phase,
+    currentStack: userPlayer?.stack ?? 0,
+  });
 
   // Issue #47: browser notification + sound when it becomes the user's turn.
   useTurnNotification({ isMyTurn, tableName: `Table #${tableId}` });
@@ -548,9 +580,68 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     }
   }, [game.phase, game.handNumber, game.pot, game.boardCards, game.lastTxHash, tableId, userPlayer, winnerAddress]);
 
+  // ── Live hand timeline (#176) ──────────────────────────────────────────────
+  // Every state sync is an observation; `observeEvent` decides whether this
+  // one is a moment worth a marker, and `appendEvent` makes recording it
+  // idempotent — which matters because the table re-syncs from a chain
+  // subscription, a WebSocket push, and an interval poll all at once.
+  useEffect(() => {
+    if (game.handNumber === 0) return;
+
+    setTimeline((previous) => {
+      // A new hand starts a fresh timeline, restoring anything a reload
+      // mid-hand left behind.
+      const base =
+        previous.length > 0 && previous[0].id.startsWith(`${game.handNumber}:`)
+          ? previous
+          : loadTimeline(tableId, game.handNumber);
+
+      const observed = observeEvent(
+        {
+          handNumber: game.handNumber,
+          phase: game.phase as TimelineStreet,
+          pot: game.pot,
+          boardCards: game.boardCards,
+          turnAddress: displayedTurnAddress,
+        },
+        base[base.length - 1],
+        Date.now()
+      );
+
+      const next = observed ? appendEvent(base, observed) : base;
+      if (next !== previous) {
+        saveTimeline(tableId, game.handNumber, next);
+      }
+      return next;
+    });
+  }, [
+    game.handNumber,
+    game.phase,
+    game.pot,
+    game.boardCards,
+    displayedTurnAddress,
+    tableId,
+  ]);
+
+  // A new moment while reviewing must not yank the player back to live, but a
+  // new hand should — the old hand's timeline is gone.
+  useEffect(() => {
+    setScrubIndex(null);
+  }, [game.handNumber]);
+
+  const liveIndex = Math.max(0, timeline.length - 1);
+  const timelineIndex = scrubIndex ?? liveIndex;
+  const reviewing = scrubIndex !== null && scrubIndex !== liveIndex;
+  const reviewedMoment = reviewing ? snapshotAt(timeline, timelineIndex) : null;
+
   const currentBet = Math.max(...game.players.map((p) => p.betThisRound), 0);
   const displayCurrentBet = currentBet;
-  const displayPot = game.pot;
+  // While a past moment is selected the felt shows that moment's board and pot
+  // instead of the live ones; every control stays bound to the live state.
+  const displayPot = reviewedMoment ? reviewedMoment.pot : game.pot;
+  const displayBoardCards = reviewedMoment
+    ? reviewedMoment.boardCards
+    : game.boardCards;
   const displayMyBet = userPlayer?.betThisRound || 0;
   const displayMyStack = userPlayer?.stack || 0;
   const canStartHand = !!wallet && isWalletSeated;
@@ -900,6 +991,23 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             >
               {t("nav.history")}
             </button>
+            {userAddress && (
+              <button
+                onClick={() => setAutoRebuyOpen(true)}
+                className="text-[9px] mr-2"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#c8e6ff",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                title="Auto-Rebuy Settings"
+              >
+                AUTO-REBUY
+              </button>
+            )}
             <button
               onClick={() => setShortcutsOpen(true)}
               className="text-[9px]"
@@ -1099,7 +1207,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               borderBottom: '2px solid rgba(139, 105, 20, 0.2)',
               padding: '12px 0',
             }}>
-              <Board cards={game.boardCards} pot={displayPot} />
+              <div className={reviewing ? "timeline-reviewing" : undefined}>
+                <Board cards={displayBoardCards} pot={displayPot} />
+              </div>
 
               {game.phase === "waiting" && wallet && !isWalletSeated && playMode !== "single" && (
                 <button
@@ -1180,6 +1290,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
         </div>
 
+        {/* Live hand timeline — step back through this hand without leaving
+            the table, for catching up after a disconnect (#176). */}
+        <HandTimeline
+          events={timeline}
+          index={timelineIndex}
+          onSeek={(index) => setScrubIndex(index)}
+          isLive={!reviewing}
+          onReturnToLive={() => setScrubIndex(null)}
+        />
+
         {/* MPC Status footer */}
         <div className="mpc-footer flex flex-col items-center gap-1 mt-2">
           <div className="flex items-center gap-2">
@@ -1225,6 +1345,26 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         </div>
       </div>
 
+      {/* Sticky bottom action bar for phones (#175). Hidden by CSS above the
+          mobile breakpoint, where the full action panel is in play instead. */}
+      <MobileActionBar
+        visible={["preflop", "flop", "turn", "river"].includes(game.phase)}
+        isMyTurn={isMyTurn}
+        currentBet={displayCurrentBet}
+        myBet={displayMyBet}
+        myStack={displayMyStack}
+        pot={game.pot}
+        loading={loading}
+        betAmount={betAmount}
+        setBetAmount={setBetAmount}
+        onAction={(action, amount) => {
+          if (["bet", "raise", "call", "allin"].includes(action)) {
+            void playSound("chip");
+          }
+          return handleAction(action, amount);
+        }}
+      />
+
       <GameBoyModal
         open={gameboyOpen}
         onClose={() => setGameboyOpen(false)}
@@ -1237,6 +1377,15 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         entries={historyEntries}
         onReplay={(entry) => setReplayEntry(entry)}
       />
+
+      {userAddress && (
+        <AutoRebuySettings
+          open={autoRebuyOpen}
+          onClose={() => setAutoRebuyOpen(false)}
+          tableId={tableId}
+          address={userAddress}
+        />
+      )}
 
       {/* Issue #53 — collapsible multi-table overview */}
       <TableMiniMap currentTableId={tableId} defaultCollapsed />
@@ -1444,6 +1593,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         <TransactionSimulation
           simulation={joinSimulation.simulation}
           loading={joinSimulation.loading}
+          buyInAmount={joinSimulation.params?.buyIn}
           onConfirm={() => {
             joinSimulation.confirmJoin();
           }}

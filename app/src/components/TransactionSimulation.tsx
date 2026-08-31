@@ -8,6 +8,31 @@ interface TransactionSimulationProps {
   onConfirm: () => void;
   onCancel: () => void;
   loading?: boolean;
+  /**
+   * Buy-in amount in stroops (7-decimal XLM). When provided, the modal
+   * shows a buy-in summary (amount, network fee, gas price, total
+   * deduction) above the generic simulation details — used for the
+   * join-table confirmation flow specifically.
+   */
+  buyInAmount?: bigint;
+}
+
+const STROOPS_PER_XLM = BigInt(10_000_000);
+
+/** Formats a stroop amount (bigint) as an XLM string with up to 7 decimals. */
+function formatStroopsAsXlm(stroops: bigint): string {
+  const whole = stroops / STROOPS_PER_XLM;
+  const remainder = stroops % STROOPS_PER_XLM;
+  if (remainder === BigInt(0)) return whole.toString();
+  const fractional = remainder.toString().padStart(7, "0").replace(/0+$/, "");
+  return `${whole}.${fractional}`;
+}
+
+/** Parses a decimal XLM fee string (e.g. "0.0000123") into stroops. */
+function parseFeeXlmToStroops(feeXlm: string): bigint {
+  const value = Number(feeXlm);
+  if (!Number.isFinite(value)) return BigInt(0);
+  return BigInt(Math.round(value * Number(STROOPS_PER_XLM)));
 }
 
 function StateChangeIcon({ type }: { type: StateChange['type'] }) {
@@ -50,15 +75,41 @@ export function TransactionSimulation({
   onConfirm,
   onCancel,
   loading = false,
+  buyInAmount,
 }: TransactionSimulationProps) {
   const [showDetails, setShowDetails] = useState(false);
+
+  const feeStroops = simulation.success ? parseFeeXlmToStroops(simulation.fee) : BigInt(0);
+  const gasPricePerInstruction =
+    simulation.success && simulation.gasUsed
+      ? feeStroops / BigInt(Math.max(1, simulation.gasUsed))
+      : null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
         <h2 className="text-xl font-bold mb-4">Transaction Preview</h2>
-        
+
         <SimulationStatus success={simulation.success} error={simulation.error} />
+
+        {simulation.success && buyInAmount !== undefined && (
+          <div className="mb-4">
+            <h3 className="font-semibold text-gray-700 mb-2">Buy-in Summary</h3>
+            <div className="text-sm space-y-1">
+              <div>Buy-in: {formatStroopsAsXlm(buyInAmount)} XLM</div>
+              <div>Network fee: {formatStroopsAsXlm(feeStroops)} XLM</div>
+              {gasPricePerInstruction !== null && (
+                <div>
+                  Gas price: {gasPricePerInstruction.toString()} stroops/instruction
+                  ({simulation.gasUsed!.toLocaleString()} instructions)
+                </div>
+              )}
+              <div className="font-semibold pt-1 border-t">
+                Total deduction: {formatStroopsAsXlm(buyInAmount + feeStroops)} XLM
+              </div>
+            </div>
+          </div>
+        )}
 
         {simulation.success && (
           <>

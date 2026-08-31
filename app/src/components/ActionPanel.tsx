@@ -97,7 +97,7 @@ export function ActionPanel({
 
   return (
     <div
-      className="pixel-border-thin flex flex-col items-center gap-3 px-4 py-3"
+      className="action-panel-desktop pixel-border-thin flex flex-col items-center gap-3 px-4 py-3"
       style={{
         background: "rgba(10, 20, 30, 0.7)",
         borderColor: "rgba(140, 170, 200, 0.4)",
@@ -129,8 +129,9 @@ export function ActionPanel({
           SOLO VS AI: using fake chips for local play.
         </span>
       )}
-      {/* Action buttons */}
-      <div className="flex items-center gap-2">
+      {/* Action buttons — hidden on mobile, where the sticky bottom bar owns
+          these decisions instead (#175). */}
+      <div className="action-panel-buttons flex items-center gap-2">
         {/* FOLD */}
         <button
           onClick={() => onAction("fold")}
@@ -210,7 +211,7 @@ export function ActionPanel({
 
       {/* Bet slider + quick buttons */}
       {!disabled && myStack > callAmount && (
-        <div className="flex items-center gap-3 w-full max-w-sm">
+        <div className="bet-slider-row flex items-center gap-3 w-full max-w-sm">
           <input
             type="range"
             min={minBet}
@@ -248,7 +249,7 @@ export function ActionPanel({
 
       {/* Chip tray for drag-and-drop betting */}
       {!disabled && myStack > callAmount && (
-        <div className="w-full max-w-sm">
+        <div className="chip-tray-row w-full max-w-sm">
           <ChipTray
             myStack={myStack}
             betAmount={betAmount}

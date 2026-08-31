@@ -7,8 +7,7 @@ import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
 import { TransactionSimulation } from "@/components/TransactionSimulation";
-import { TokenSelector } from "@/components/TokenSelector";
-import { OddsCalculatorModal } from "@/components/OddsCalculatorModal";
+import { TokenSelector, type TokenChoice } from "@/components/TokenSelector";
 import * as api from "@/lib/api";
 import { useJoinTableSimulation } from "@/lib/use-transaction-simulation";
 import {
@@ -25,6 +24,13 @@ import {
   tableHref,
   type OpenTable,
 } from "@/lib/open-tables";
+import { getAlias } from "@/lib/alias-store";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import {
+  matchTable,
+  describeSeatMatch,
+  type TableMatch,
+} from "@/lib/table-search";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -59,7 +65,7 @@ export default function Home() {
   const [availableWallets, setAvailableWallets] = useState<{ type: WalletType; name: string; isInstalled: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState(2);
-  const [tokenChoice, setTokenChoice] = useState<{ type: string; sacAddress?: string }>({ type: "XLM" });
+  const [tokenChoice, setTokenChoice] = useState<TokenChoice>({ type: "XLM" });
   const [buyInXlm, setBuyInXlm] = useState(
     formatStroopsToXlm(BigInt("1000000000"))
   );
@@ -261,18 +267,17 @@ export default function Home() {
     router.push(`/table/${table.table_id}${query}`);
   };
 
-  const matchesSearch = (table: api.OpenTableInfo, query: string): boolean => {
-    if (!query) return true;
-    const q = query.trim().toLowerCase();
-    if (table.table_id.toString().includes(q)) return true;
-    const lobby = tableLobbies[table.table_id];
-    if (!lobby) return false;
-    return lobby.seats.some(
-      (seat) =>
-        seat.chain_address.toLowerCase().includes(q) ||
-        (seat.wallet_address ?? "").toLowerCase().includes(q)
+  // Search runs on the settled query so a fast typist isn't re-filtering every
+  // open table (and re-reading an alias per seat) on every keystroke (#173).
+  const debouncedSearch = useDebouncedValue(tableSearch, 250);
+
+  const searchTable = (table: api.OpenTableInfo): TableMatch =>
+    matchTable(
+      debouncedSearch,
+      table.table_id,
+      tableLobbies[table.table_id]?.seats ?? [],
+      getAlias
     );
-  };
 
   const isMyTable = (table: api.OpenTableInfo): boolean => {
     if (!wallet) return false;
@@ -285,12 +290,24 @@ export default function Home() {
     );
   };
 
-  const filteredOpenTables = lobbyTables.filter((t) => {
-    if (!matchesSearch(t, tableSearch)) return false;
-    if (filterSeatsOpen && t.open_wallet_slots <= 0) return false;
-    if (filterMyStakes && !isMyTable(t)) return false;
-    return true;
-  });
+  // Each surviving row carries the reason it matched, so the list can show
+  // *which* seat the searched-for player is sitting in rather than only that
+  // the table matched somehow.
+  const filteredOpenTables = lobbyTables
+    .map((table) => ({ table, match: searchTable(table) }))
+    .filter(({ table, match }) => {
+      if (!match.matched) return false;
+      if (filterSeatsOpen && table.open_wallet_slots <= 0) return false;
+      if (filterMyStakes && !isMyTable(table)) return false;
+      return true;
+    });
+
+  const searchActive = debouncedSearch.trim().length > 0;
+  const searchSummary = !searchActive
+    ? `${filteredOpenTables.length} open ${filteredOpenTables.length === 1 ? "table" : "tables"}`
+    : filteredOpenTables.length === 0
+      ? "No tables match that player"
+      : `${filteredOpenTables.length} ${filteredOpenTables.length === 1 ? "table" : "tables"} match`;
 
   const shortAddr = wallet
     ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
@@ -557,6 +574,16 @@ export default function Home() {
             >
               OPEN YOUR WALLET EXTENSION, UNLOCK IT, AND CLICK THE BUTTON ABOVE.
             </div>
+
+            {/* A visitor with no wallet is otherwise stuck on this screen;
+                practice mode is exactly what they can do instead (#174). */}
+            <Link
+              href="/practice"
+              className="text-[9px]"
+              style={{ color: "#ffc078", textDecoration: "underline" }}
+            >
+              NO WALLET? PRACTICE VS BOTS →
+            </Link>
           </div>
         )}
 
@@ -597,6 +624,19 @@ export default function Home() {
             >
               JOIN TABLE
             </button>
+
+            {/* Practice mode needs no wallet at all, so it is a plain link
+                rather than a gated action (#174). */}
+            <Link
+              href="/practice"
+              className="pixel-btn pixel-btn-blue text-[12px] w-full text-center"
+              style={{ padding: "14px 24px", textDecoration: "none" }}
+            >
+              PRACTICE VS BOTS
+            </Link>
+            <span className="text-[8px]" style={{ color: "#95a5a6" }}>
+              PLAY MONEY · NO WALLET NEEDED
+            </span>
           </div>
         )}
 
@@ -785,14 +825,47 @@ export default function Home() {
 
             {/* Search + quick filters */}
             <div className="flex flex-col gap-2 w-full">
-              <input
-                type="text"
-                value={tableSearch}
-                onChange={(e) => setTableSearch(e.target.value)}
-                placeholder="SEARCH BY TABLE ID OR ADDRESS"
-                className="w-full text-center text-[11px]"
-                style={{ padding: "8px 10px" }}
-              />
+              <label
+                htmlFor="table-search"
+                className="text-[9px]"
+                style={{ color: "#c8e6ff" }}
+              >
+                FIND A PLAYER
+              </label>
+              <div className="flex items-center gap-2 w-full">
+                <input
+                  id="table-search"
+                  type="search"
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  placeholder="ALIAS, KEY PREFIX (GABC…) OR TABLE ID"
+                  aria-describedby="table-search-status"
+                  className="flex-1 text-center text-[11px]"
+                  style={{ padding: "8px 10px" }}
+                  data-testid="table-search-input"
+                />
+                {tableSearch && (
+                  <button
+                    onClick={() => setTableSearch("")}
+                    aria-label="Clear search"
+                    className="pixel-btn text-[9px]"
+                    style={{ padding: "6px 10px" }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {/* Announced to screen readers as the result count settles. */}
+              <p
+                id="table-search-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="text-[8px] text-center"
+                style={{ color: "#8a9ab0" }}
+              >
+                {searchSummary}
+              </p>
               <div className="flex gap-2 justify-center flex-wrap">
                 <button
                   onClick={() => setFilterSeatsOpen((v) => !v)}
@@ -837,29 +910,54 @@ export default function Home() {
                 </p>
               )}
               {!loadingTables &&
-                filteredOpenTables.map((t) => (
+                filteredOpenTables.map(({ table: t, match }) => (
                   <div
                     key={t.table_id}
-                    className="flex items-center justify-between gap-2 text-[10px]"
+                    className="flex flex-col gap-1"
                     style={{
                       padding: "8px 10px",
                       background: "rgba(0,0,0,0.25)",
                       border: "2px solid #2a4a6a",
                     }}
                   >
-                    <span style={{ color: "#ffc078" }}>#{t.table_id}</span>
-                    <span style={{ color: "#8a9ab0" }}>
-                      {t.max_players - t.open_wallet_slots}/{t.max_players} SEATED
-                      {isMyTable(t) ? " · YOU" : ""}
-                    </span>
-                    <button
-                      onClick={() => handleJoinRow(t)}
-                      disabled={busy || !wallet}
-                      className="pixel-btn pixel-btn-blue text-[9px]"
-                      style={{ padding: "6px 12px" }}
-                    >
-                      JOIN
-                    </button>
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span style={{ color: "#ffc078" }}>#{t.table_id}</span>
+                      <span style={{ color: "#8a9ab0" }}>
+                        {t.max_players - t.open_wallet_slots}/{t.max_players} SEATED
+                        {isMyTable(t) ? " · YOU" : ""}
+                      </span>
+                      <button
+                        onClick={() => handleJoinRow(t)}
+                        disabled={busy || !wallet}
+                        className="pixel-btn pixel-btn-blue text-[9px]"
+                        style={{ padding: "6px 12px" }}
+                      >
+                        JOIN
+                      </button>
+                    </div>
+                    {/* Why this table matched — the whole point of the search
+                        is knowing which seat your friend is in (#173). */}
+                    {match.seats.length > 0 && (
+                      <div
+                        className="flex flex-wrap gap-1 text-[8px]"
+                        data-testid={`table-${t.table_id}-matches`}
+                      >
+                        {match.seats.map((seat) => (
+                          <span
+                            key={seat.seatIndex}
+                            className="pixel-border-thin px-2 py-[2px]"
+                            style={{
+                              background: "rgba(20, 90, 50, 0.35)",
+                              borderColor: "#27ae60",
+                              color: "#eafaf1",
+                            }}
+                            title={seat.address}
+                          >
+                            {describeSeatMatch(seat)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
             </div>
@@ -970,6 +1068,7 @@ export default function Home() {
           <TransactionSimulation
             simulation={joinTableSim.simulation}
             loading={joinTableSim.loading}
+            buyInAmount={joinTableSim.params?.buyIn}
             onConfirm={() => {
               if (pendingTableId) {
                 const buyIn = parseXlmToStroops(buyInXlm);
