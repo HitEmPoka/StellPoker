@@ -647,3 +647,206 @@ textarea {
     padding: 8px 10px !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile bottom action bar (#175)
+
+   The bar is always rendered and hidden by this media query above the mobile
+   breakpoint, so there's no viewport-width state in React to get wrong during
+   hydration. Below the breakpoint the desktop panel's own interactive
+   clusters are hidden instead, so the two never present duplicate controls.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mobile-action-bar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .mobile-action-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
+    background: rgba(10, 8, 18, 0.96);
+    border-top: 3px solid var(--ui-border, #6b4f12);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.45);
+  }
+
+  /* Reserve room so the felt and the chat toggle never sit under the bar. */
+  body:has(.mobile-action-bar) {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-toggle-btn {
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .chat-drawer {
+    bottom: calc(152px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* The bottom bar owns betting on mobile; the desktop panel keeps only its
+     read-only bet/stack summary and status hints. */
+  .action-panel-desktop .action-panel-buttons,
+  .action-panel-desktop .bet-slider-row,
+  .action-panel-desktop .chip-tray-row {
+    display: none !important;
+  }
+}
+
+.mobile-action-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.mobile-action-btn {
+  flex: 1 1 0;
+  /* WCAG 2.5.5 touch target, and comfortably thumb-sized. */
+  min-height: 48px;
+  font-size: 9px !important;
+  padding: 8px 4px !important;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+.mobile-action-btn:disabled {
+  opacity: 0.5;
+}
+
+.mobile-action-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 8px;
+  color: #95a5a6;
+  font-style: italic;
+}
+
+/* ── Raise sheet ── */
+
+.mobile-raise-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(16, 14, 30, 0.98);
+  border: 3px solid var(--ui-border, #6b4f12);
+}
+
+.mobile-raise-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #f1c40f;
+}
+
+.mobile-raise-close {
+  background: none;
+  border: none;
+  color: #95a5a6;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Horizontal scroll for the preset row — more sizings than fit, by design. */
+.mobile-raise-presets {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  padding-bottom: 4px;
+}
+
+.mobile-raise-preset {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  font-size: 8px !important;
+  padding: 6px 10px !important;
+}
+
+.mobile-raise-preset-value {
+  font-size: 7px;
+  color: #c8e6ff;
+}
+
+.mobile-raise-slider {
+  width: 100%;
+  height: 4px;
+}
+
+.mobile-raise-confirm {
+  min-height: 48px;
+  font-size: 9px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Live hand timeline scrubber (#176)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hand-timeline-track {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px;
+  background: rgba(12, 10, 24, 0.75);
+  border: 2px solid var(--ui-border, #6b4f12);
+  scroll-snap-type: x proximity;
+}
+
+.hand-timeline-track:focus-visible {
+  outline: 2px solid #f1c40f;
+  outline-offset: 2px;
+}
+
+.hand-timeline-marker {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: 4px 6px;
+  border: 2px solid;
+  cursor: pointer;
+  font-family: 'Press Start 2P', monospace;
+}
+
+.hand-timeline-marker-label {
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.hand-timeline-marker-time {
+  font-size: 6px;
+  opacity: 0.75;
+}
+
+@media (max-width: 640px) {
+  .hand-timeline-marker {
+    min-width: 44px;
+  }
+}
+
+/* Board shown at a past moment rather than live — tinted so the felt can
+   never be mistaken for the current state. */
+.timeline-reviewing {
+  outline: 2px dashed #f1c40f;
+  outline-offset: 4px;
+}
