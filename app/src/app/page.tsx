@@ -81,6 +81,7 @@ export default function Home() {
   const [tableSearch, setTableSearch] = useState("");
   const [filterSeatsOpen, setFilterSeatsOpen] = useState(false);
   const [filterMyStakes, setFilterMyStakes] = useState(false);
+  const [oddsCalculatorOpen, setOddsCalculatorOpen] = useState(false);
 
   const joinTableSim = useJoinTableSimulation(wallet, () => {
     if (pendingTableId) {
@@ -1042,6 +1043,25 @@ export default function Home() {
         >
           📊 STATS
         </Link>
+
+        {/* Odds calculator tool (Issue #163) */}
+        <button
+          onClick={() => setOddsCalculatorOpen(true)}
+          className="fixed top-3 right-20 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#c47d2e",
+            fontFamily: "'Press Start 2P', monospace",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          🎲 ODDS
+        </button>
+        <OddsCalculatorModal
+          open={oddsCalculatorOpen}
+          onClose={() => setOddsCalculatorOpen(false)}
+        />
 
         {/* Transaction Simulation */}
         {joinTableSim.showSimulation && joinTableSim.simulation && (
