@@ -125,6 +125,7 @@ export function useJoinTableSimulation(
 
   return {
     ...simulation,
+    params,
     joinTable,
     confirmJoin,
   };
