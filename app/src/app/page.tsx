@@ -573,6 +573,16 @@ export default function Home() {
             >
               OPEN YOUR WALLET EXTENSION, UNLOCK IT, AND CLICK THE BUTTON ABOVE.
             </div>
+
+            {/* A visitor with no wallet is otherwise stuck on this screen;
+                practice mode is exactly what they can do instead (#174). */}
+            <Link
+              href="/practice"
+              className="text-[9px]"
+              style={{ color: "#ffc078", textDecoration: "underline" }}
+            >
+              NO WALLET? PRACTICE VS BOTS →
+            </Link>
           </div>
         )}
 
@@ -613,6 +623,19 @@ export default function Home() {
             >
               JOIN TABLE
             </button>
+
+            {/* Practice mode needs no wallet at all, so it is a plain link
+                rather than a gated action (#174). */}
+            <Link
+              href="/practice"
+              className="pixel-btn pixel-btn-blue text-[12px] w-full text-center"
+              style={{ padding: "14px 24px", textDecoration: "none" }}
+            >
+              PRACTICE VS BOTS
+            </Link>
+            <span className="text-[8px]" style={{ color: "#95a5a6" }}>
+              PLAY MONEY · NO WALLET NEEDED
+            </span>
           </div>
         )}
 
