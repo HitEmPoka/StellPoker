@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { I18nProvider } from "@/lib/i18n/context";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { NotificationsCenter } from "@/components/NotificationsCenter";
 
 export const metadata: Metadata = {
   title: "Poker on Stellar",
@@ -28,7 +29,10 @@ export default function RootLayout({
       <body>
         <I18nProvider>
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 9999 }}>
-            <ThemeToggle />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <NotificationsCenter />
+              <ThemeToggle />
+            </div>
           </div>
           {children}
         </I18nProvider>
