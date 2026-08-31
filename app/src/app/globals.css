@@ -792,3 +792,61 @@ textarea {
   min-height: 48px;
   font-size: 9px !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Live hand timeline scrubber (#176)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hand-timeline-track {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px;
+  background: rgba(12, 10, 24, 0.75);
+  border: 2px solid var(--ui-border, #6b4f12);
+  scroll-snap-type: x proximity;
+}
+
+.hand-timeline-track:focus-visible {
+  outline: 2px solid #f1c40f;
+  outline-offset: 2px;
+}
+
+.hand-timeline-marker {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: 4px 6px;
+  border: 2px solid;
+  cursor: pointer;
+  font-family: 'Press Start 2P', monospace;
+}
+
+.hand-timeline-marker-label {
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.hand-timeline-marker-time {
+  font-size: 6px;
+  opacity: 0.75;
+}
+
+@media (max-width: 640px) {
+  .hand-timeline-marker {
+    min-width: 44px;
+  }
+}
+
+/* Board shown at a past moment rather than live — tinted so the felt can
+   never be mistaken for the current state. */
+.timeline-reviewing {
+  outline: 2px dashed #f1c40f;
+  outline-offset: 4px;
+}
