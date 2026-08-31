@@ -22,6 +22,7 @@ import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
 import { HandReplayer } from "./HandReplayer";
+import { MobileActionBar } from "./MobileActionBar";
 import { TransactionSimulation } from "./TransactionSimulation";
 import { MpcNodeIndicator } from "./MpcNodeIndicator";
 import { TableTabs } from "./TableTabs";
@@ -1228,6 +1229,26 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           <PixelCat sprite={21} size={48} flipped />
         </div>
       </div>
+
+      {/* Sticky bottom action bar for phones (#175). Hidden by CSS above the
+          mobile breakpoint, where the full action panel is in play instead. */}
+      <MobileActionBar
+        visible={["preflop", "flop", "turn", "river"].includes(game.phase)}
+        isMyTurn={isMyTurn}
+        currentBet={displayCurrentBet}
+        myBet={displayMyBet}
+        myStack={displayMyStack}
+        pot={game.pot}
+        loading={loading}
+        betAmount={betAmount}
+        setBetAmount={setBetAmount}
+        onAction={(action, amount) => {
+          if (["bet", "raise", "call", "allin"].includes(action)) {
+            void playSound("chip");
+          }
+          return handleAction(action, amount);
+        }}
+      />
 
       <GameBoyModal
         open={gameboyOpen}
