@@ -7,7 +7,7 @@ import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
 import { TransactionSimulation } from "@/components/TransactionSimulation";
-import { TokenSelector } from "@/components/TokenSelector";
+import { TokenSelector, type TokenChoice } from "@/components/TokenSelector";
 import * as api from "@/lib/api";
 import { useJoinTableSimulation } from "@/lib/use-transaction-simulation";
 import {
@@ -58,7 +58,7 @@ export default function Home() {
   const [availableWallets, setAvailableWallets] = useState<{ type: WalletType; name: string; isInstalled: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState(2);
-  const [tokenChoice, setTokenChoice] = useState<{ type: string; sacAddress?: string }>({ type: "XLM" });
+  const [tokenChoice, setTokenChoice] = useState<TokenChoice>({ type: "XLM" });
   const [buyInXlm, setBuyInXlm] = useState(
     formatStroopsToXlm(BigInt("1000000000"))
   );

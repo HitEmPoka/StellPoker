@@ -128,6 +128,10 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [historyEntries, setHistoryEntries] = useState<HandHistoryEntry[]>(() =>
     loadHandHistory(tableId)
   );
+  // Hand chosen for step-through replay from the history panel (#62). The
+  // replayer and the panel's `onReplay` callback were both wired up already,
+  // but the state connecting them was missing, which broke the type-check.
+  const [replayEntry, setReplayEntry] = useState<HandHistoryEntry | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [, bumpAliasTick] = useState(0);
   const [betAmount, setBetAmount] = useState(0);
