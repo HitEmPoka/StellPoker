@@ -61,6 +61,8 @@ import { useTutorial } from "@/lib/use-tutorial";
 import { TutorialOverlay, TutorialHelpButton } from "./TutorialOverlay";
 import { EmoteRadialMenu } from "./EmoteRadialMenu";
 import { playSound } from "@/lib/sound-engine";
+import { useAutoRebuy } from "@/lib/use-auto-rebuy";
+import { AutoRebuySettings } from "./AutoRebuySettings";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -134,6 +136,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [botLine, setBotLine] = useState<string | null>(null);
   const [gameboyOpen, setGameboyOpen] = useState(false);
+  const [autoRebuyOpen, setAutoRebuyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingSkeletonTest, setLoadingSkeletonTest] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HandHistoryEntry[]>(() =>
@@ -177,6 +180,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     ? userAddress
     : onChainTurnAddress;
   const isMyTurn = !!userAddress && displayedTurnAddress === userAddress;
+
+  // Issue #164: check the player's auto-rebuy preference whenever the table
+  // settles into "waiting" between hands, and submit an on-chain rebuy if
+  // their configured rule triggers.
+  useAutoRebuy({
+    tableId,
+    wallet,
+    phase: game.phase,
+    currentStack: userPlayer?.stack ?? 0,
+  });
 
   // Issue #47: browser notification + sound when it becomes the user's turn.
   useTurnNotification({ isMyTurn, tableName: `Table #${tableId}` });
@@ -978,6 +991,23 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             >
               {t("nav.history")}
             </button>
+            {userAddress && (
+              <button
+                onClick={() => setAutoRebuyOpen(true)}
+                className="text-[9px] mr-2"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#c8e6ff",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                title="Auto-Rebuy Settings"
+              >
+                AUTO-REBUY
+              </button>
+            )}
             <button
               onClick={() => setShortcutsOpen(true)}
               className="text-[9px]"
@@ -1347,6 +1377,15 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         entries={historyEntries}
         onReplay={(entry) => setReplayEntry(entry)}
       />
+
+      {userAddress && (
+        <AutoRebuySettings
+          open={autoRebuyOpen}
+          onClose={() => setAutoRebuyOpen(false)}
+          tableId={tableId}
+          address={userAddress}
+        />
+      )}
 
       {/* Issue #53 — collapsible multi-table overview */}
       <TableMiniMap currentTableId={tableId} defaultCollapsed />
