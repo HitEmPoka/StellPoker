@@ -18,6 +18,17 @@ import {
   type CreateTournamentParams,
 } from "@/lib/tournament";
 import {
+  filterTournaments,
+  sortTournaments,
+  registrationStatus,
+  registrationLabel,
+  registrationColor,
+  type TournamentFilters,
+  type TournamentSortKey,
+  type SortDirection,
+  type RegistrationStatus,
+} from "@/lib/tournament-lobby";
+import {
   trySilentReconnect,
   connectWallet,
   detectInstalledWallets,
@@ -51,7 +62,6 @@ function TournamentCard({
   t: TournamentSummary;
   onSelect: (id: string) => void;
 }) {
-  const spotsLeft = t.max_players - t.registered;
   return (
     <button
       className="w-full text-left pixel-border px-4 py-3 flex flex-col gap-1"
@@ -72,17 +82,25 @@ function TournamentCard({
           {t.registered}/{t.max_players} PLAYERS
         </span>
       </div>
-      <div className="flex gap-4 text-[8px]" style={{ color: "#7f8c8d" }}>
-        <span>
-          BLINDS: {stroopsToXlm(t.current_small_blind)}/
-          {stroopsToXlm(t.current_big_blind)} XLM
-        </span>
-        <span>LEVEL {t.blind_level + 1}</span>
-        {t.status === "registration" && (
-          <span style={{ color: spotsLeft > 0 ? "#27ae60" : "#e74c3c" }}>
-            {spotsLeft > 0 ? `${spotsLeft} SPOT${spotsLeft > 1 ? "S" : ""} LEFT` : "FULL"}
+      <div className="flex items-center justify-between text-[8px]" style={{ color: "#7f8c8d" }}>
+        <span className="flex gap-4">
+          <span>
+            BLINDS: {stroopsToXlm(t.current_small_blind)}/
+            {stroopsToXlm(t.current_big_blind)} XLM
           </span>
-        )}
+          <span>LEVEL {t.blind_level + 1}</span>
+        </span>
+        <span
+          className="px-2 py-0.5"
+          style={{
+            border: `1px solid ${registrationColor(registrationStatus(t))}`,
+            color: registrationColor(registrationStatus(t)),
+            background: `${registrationColor(registrationStatus(t))}18`,
+          }}
+          data-testid={`registration-status-${t.id}`}
+        >
+          {registrationLabel(registrationStatus(t))}
+        </span>
       </div>
     </button>
   );
@@ -490,6 +508,136 @@ function DetailPanel({
   );
 }
 
+// ── Lobby filter / sort toolbar (Issue #165) ─────────────────────────────────
+
+function FilterToolbar({
+  filters,
+  onChange,
+  sortKey,
+  setSortKey,
+  sortDir,
+  setSortDir,
+  onClear,
+}: {
+  filters: TournamentFilters;
+  onChange: (f: TournamentFilters) => void;
+  sortKey: TournamentSortKey;
+  setSortKey: (k: TournamentSortKey) => void;
+  sortDir: SortDirection;
+  setSortDir: (d: SortDirection) => void;
+  onClear: () => void;
+}) {
+  const toggleDir = () => setSortDir(sortDir === "asc" ? "desc" : "asc");
+
+  return (
+    <div
+      className="pixel-border p-3 flex flex-col gap-2"
+      style={{ background: "rgba(12,10,24,0.9)", borderColor: "#2a2a4a" }}
+      data-testid="tournament-filter-toolbar"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[8px]" style={{ color: "#95a5a6" }}>
+          FILTERS &amp; SORT
+        </span>
+        <button
+          onClick={onClear}
+          className="pixel-btn text-[8px]"
+          style={{ padding: "2px 8px", background: "#2c3e50", color: "#e74c3c" }}
+          aria-label="Clear all tournament filters"
+        >
+          RESET
+        </button>
+      </div>
+
+      {/* Buy-in range */}
+      <div className="flex items-center gap-2">
+        <span className="text-[8px]" style={{ color: "#7f8c8d" }}>BUY-IN</span>
+        <input
+          type="number"
+          min="0"
+          value={filters.buyInMin ?? ""}
+          placeholder="MIN XLM"
+          aria-label="Minimum buy-in"
+          onChange={(e) => onChange({ ...filters, buyInMin: e.target.value === "" ? null : Math.round(parseFloat(e.target.value) * 1_000_000) * 10 })}
+          className="pixel-border px-2 py-1 text-[8px] w-20"
+          style={{ background: "rgba(255,255,255,0.05)", color: "#f5e6c8", borderColor: "#4a4a6a" }}
+        />
+        <input
+          type="number"
+          min="0"
+          value={filters.buyInMax ?? ""}
+          placeholder="MAX XLM"
+          aria-label="Maximum buy-in"
+          onChange={(e) => onChange({ ...filters, buyInMax: e.target.value === "" ? null : Math.round(parseFloat(e.target.value) * 1_000_000) * 10 })}
+          className="pixel-border px-2 py-1 text-[8px] w-20"
+          style={{ background: "rgba(255,255,255,0.05)", color: "#f5e6c8", borderColor: "#4a4a6a" }}
+        />
+      </div>
+
+      {/* Min open entries */}
+      <div className="flex items-center gap-2">
+        <span className="text-[8px]" style={{ color: "#7f8c8d" }}>SPOTS LEFT ≥</span>
+        <input
+          type="number"
+          min="0"
+          value={filters.minOpenEntries ?? ""}
+          placeholder="ANY"
+          aria-label="Minimum open entries"
+          onChange={(e) => onChange({ ...filters, minOpenEntries: e.target.value === "" ? null : Number(e.target.value) })}
+          className="pixel-border px-2 py-1 text-[8px] w-16"
+          style={{ background: "rgba(255,255,255,0.05)", color: "#f5e6c8", borderColor: "#4a4a6a" }}
+        />
+      </div>
+
+      {/* Blind structure */}
+      <div className="flex items-center gap-2">
+        <span className="text-[8px]" style={{ color: "#7f8c8d" }}>MAX BB (XLM)</span>
+        <input
+          type="number"
+          min="0"
+          value={filters.blinds?.maxBigBlind ?? ""}
+          placeholder="ANY"
+          aria-label="Maximum big blind"
+          onChange={(e) => onChange({
+            ...filters,
+            blinds: e.target.value === "" ? null : { maxBigBlind: Math.round(parseFloat(e.target.value) * 1_000_000) * 10 },
+          })}
+          className="pixel-border px-2 py-1 text-[8px] w-16"
+          style={{ background: "rgba(255,255,255,0.05)", color: "#f5e6c8", borderColor: "#4a4a6a" }}
+        />
+      </div>
+
+      {/* Sort controls */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[8px]" style={{ color: "#7f8c8d" }}>SORT BY</span>
+        {(["entries", "prizePool", "startTime"] as TournamentSortKey[]).map((k) => (
+          <button
+            key={k}
+            onClick={() => setSortKey(k)}
+            className="pixel-btn text-[8px]"
+            style={{
+              padding: "2px 8px",
+              background: sortKey === k ? "#c47d2e" : "#2c3e50",
+              color: "white",
+            }}
+            aria-pressed={sortKey === k}
+          >
+            {k === "entries" ? "ENTRIES" : k === "prizePool" ? "PRIZE" : "START"}
+          </button>
+        ))}
+        <button
+          onClick={toggleDir}
+          className="pixel-btn text-[8px]"
+          style={{ padding: "2px 8px", background: "#145a32", color: "white" }}
+          aria-label="Toggle sort direction"
+        >
+          {sortDir === "asc" ? "▲ ASC" : "▼ DESC"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main lobby page ───────────────────────────────────────────────────────────
 
 export default function TournamentsPage() {
@@ -499,6 +647,15 @@ export default function TournamentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [wallet, setWallet] = useState<WalletSession | null>(null);
+  const [filters, setFilters] = useState<TournamentFilters>({
+    buyInMin: null,
+    buyInMax: null,
+    minOpenEntries: null,
+    blinds: null,
+    startTimeAfter: null,
+  });
+  const [sortKey, setSortKey] = useState<TournamentSortKey>("startTime");
+  const [sortDir, setSortDir] = useState<SortDirection>("desc");
 
   // Silent wallet reconnect
   useEffect(() => {
@@ -560,12 +717,33 @@ export default function TournamentsPage() {
     );
   }, []);
 
-  const openTournaments = tournaments.filter(
-    (t) => t.status === "registration" || t.status === "running"
+  const openTournaments = filterTournaments(
+    sortTournaments(
+      tournaments.filter(
+        (t) => t.status === "registration" || t.status === "running"
+      ),
+      sortKey,
+      sortDir
+    ),
+    filters
   );
-  const closedTournaments = tournaments.filter(
-    (t) => t.status === "finalizing" || t.status === "completed" || t.status === "cancelled"
+  const closedTournaments = filterTournaments(
+    sortTournaments(
+      tournaments.filter(
+        (t) => t.status === "finalizing" || t.status === "completed" || t.status === "cancelled"
+      ),
+      sortKey,
+      sortDir
+    ),
+    filters
   );
+
+  const hasActiveFilters =
+    filters.buyInMin != null ||
+    filters.buyInMax != null ||
+    filters.minOpenEntries != null ||
+    filters.blinds != null ||
+    filters.startTimeAfter != null;
 
   return (
     <PixelWorld>
@@ -627,6 +805,19 @@ export default function TournamentsPage() {
             />
           )}
 
+          {/* Lobby filters & sort (#165) */}
+          {!selected && !creating && (
+            <FilterToolbar
+              filters={filters}
+              onChange={setFilters}
+              sortKey={sortKey}
+              setSortKey={setSortKey}
+              sortDir={sortDir}
+              setSortDir={setSortDir}
+              onClear={() => setFilters({ buyInMin: null, buyInMax: null, minOpenEntries: null, blinds: null, startTimeAfter: null })}
+            />
+          )}
+
           {/* Loading */}
           {loading && (
             <div
@@ -654,13 +845,25 @@ export default function TournamentsPage() {
           {!loading && openTournaments.length > 0 && (
             <div>
               <div className="text-[8px] mb-2 px-1" style={{ color: "#95a5a6" }}>
-                OPEN TOURNAMENTS
+                OPEN TOURNAMENTS{hasActiveFilters ? ` (${openTournaments.length} MATCH)` : ""}
               </div>
               <div className="flex flex-col gap-2">
                 {openTournaments.map((t) => (
                   <TournamentCard key={t.id} t={t} onSelect={handleSelect} />
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* No open tournaments match the active filters */}
+          {!loading && !creating && selected == null && openTournaments.length === 0 && tournaments.length > 0 && (
+            <div
+              className="pixel-border px-4 py-6 text-center"
+              style={{ borderColor: "#2a2a4a", background: "rgba(12,10,24,0.7)", color: "#7f8c8d" }}
+              aria-label="No tournaments match current filters"
+            >
+              <div className="text-[9px] mb-2">NO OPEN TOURNAMENTS MATCH</div>
+              <div className="text-[8px]">Adjust or reset the filters above.</div>
             </div>
           )}
 

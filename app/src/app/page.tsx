@@ -7,6 +7,7 @@ import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
 import { TransactionSimulation } from "@/components/TransactionSimulation";
+import { OddsCalculatorModal } from "@/components/OddsCalculatorModal";
 import { TokenSelector, type TokenChoice } from "@/components/TokenSelector";
 import * as api from "@/lib/api";
 import { useJoinTableSimulation } from "@/lib/use-transaction-simulation";
@@ -31,6 +32,7 @@ import {
   describeSeatMatch,
   type TableMatch,
 } from "@/lib/table-search";
+import { loadFriends, displayName, type Friend } from "@/lib/friends";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -82,6 +84,7 @@ export default function Home() {
   const [filterSeatsOpen, setFilterSeatsOpen] = useState(false);
   const [filterMyStakes, setFilterMyStakes] = useState(false);
   const [oddsCalculatorOpen, setOddsCalculatorOpen] = useState(false);
+  const [friends, setFriends] = useState<Friend[]>([]);
 
   const joinTableSim = useJoinTableSimulation(wallet, () => {
     if (pendingTableId) {
@@ -288,6 +291,22 @@ export default function Home() {
         seat.chain_address === wallet.address ||
         seat.wallet_address === wallet.address
     );
+  };
+
+  // Load friends once so the lobby can flag friend-occupied tables (#168).
+  useEffect(() => {
+    setFriends(loadFriends());
+  }, []);
+
+  // Which of the player's friends are seated at the given table?
+  const friendsAtTable = (table: api.OpenTableInfo): Friend[] => {
+    if (friends.length === 0) return [];
+    const lobby = tableLobbies[table.table_id];
+    if (!lobby) return [];
+    const seated = new Set(
+      lobby.seats.map((s) => s.chain_address || s.wallet_address || "")
+    );
+    return friends.filter((f) => seated.has(f.address));
   };
 
   // Each surviving row carries the reason it matched, so the list can show
@@ -935,6 +954,29 @@ export default function Home() {
                         JOIN
                       </button>
                     </div>
+                    {/* Friend-occupied indicator (#168) */}
+                    {(() => {
+                      const atTable = friendsAtTable(t);
+                      return atTable.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 text-[8px]">
+                          {atTable.map((f) => (
+                            <span
+                              key={f.address}
+                              className="pixel-border-thin px-2 py-[2px]"
+                              style={{
+                                background: "rgba(196,125,46,0.18)",
+                                borderColor: "#c47d2e",
+                                color: "#f1c40f",
+                              }}
+                              title={f.address}
+                              data-testid={`friend-at-table-${t.table_id}`}
+                            >
+                              👥 {displayName(f)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
                     {/* Why this table matched — the whole point of the search
                         is knowing which seat your friend is in (#173). */}
                     {match.seats.length > 0 && (
@@ -1031,7 +1073,7 @@ export default function Home() {
           <PixelCat sprite={20} size={96} flipped />
         </div>
 
-        {/* Stats link */}
+        {/* Stats links */}
         <Link
           href="/stats"
           className="fixed top-3 right-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
@@ -1042,6 +1084,28 @@ export default function Home() {
           }}
         >
           📊 STATS
+        </Link>
+        <Link
+          href="/dashboard"
+          className="fixed bottom-3 right-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#27ae60",
+            fontFamily: "'Press Start 2P', monospace",
+            textDecoration: "none",
+          }}
+        >
+          📈 MY DASHBOARD
+        </Link>
+        <Link
+          href="/friends"
+          className="fixed bottom-3 left-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#c47d2e",
+            fontFamily: "'Press Start 2P', monospace",
+            textDecoration: "none",
+          }}
+        >
+          👥 FRIENDS
         </Link>
 
         {/* Odds calculator tool (Issue #163) */}
