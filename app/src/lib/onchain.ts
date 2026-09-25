@@ -365,3 +365,94 @@ export async function rebuyOnChain(
     nativeToScVal(amount, { type: "i128" }),
   ]);
 }
+
+// ============================================================
+// Avatar registry tx submission (Issue #153: player-avatar contract)
+// ============================================================
+
+/**
+ * Submit a tx to the player-avatar contract targeting a specific contract ID.
+ * Reuses the same wallet-signing + sequence-queuing machinery as poker actions.
+ */
+async function submitAvatarTx(
+  wallet: WalletSession,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<string | undefined> {
+  const cfg = await getConfig();
+  const avatarContract = (cfg as unknown as { player_avatar_contract?: string }).player_avatar_contract;
+  if (!avatarContract) {
+    throw new Error("Player avatar contract is not configured on this network");
+  }
+  const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
+
+  const sent = await enqueueForAccount(wallet.address, async () => {
+    const account = await server.getAccount(wallet.address);
+    const contract = new Contract(avatarContract);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: cfg.networkPassphrase,
+    })
+      .addOperation(contract.call(method, ...args))
+      .setTimeout(60)
+      .build();
+
+    const prepared = await server.prepareTransaction(tx);
+    const signedXdr = await signWithWallet(wallet, prepared.toXDR(), {
+      networkPassphrase: cfg.networkPassphrase,
+      address: wallet.address,
+    });
+
+    const signedTx = TransactionBuilder.fromXDR(signedXdr, cfg.networkPassphrase);
+    const response = await server.sendTransaction(signedTx);
+    if (response.status === "ERROR") {
+      throw new Error("Avatar transaction rejected by network");
+    }
+    return response;
+  });
+
+  if (sent.hash) {
+    const result = await server.pollTransaction(sent.hash, {
+      attempts: 30,
+      sleepStrategy: () => 1500,
+    });
+    if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error("Avatar transaction failed on-chain");
+    }
+  }
+  return sent.hash || undefined;
+}
+
+/** Set the player's on-chain SVG avatar (Issue #153). */
+export async function submitSvgAvatarTx(
+  wallet: WalletSession,
+  templateId: number,
+  paramsString: string
+): Promise<string | undefined> {
+  return submitAvatarTx(wallet, "set_svg_avatar", [
+    new Address(wallet.address).toScVal(),
+    nativeToScVal(templateId, { type: "u32" }),
+    nativeToScVal(paramsString, { type: "string" }),
+  ]);
+}
+
+/** Link an external NFT as the player's avatar (Issue #153). */
+export async function submitNftAvatarTx(
+  wallet: WalletSession,
+  nftContract: string,
+  tokenId: number
+): Promise<string | undefined> {
+  return submitAvatarTx(wallet, "set_nft_avatar", [
+    new Address(wallet.address).toScVal(),
+    new Address(nftContract).toScVal(),
+    nativeToScVal(tokenId, { type: "u32" }),
+  ]);
+}
+
+/** Clear custom avatar back to Identicon (Issue #153). */
+export async function submitClearAvatarTx(
+  wallet: WalletSession
+): Promise<string | undefined> {
+  return submitSvgAvatarTx(wallet, 0xffffffff, "");
+}

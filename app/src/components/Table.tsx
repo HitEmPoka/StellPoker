@@ -83,6 +83,8 @@ import { EmoteRadialMenu } from "./EmoteRadialMenu";
 import { playSound } from "@/lib/sound-engine";
 import { useAutoRebuy } from "@/lib/use-auto-rebuy";
 import { AutoRebuySettings } from "./AutoRebuySettings";
+import { TurnTimerSettings } from "./TurnTimerSettings";
+import { useTurnTimer } from "@/lib/use-turn-timer";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -161,6 +163,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [botLine, setBotLine] = useState<string | null>(null);
   const [gameboyOpen, setGameboyOpen] = useState(false);
   const [autoRebuyOpen, setAutoRebuyOpen] = useState(false);
+  const [turnTimerOpen, setTurnTimerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [proofPanelOpen, setProofPanelOpen] = useState(false);
   const [loadingSkeletonTest, setLoadingSkeletonTest] = useState(false);
@@ -225,6 +228,73 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
 
   // Issue #47: browser notification + sound when it becomes the user's turn.
   useTurnNotification({ isMyTurn, tableName: `Table #${tableId}` });
+
+  // Issue #154: per-turn countdown. The hook computes everything and on
+  // timeout we dispatch the configured auto-action (fold / check-if-possible).
+  const userCallAmount = userPlayer
+    ? Math.max(
+        Math.max(...game.players.map((p) => p.betThisRound), 0) - userPlayer.betThisRound,
+        0
+      )
+    : 0;
+  const turnTimer = useTurnTimer(
+    {
+      tableId,
+      address: userAddress ?? "",
+      turnAddress: displayedTurnAddress,
+      phase: game.phase,
+      handNumber: game.handNumber,
+      callAmount: userCallAmount,
+    },
+    (action) => {
+      if (loading) return;
+      if (action === "check") {
+        const liveCall =
+          userPlayer
+            ? Math.max(
+                Math.max(...game.players.map((p) => p.betThisRound), 0) -
+                  userPlayer.betThisRound,
+                0
+              )
+            : 0;
+        if (liveCall <= 0) {
+          void handleAction("check");
+        } else {
+          void handleAction("fold");
+        }
+      } else {
+        void handleAction("fold");
+      }
+    }
+  );
+
+  // Shared table turn-clock: tracks remaining seconds for whoever is currently
+  // acting. This shows up on opponent seats too, not just the user's.
+  const sharedTimerDuration = turnTimer.durationSeconds;
+  const [sharedTimeLeft, setSharedTimeLeft] = useState(sharedTimerDuration);
+  const sharedTurnKey = `${game.handNumber ?? 0}|${game.phase}|${displayedTurnAddress ?? ""}|${sharedTimerDuration}`;
+  const sharedTurnActive =
+    !!displayedTurnAddress && ["preflop", "flop", "turn", "river"].includes(game.phase);
+  useEffect(() => {
+    if (!sharedTurnActive) {
+      setSharedTimeLeft(sharedTimerDuration);
+      return;
+    }
+    setSharedTimeLeft(sharedTimerDuration);
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const left = sharedTimerDuration - Math.floor((Date.now() - started) / 1000);
+      if (left <= 0) {
+        setSharedTimeLeft(0);
+        window.clearInterval(id);
+        return;
+      }
+      setSharedTimeLeft(left);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [sharedTurnKey, sharedTurnActive, sharedTimerDuration]);
+  const sharedTimerUrgent =
+    sharedTurnActive && sharedTimerDuration > 0 && sharedTimeLeft / sharedTimerDuration <= 0.2;
 
   // Issue #61: tutorial overlay for new players.
   const tutorial = useTutorial();
@@ -1112,6 +1182,23 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                 AUTO-REBUY
               </button>
             )}
+            {userAddress && (
+              <button
+                onClick={() => setTurnTimerOpen(true)}
+                className="text-[9px] mr-2"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#ffd43b",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                title="Turn Timer Settings"
+              >
+                TIMER
+              </button>
+            )}
             <button
               onClick={() => setShortcutsOpen(true)}
               className="text-[9px]"
@@ -1291,6 +1378,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                     gamePhase={game.phase}
                     showStatsTooltip={playMode !== "single"}
                     stackTrend={stackTrends[player.address]?.map((p) => p.stack)}
+                    turnTimerSecondsLeft={displayedTurnAddress === player.address ? sharedTimeLeft : 0}
+                    turnTimerDurationSeconds={displayedTurnAddress === player.address ? sharedTimerDuration : 0}
+                    turnTimerUrgent={displayedTurnAddress === player.address ? sharedTimerUrgent : false}
                   />
                 ))}
 
@@ -1388,6 +1478,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   boardCards={game.boardCards}
                   gamePhase={game.phase}
                   stackTrend={stackTrends[userPlayer.address]?.map((p) => p.stack)}
+                  turnTimerSecondsLeft={turnTimer.isActive ? turnTimer.timeLeftSeconds : 0}
+                  turnTimerDurationSeconds={turnTimer.durationSeconds}
+                  turnTimerUrgent={turnTimer.isUrgent}
                 />
               ) : (
                 <div className="flex flex-col items-center gap-2" style={{ opacity: 0.25 }}>

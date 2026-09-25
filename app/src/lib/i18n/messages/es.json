@@ -35,7 +35,8 @@
     "allIn": "¡ALL IN!",
     "editAlias": "Cambiar tu alias",
     "edit": "[EDITAR]",
-    "dealer": "[D]"
+    "dealer": "[D]",
+    "editAvatar": "Haz clic para personalizar avatar"
   },
   "stats": {
     "title": "Estadísticas on-chain",
@@ -119,5 +120,22 @@
     "winner": "Mano completa. Ganador: {addr}.",
     "handComplete": "Mano completa. Inicia la siguiente cuando quieras.",
     "ready": "Listo cuando tú lo estés."
+  },
+  "common": {
+    "cancel": "CANCELAR",
+    "submitting": "ENVIANDO…"
+  },
+  "avatar": {
+    "title": "PERSONALIZAR AVATAR",
+    "connectWallet": "Conecta una billetera primero.",
+    "resetDesc": "Borra el avatar personalizado y vuelve al Identicon pixel determinista.",
+    "rawSvg": "SVG crudo",
+    "chooseTemplate": "Elige plantilla",
+    "nftContract": "Dirección del Contrato NFT",
+    "nftTokenId": "ID del Token NFT",
+    "nftNote": "Sólo se aceptan NFT de contratos aprobados por el administrador.",
+    "saveSvg": "GUARDAR AVATAR SVG",
+    "linkNft": "VINCULAR NFT",
+    "resetConfirm": "RESTABLECER A IDENTICON"
   }
 }

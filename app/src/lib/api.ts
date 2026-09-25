@@ -191,6 +191,9 @@ export interface ChainConfigResponse {
   rpc_url: string;
   network_passphrase: string;
   poker_table_contract: string;
+  /** Player avatar registry contract address (Issue #153). Optional — older
+   *  network deploys may not have it; frontend falls back to Identicon. */
+  player_avatar_contract?: string;
 }
 
 /** Create Table Response shape. */
