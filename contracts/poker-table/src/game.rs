@@ -450,8 +450,7 @@ pub fn settle_showdown(
     table.rake_balance += house_rake;
     table.jackpot_balance += jackpot_rake;
 
-    let ranking = build_winner_ranking(env, table, winner_seat)?;
-    let tied_winners = build_tied_winners(env, table, winner_seat, tie_mask)?;
+    let (ranking, tied_winners) = build_ranking_and_ties(env, table, winner_seat, tie_mask)?;
     let payouts = pot::distribute_pots_with_ties(env, table, &net_pots, &tied_winners, &ranking)?;
 
     // Check for a qualifying bad beat before finalising.
@@ -623,12 +622,24 @@ fn credit_player_by_seat(
     Ok(())
 }
 
-fn build_tied_winners(
+/// Build the best-first ranking of contenders and the set of tied winners in
+/// one pass over the players.
+///
+/// The ZK showdown proof establishes the single overall winner; the ranking
+/// places that seat first and appends the remaining non-folded players in seat
+/// order. For the common case (no side pots, or the proved winner eligible
+/// everywhere) this awards the entire pot to the proved winner. When side pots
+/// exist that the proved winner did not contribute to, the next eligible
+/// contender wins them. Tied winners are the proved winner plus every
+/// non-folded seat set in `tie_mask`.
+fn build_ranking_and_ties(
     env: &Env,
     table: &TableState,
     winner_seat: u32,
     tie_mask: u32,
-) -> Result<Vec<u32>, PokerTableError> {
+) -> Result<(Vec<u32>, Vec<u32>), PokerTableError> {
+    let mut ranking: Vec<u32> = Vec::new(env);
+    ranking.push_back(winner_seat);
     let mut winners: Vec<u32> = Vec::new(env);
     for i in 0..table.players.len() {
         let p = table
@@ -639,6 +650,9 @@ fn build_tied_winners(
             continue;
         }
         let seat = p.seat_index;
+        if constant_time::u32_ne(seat, winner_seat) {
+            ranking.push_back(seat);
+        }
         let tied = constant_time::u32_eq(seat, winner_seat)
             || constant_time::u32_ne(tie_mask & (1u32 << seat), 0);
         if tied {
@@ -648,33 +662,7 @@ fn build_tied_winners(
     if winners.is_empty() {
         return Err(PokerTableError::WinnerNotEligibleForPot);
     }
-    Ok(winners)
-}
-
-/// Build a best-first ranking of contenders for pot distribution. The ZK
-/// showdown proof establishes the single overall winner; we place that seat
-/// first and append the remaining non-folded players in seat order. For the
-/// common case (no side pots, or the proved winner eligible everywhere) this
-/// awards the entire pot to the proved winner. When side pots exist that the
-/// proved winner did not contribute to, the next eligible contender wins them.
-fn build_winner_ranking(
-    env: &Env,
-    table: &TableState,
-    winner_seat: u32,
-) -> Result<Vec<u32>, PokerTableError> {
-    let mut ranking: Vec<u32> = Vec::new(env);
-    ranking.push_back(winner_seat);
-    for i in 0..table.players.len() {
-        let p = table
-            .players
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if p.folded || constant_time::u32_eq(p.seat_index, winner_seat) {
-            continue;
-        }
-        ranking.push_back(p.seat_index);
-    }
-    Ok(ranking)
+    Ok((ranking, winners))
 }
 
 /// Award pot to last player standing (all others folded).

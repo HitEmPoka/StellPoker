@@ -32,9 +32,7 @@ pub fn whitelist_currency(env: &Env, table_id: u32, token: Address, oracle: Addr
         },
     );
     env.storage().persistent().set(&key, &currencies);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
 }
 
 /// Legacy overload without table_id (defaults to table 0 for backwards compat)

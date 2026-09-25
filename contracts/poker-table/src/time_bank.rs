@@ -42,9 +42,7 @@ pub fn load_or_init(env: &Env, table_id: u32, player: &Address, cfg: &TimeBankCo
         active_extension_seconds: 0,
     };
     env.storage().persistent().set(&key, &bank);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
     bank
 }
 
@@ -72,9 +70,7 @@ pub fn get_bank(env: &Env, table_id: u32, player: &Address) -> Option<TimeBank> 
 fn save_bank(env: &Env, table_id: u32, player: &Address, bank: &TimeBank) {
     let key = DataKey::TimeBank(table_id, player.clone());
     env.storage().persistent().set(&key, bank);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
 }
 
 /// Replenish all players' time banks at the start of a new hand.
@@ -122,9 +118,7 @@ pub fn replenish_all(env: &Env, table: &mut TableState) {
             bank.active_extension = false;
             bank.active_extension_seconds = 0;
             env.storage().persistent().set(&key, &bank);
-            env.storage()
-                .persistent()
-                .extend_ttl(&key, 17_280, 518_400);
+            crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
         }
     }
 }
@@ -276,9 +270,7 @@ pub fn init_for_player(env: &Env, table_id: u32, player: &Address, cfg_opt: Opti
         active_extension_seconds: 0,
     };
     env.storage().persistent().set(&key, &bank);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
 }
 
 /// Configure time bank for a table (admin only, between hands).

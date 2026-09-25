@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HitEmPoka/StellPoker/docs/events/phase_change.schema.json",
+  "title": "phase_change",
+  "description": "poker-table event. The hand moved to a new phase.",
+  "type": "object",
+  "required": [
+    "topics",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topics": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "symbol",
+          "type": "string",
+          "const": "phase_change",
+          "description": "Event name"
+        },
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Table id"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "data": {
+      "x-soroban": "enum",
+      "type": "string",
+      "enum": [
+        "Waiting",
+        "WaitingForPlayers",
+        "Dealing",
+        "Preflop",
+        "DealingFlop",
+        "Flop",
+        "DealingTurn",
+        "Turn",
+        "DealingRiver",
+        "River",
+        "Showdown",
+        "Settlement",
+        "Dispute",
+        "AwaitingRunItTwice",
+        "ShowdownRun1",
+        "ShowdownRun2",
+        "RitSettlement"
+      ],
+      "description": "New game phase"
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HitEmPoka/StellPoker/docs/events/rake_collected.schema.json",
+  "title": "rake_collected",
+  "description": "poker-table event. Rake was taken from a settled hand.",
+  "type": "object",
+  "required": [
+    "topics",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topics": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "symbol",
+          "type": "string",
+          "const": "rake_collected",
+          "description": "Event name"
+        },
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Table id"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "data": {
+      "oneOf": [
+        {
+          "x-soroban": "tuple",
+          "type": "array",
+          "prefixItems": [
+            {
+              "x-soroban": "u32",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295,
+              "description": "Hand number"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "House rake"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "Jackpot rake"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "House rake balance"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "Jackpot balance"
+            }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5,
+          "description": "Emitted after a showdown"
+        },
+        {
+          "x-soroban": "tuple",
+          "type": "array",
+          "prefixItems": [
+            {
+              "x-soroban": "u32",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295,
+              "description": "Hand number"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "Rake"
+            },
+            {
+              "x-soroban": "i128",
+              "type": "string",
+              "pattern": "^-?[0-9]+$",
+              "description": "House rake balance"
+            }
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Emitted after a fold win or a run it twice settlement"
+        }
+      ]
+    }
+  }
+}

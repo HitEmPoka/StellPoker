@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HitEmPoka/StellPoker/docs/events/board_revealed.schema.json",
+  "title": "board_revealed",
+  "description": "poker-table event. Board cards were revealed.",
+  "type": "object",
+  "required": [
+    "topics",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topics": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "symbol",
+          "type": "string",
+          "const": "board_revealed",
+          "description": "Event name"
+        },
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Table id"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "data": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "vec",
+          "type": "array",
+          "items": {
+            "x-soroban": "u32",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295,
+            "description": "Card"
+          },
+          "description": "Revealed cards"
+        },
+        {
+          "x-soroban": "vec",
+          "type": "array",
+          "items": {
+            "x-soroban": "u32",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295,
+            "description": "Deck index"
+          },
+          "description": "Deck index of each revealed card"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

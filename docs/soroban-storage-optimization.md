@@ -182,6 +182,38 @@ env.storage().instance().extend_ttl(TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 
 Call this in `load_table` or `save_table` to keep the instance alive alongside the table data.
 
+### 5.5 TTL policy per entry type
+
+The poker-table contract sets every TTL through the policies in `contracts/poker-table/src/ttl.rs`. At ~5 seconds per ledger, one day is 17 280 ledgers.
+
+| Policy | Threshold | Extend to | Used for |
+|--------|-----------|-----------|----------|
+| `TABLE` | 17 280 (~1 day) | 518 400 (~30 days) | Anything that must live as long as the table |
+| `HISTORY` | same as `TABLE` | same as `TABLE` | Archived hands, so history is readable while the table is |
+| `HAND` | 720 (~1 hour) | 17 280 (~1 day) | Entries that only matter during one hand |
+
+| Entry | Tier | Policy |
+|-------|------|--------|
+| Contract instance | Instance | `TABLE` (extended on every `save_table`) |
+| `Table(table_id)` | Persistent | `TABLE` |
+| `Queue(table_id)` | Persistent | `TABLE` |
+| `PlayerTables(player)` | Persistent | `TABLE` |
+| `PlayerActionCounter(table_id, player)` | Persistent | `TABLE` |
+| `TimeBank(table_id, player)` | Persistent | `TABLE` |
+| `VarianceStats(table_id)` | Persistent | `TABLE` |
+| `TableClosure(table_id)` | Persistent | `TABLE` |
+| `UpgradeProposal(table_id)`, `LastUpgrade(table_id)` | Persistent | `TABLE` |
+| `DeadChipSweep(table_id)` | Persistent | `TABLE` |
+| `JackpotClaim(table_id, hand_number)` | Persistent | `TABLE` (a replay guard must not expire before the table) |
+| Ban list, currency whitelist | Persistent | `TABLE` |
+| `HandRecord(table_id, slot)` | Persistent | `HISTORY` |
+| `HandHistoryMeta(table_id)` | Persistent | `HISTORY` |
+| `ActionCommitmentHash(table_id, hand_number, seat)` | Persistent | `HAND` |
+
+**Archival rule:** a settled hand is kept only in the circular history buffer (`HAND_HISTORY_CAPACITY` slots per table). Archiving past capacity overwrites the oldest slot, so the number of history keys never grows. Hand scoped entries are not archived: a revealed commitment is removed, and an unrevealed one expires under the `HAND` policy.
+
+`contracts/poker-table/src/ttl_test.rs` asserts the TTL of each class after the entry point that writes it.
+
 ---
 
 ## 6. Persistent vs Instance: Decision Guide

@@ -4097,6 +4097,7 @@ name = "poker-table"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "serde_json",
  "soroban-sdk",
  "stellar-zk-cards",
 ]
