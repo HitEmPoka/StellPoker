@@ -8,8 +8,7 @@
 //! Any divergence here would mean the on-chain settlement contract could pick
 //! a different winner than what the ZK proof attests.
 
-extern crate std;
-
+use std::format;
 use crate::evaluate_hand;
 use proptest::prelude::*;
 

@@ -56,6 +56,10 @@
 
 #![no_std]
 
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+
 use soroban_sdk::contracttype;
 
 /// Total number of cards in a standard deck.
@@ -493,5 +497,43 @@ mod test {
         // A-2-3-4-5 (wheel): A♣ 2♦ 3♥ 4♠ 5♣ + K♦ Q♦
         let wheel = evaluate_hand(&[12, 13, 27, 41, 3, 24, 23]);
         assert_eq!(wheel.category(), 4); // Straight
+    }
+
+    #[test]
+    fn test_full_house_kicker_tiebreak_kkx_vs_kky() {
+        // Both players have Kings for three-of-a-kind; kicker pair breaks the tie.
+        // Board: Ks, Kd, Kh, 2c, 3c
+        // Player 1 hole: Qs, Qd -> Kings full of Queens (KKK QQ)
+        let p1 = evaluate_hand(&[50, 24, 37, 0, 1, 49, 23]);
+        // Player 2 hole: Js, Jd -> Kings full of Jacks (KKK JJ)
+        let p2 = evaluate_hand(&[50, 24, 37, 0, 1, 48, 22]);
+        assert!(p1.beats(&p2), "KKK QQ must beat KKK JJ");
+    }
+
+    #[test]
+    fn test_full_house_identical_board_kickers_split() {
+        // Board: Ks, Kd, 7c, 7d, 2c
+        // Both make Kings full of 7s with board pair of 7s as kicker.
+        let p1 = evaluate_hand(&[50, 24, 5, 18, 0, 37, 6]);
+        let p2 = evaluate_hand(&[50, 24, 5, 18, 0, 11, 7]);
+        assert_eq!(p1.score, p2.score, "identical board kickers must result in tie");
+    }
+
+    #[test]
+    fn test_full_house_board_playing_tie() {
+        // Board: Ks, Kd, Kh, Qs, Qd (full house on the board)
+        let p1 = evaluate_hand(&[50, 24, 37, 49, 23, 0, 1]);
+        let p2 = evaluate_hand(&[50, 24, 37, 49, 23, 2, 3]);
+        assert_eq!(p1.score, p2.score, "players playing the board must tie");
+    }
+
+    #[test]
+    fn test_full_house_two_pair_on_board_higher_trips_wins() {
+        // Board: Ks, Kd, Qs, Qd, 2c
+        // Player 1: Kh, 3c -> KKK QQ (trips Kings)
+        let p1 = evaluate_hand(&[50, 24, 49, 23, 0, 37, 1]);
+        // Player 2: Qh, 4c -> QQQ KK (trips Queens)
+        let p2 = evaluate_hand(&[50, 24, 49, 23, 0, 36, 2]);
+        assert!(p1.beats(&p2), "KKK QQ must beat QQQ KK");
     }
 }

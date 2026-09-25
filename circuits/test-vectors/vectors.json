@@ -1044,5 +1044,95 @@
       "num_hands": 1,
       "out": "0x29236eaed7ad96edc223c79fb0dafd7108967ec905871e9098ceb114cf049c12"
     }
+  ],
+  "full_house_ties": [
+    {
+      "name": "kkx_vs_kky_full_house_kicker_tiebreak",
+      "hand_a": [
+        50,
+        24,
+        37,
+        0,
+        1,
+        49,
+        23
+      ],
+      "hand_b": [
+        50,
+        24,
+        37,
+        0,
+        1,
+        48,
+        22
+      ],
+      "expected_ordering": 1
+    },
+    {
+      "name": "identical_board_kickers_split_pot",
+      "hand_a": [
+        50,
+        24,
+        5,
+        18,
+        0,
+        37,
+        6
+      ],
+      "hand_b": [
+        50,
+        24,
+        5,
+        18,
+        0,
+        11,
+        7
+      ],
+      "expected_ordering": 0
+    },
+    {
+      "name": "full_house_on_board_playing_board_tie",
+      "hand_a": [
+        50,
+        24,
+        37,
+        49,
+        23,
+        0,
+        1
+      ],
+      "hand_b": [
+        50,
+        24,
+        37,
+        49,
+        23,
+        2,
+        3
+      ],
+      "expected_ordering": 0
+    },
+    {
+      "name": "two_pair_on_board_higher_trips_wins",
+      "hand_a": [
+        50,
+        24,
+        49,
+        23,
+        0,
+        37,
+        1
+      ],
+      "hand_b": [
+        50,
+        24,
+        49,
+        23,
+        0,
+        36,
+        2
+      ],
+      "expected_ordering": 1
+    }
   ]
 }

@@ -253,6 +253,14 @@ pub struct PackBatchVector {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FullHouseTieVector {
+    pub name: String,
+    pub hand_a: [u32; 7],
+    pub hand_b: [u32; 7],
+    pub expected_ordering: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vectors {
     pub schema: String,
     pub generator: String,
@@ -267,6 +275,7 @@ pub struct Vectors {
     pub pack_fields: Vec<PackFieldsVector>,
     pub pack_hand: Vec<PackHandVector>,
     pub pack_batch: Vec<PackBatchVector>,
+    pub full_house_ties: Vec<FullHouseTieVector>,
 }
 
 // ── Generation ─────────────────────────────────────────────────────────────
@@ -435,6 +444,32 @@ pub fn generate() -> Vectors {
             out: field_hex(pack_batch(&padded, 1)),
         },
     ];
+    let full_house_ties = vec![
+        FullHouseTieVector {
+            name: "kkx_vs_kky_full_house_kicker_tiebreak".to_string(),
+            hand_a: [50, 24, 37, 0, 1, 49, 23],
+            hand_b: [50, 24, 37, 0, 1, 48, 22],
+            expected_ordering: 1,
+        },
+        FullHouseTieVector {
+            name: "identical_board_kickers_split_pot".to_string(),
+            hand_a: [50, 24, 5, 18, 0, 37, 6],
+            hand_b: [50, 24, 5, 18, 0, 11, 7],
+            expected_ordering: 0,
+        },
+        FullHouseTieVector {
+            name: "full_house_on_board_playing_board_tie".to_string(),
+            hand_a: [50, 24, 37, 49, 23, 0, 1],
+            hand_b: [50, 24, 37, 49, 23, 2, 3],
+            expected_ordering: 0,
+        },
+        FullHouseTieVector {
+            name: "two_pair_on_board_higher_trips_wins".to_string(),
+            hand_a: [50, 24, 49, 23, 0, 37, 1],
+            hand_b: [50, 24, 49, 23, 0, 36, 2],
+            expected_ordering: 1,
+        },
+    ];
     Vectors {
         schema: SCHEMA.to_string(),
         generator: "circuits/test-vectors (cargo run -p stellpoker-test-vectors -- generate)"
@@ -450,6 +485,7 @@ pub fn generate() -> Vectors {
         pack_fields: pack_fields_vectors,
         pack_hand: pack_hand_vectors,
         pack_batch: pack_batch_vectors,
+        full_house_ties,
     }
 }
 
@@ -465,6 +501,13 @@ fn noir_array(values: &[String]) -> String {
     format!("[{}]", values.join(", "))
 }
 
+fn noir_u32_array(values: &[u32]) -> String {
+    format!(
+        "[{}]",
+        values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+    )
+}
+
 /// The Noir test module. Every test calls the library function the vector
 /// describes and asserts the committed value, so `nargo test` in
 /// `circuits/lib` is the Noir side of the drift check.
@@ -475,7 +518,7 @@ pub fn render_noir(v: &Vectors) -> String {
     out.push_str("// Regenerate with: cargo run -p stellpoker-test-vectors -- generate\n");
     out.push_str("// The same values live in circuits/test-vectors/vectors.json for Rust\n");
     out.push_str("// consumers; CI fails when either file is stale.\n\n");
-    out.push_str("use crate::commitments;\nuse crate::merkle;\nuse crate::packing;\n\n");
+    out.push_str("use crate::cards;\nuse crate::commitments;\nuse crate::merkle;\nuse crate::packing;\n\n");
 
     out.push_str("#[test]\nfn test_vectors_poseidon2_hash_2() {\n");
     for h in &v.poseidon2_hash_2 {
@@ -578,6 +621,23 @@ pub fn render_noir(v: &Vectors) -> String {
             noir_array(&b.digests),
             b.num_hands,
             b.out
+        ));
+    }
+    out.push_str("}\n");
+
+    out.push_str("\n#[test]\nfn test_vectors_full_house_ties() {\n");
+    for tie in &v.full_house_ties {
+        let op = match tie.expected_ordering {
+            1 => ">",
+            -1 => "<",
+            _ => "==",
+        };
+        out.push_str(&format!(
+            "    // {}\n    assert(cards::evaluate_hand_rank({}) {} cards::evaluate_hand_rank({}));\n",
+            tie.name,
+            noir_u32_array(&tie.hand_a),
+            op,
+            noir_u32_array(&tie.hand_b)
         ));
     }
     out.push_str("}\n");
@@ -692,6 +752,20 @@ mod tests {
             pack_batch(&[a, b, Fr::from(9u64)], 2),
             pack_batch(&[a, b, Fr::from(7u64)], 2)
         );
+    }
+
+    #[test]
+    fn full_house_ties_verify() {
+        let v = generate();
+        assert_eq!(v.full_house_ties.len(), 4);
+        for tie in &v.full_house_ties {
+            match tie.expected_ordering {
+                1 => assert_eq!(tie.expected_ordering, 1),
+                0 => assert_eq!(tie.expected_ordering, 0),
+                -1 => assert_eq!(tie.expected_ordering, -1),
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]

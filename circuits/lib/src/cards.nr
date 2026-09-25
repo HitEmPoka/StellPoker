@@ -649,6 +649,48 @@ fn test_full_house_ranking() {
 }
 
 #[test]
+fn test_full_house_kicker_tiebreak_kkx_vs_kky() {
+    // Both players have Kings for three-of-a-kind; kicker pair breaks the tie.
+    // Board: Ks, Kd, Kh, 2c, 3c
+    // Player 1 hole: Qs, Qd -> Kings full of Queens (KKK QQ)
+    let p1_hand = evaluate_hand_rank([50, 24, 37, 0, 1, 49, 23]);
+    // Player 2 hole: Js, Jd -> Kings full of Jacks (KKK JJ)
+    let p2_hand = evaluate_hand_rank([50, 24, 37, 0, 1, 48, 22]);
+    assert(p1_hand > p2_hand, "KKK QQ must beat KKK JJ");
+}
+
+#[test]
+fn test_full_house_identical_board_kickers_split() {
+    // Board has pair of 7s and two Kings: Ks, Kd, 7c, 7d, 2c
+    // Both players hold a King and an uncoordinated card (8c vs 9c).
+    // Both make Kings full of 7s (KKK 77) with the board pair as kicker.
+    // Player 1: Ks, Kd, 7c, 7d, 2c + Kh, 8c
+    let p1_hand = evaluate_hand_rank([50, 24, 5, 18, 0, 37, 6]);
+    // Player 2: Ks, Kd, 7c, 7d, 2c + Kc, 9c
+    let p2_hand = evaluate_hand_rank([50, 24, 5, 18, 0, 11, 7]);
+    assert(p1_hand == p2_hand, "identical board kickers must result in tie");
+}
+
+#[test]
+fn test_full_house_board_playing_tie() {
+    // Board has a full house: Ks, Kd, Kh, Qs, Qd (KKK QQ)
+    // Neither player holds a card that improves the board.
+    let p1_hand = evaluate_hand_rank([50, 24, 37, 49, 23, 0, 1]);
+    let p2_hand = evaluate_hand_rank([50, 24, 37, 49, 23, 2, 3]);
+    assert(p1_hand == p2_hand, "players playing the board must tie");
+}
+
+#[test]
+fn test_full_house_two_pair_on_board_higher_trips_wins() {
+    // Board: Ks, Kd, Qs, Qd, 2c
+    // Player 1: Kh, 3c -> KKK QQ (trips Kings beat trips Queens)
+    let p1_hand = evaluate_hand_rank([50, 24, 49, 23, 0, 37, 1]);
+    // Player 2: Qh, 4c -> QQQ KK
+    let p2_hand = evaluate_hand_rank([50, 24, 49, 23, 0, 36, 2]);
+    assert(p1_hand > p2_hand, "KKK QQ must beat QQQ KK");
+}
+
+#[test]
 fn test_four_of_a_kind_beats_full_house() {
     // Four of a kind (Aces): As, Ad, Ah, Ac, Ks, Kd, Qs
     let four_kind = evaluate_hand_rank([12, 25, 38, 0, 11, 24, 9]);
