@@ -10,6 +10,7 @@
 
 use stellar_poker_lib::cards;
 use stellar_poker_lib::commitments;
+use stellar_poker_lib::compression;
 use stellar_poker_lib::deck;
 use stellar_poker_lib::merkle;
 use stellar_poker_lib::shuffle;
@@ -73,10 +74,10 @@ fn assert_global_deal_injectivity(
 }
 
 fn main(
-    // Private inputs (secret-shared in MPC)
-    party0_permutation: [u32; 52],
-    party1_permutation: [u32; 52],
-    party2_permutation: [u32; 52],
+    // Private inputs (secret-shared in MPC) — compressed permutations
+    party0_permutation_packed: [u32; 10],
+    party1_permutation_packed: [u32; 10],
+    party2_permutation_packed: [u32; 10],
     party0_salts: [Field; 52],
     party1_salts: [Field; 52],
     party2_salts: [Field; 52],
@@ -87,6 +88,10 @@ fn main(
     // Public inputs
     num_players: pub u32,
 ) -> pub (Field, [Field; MAX_PLAYERS], [u32; MAX_PLAYERS], [u32; MAX_PLAYERS]) {
+    // Decompress permutations from packed form
+    let party0_permutation = compression::unpack_permutation_52(party0_permutation_packed);
+    let party1_permutation = compression::unpack_permutation_52(party1_permutation_packed);
+    let party2_permutation = compression::unpack_permutation_52(party2_permutation_packed);
     assert(num_players >= 2, "need at least 2 players");
     assert(num_players <= MAX_PLAYERS, "too many players");
 

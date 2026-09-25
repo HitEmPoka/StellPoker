@@ -1,0 +1,8 @@
+[package]
+name = "deck_reshuffle"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = "1.0.0-beta.17"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }

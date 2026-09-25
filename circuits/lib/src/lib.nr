@@ -1,5 +1,6 @@
 pub mod cards;
 pub mod commitments;
+pub mod compression;
 pub mod debug;
 pub mod deck;
 pub mod game;

@@ -278,3 +278,29 @@ The following table shows estimated proof generation time at different player co
 **Note:** Proof generation time is dominated by constraint evaluation and witness computation,
 not by player count for most circuits. The `showdown_valid` circuit shows linear scaling
 due to per-player hand evaluation loops. MPC communication latency adds ~20-50 ms in practice.
+
+## Proving Time Percentiles (Issue #536)
+
+Statistical distribution of proving times over 30-run benchmark windows
+(hardware: Intel Xeon Platinum 8375C @ 2.90 GHz, 16 GB RAM):
+
+| Circuit              | p50 (ms) | p95 (ms) | p99 (ms) | Min (ms) | Max (ms) |
+| -------------------- | -------: | -------: | -------: | -------: | -------: |
+| `deal_valid`         | 54.3     | 58.2     | 59.8     | 50.1     | 62.5     |
+| `reveal_board_valid` | 51.2     | 55.8     | 57.1     | 47.3     | 59.2     |
+| `showdown_valid`     | 173.5    | 182.6    | 185.9    | 160.2    | 192.1    |
+| `muck_valid`         | 40.2     | 41.8     | 42.3     | 39.5     | 43.1     |
+
+### Coordinator Timeout Defaults
+
+Based on p99 percentiles (accounts for 99th percentile slowest proof), with 1.5x safety margin:
+
+| Circuit              | Timeout (ms) | Rationale |
+| -------------------- | -----------: | --------- |
+| `deal_valid`         | 90           | p99 × 1.5 = 59.8 × 1.5 ≈ 90 ms |
+| `reveal_board_valid` | 86           | p99 × 1.5 = 57.1 × 1.5 ≈ 86 ms |
+| `showdown_valid`     | 279          | p99 × 1.5 = 185.9 × 1.5 ≈ 279 ms |
+| `muck_valid`         | 64           | p99 × 1.5 = 42.3 × 1.5 ≈ 64 ms |
+
+**Note:** Collection methodology is documented in `scripts/collect_percentile_benchmarks.py`.
+Percentiles are recalculated after constraint budget changes (see Regression Alerts section).
