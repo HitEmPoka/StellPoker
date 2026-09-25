@@ -35,7 +35,8 @@
     "allIn": "ALL IN!",
     "editAlias": "Change your alias",
     "edit": "[EDIT]",
-    "dealer": "[D]"
+    "dealer": "[D]",
+    "editAvatar": "Click to customize avatar"
   },
   "stats": {
     "title": "Onchain Stats",
@@ -119,5 +120,22 @@
     "winner": "Hand complete. Winner: {addr}.",
     "handComplete": "Hand complete. Start the next hand when ready.",
     "ready": "Ready when you are."
+  },
+  "common": {
+    "cancel": "CANCEL",
+    "submitting": "SUBMITTING…"
+  },
+  "avatar": {
+    "title": "CUSTOMIZE AVATAR",
+    "connectWallet": "Connect a wallet first.",
+    "resetDesc": "Clear custom avatar and fall back to the deterministic pixel Identicon.",
+    "rawSvg": "Raw SVG",
+    "chooseTemplate": "Choose template",
+    "nftContract": "NFT Contract Address",
+    "nftTokenId": "NFT Token ID",
+    "nftNote": "Only NFTs from admin-approved contracts are accepted.",
+    "saveSvg": "SAVE SVG AVATAR",
+    "linkNft": "LINK NFT",
+    "resetConfirm": "RESET TO IDENTICON"
   }
 }

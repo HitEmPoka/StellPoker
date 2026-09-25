@@ -12,6 +12,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { PixelWorld } from "@/components/PixelWorld";
+import { Avatar } from "@/components/Avatar";
+import { AvatarSelector } from "@/components/AvatarSelector";
 import { trySilentReconnect, type WalletSession } from "@/lib/wallet";
 import { getPlayerHudStats } from "@/lib/api";
 import { loadHandHistory } from "@/lib/hand-history";
@@ -31,6 +33,8 @@ export default function PlayerDashboardPage() {
   const [stats, setStats] = useState<PlayerDashboardStats | null>(null);
   const [hud, setHud] = useState<{ vpip: number; pfr: number } | null>(null);
   const [busy, setBusy] = useState(true);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [avatarRefreshKey, setAvatarRefreshKey] = useState(0);
 
   useEffect(() => {
     trySilentReconnect().then((s) => setWallet(s));
@@ -114,11 +118,28 @@ export default function PlayerDashboardPage() {
             className="pixel-border p-4 w-full flex flex-col gap-4"
             style={{ borderColor: "#27ae60", background: "rgba(12,10,24,0.92)" }}
           >
-            <div className="text-[11px]" style={{ color: "#f1c40f" }}>
-              {alias ? alias : short}
-            </div>
-            <div className="text-[8px]" style={{ color: "#95a5a6" }}>
-              {wallet.address}
+            <div className="flex items-start gap-4">
+              <div
+                onClick={() => setShowAvatarPicker(true)}
+                style={{ cursor: "pointer" }}
+                title="Click to customize your avatar"
+              >
+                <Avatar
+                  key={avatarRefreshKey}
+                  address={wallet.address}
+                  size={72}
+                  pixelated={true}
+                  showIdenticonBadge={true}
+                />
+              </div>
+              <div className="flex flex-col gap-1 flex-1 min-w-0">
+                <div className="text-[11px]" style={{ color: "#f1c40f" }}>
+                  {alias ? alias : short}
+                </div>
+                <div className="text-[8px]" style={{ color: "#95a5a6", wordBreak: "break-all" }}>
+                  {wallet.address}
+                </div>
+              </div>
             </div>
 
             {busy ? (
@@ -183,6 +204,16 @@ export default function PlayerDashboardPage() {
               </>
             ) : null}
           </div>
+        )}
+
+        {showAvatarPicker && wallet && (
+          <AvatarSelector
+            onClose={() => setShowAvatarPicker(false)}
+            onUpdated={() => {
+              setAvatarRefreshKey((k) => k + 1);
+              setShowAvatarPicker(false);
+            }}
+          />
         )}
       </main>
     </PixelWorld>

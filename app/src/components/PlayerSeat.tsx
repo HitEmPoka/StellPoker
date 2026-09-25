@@ -5,7 +5,10 @@ import { Card } from "./Card";
 import { PixelCat, opponentSprite } from "./PixelCat";
 import { PixelChip, AnimatedChipCounter } from "./PixelChip";
 import { Identicon } from "./Identicon";
+import { Avatar } from "./Avatar";
+import { AvatarSelector } from "./AvatarSelector";
 import { StackSparkline } from "./StackSparkline";
+import { PixelCountdownRing } from "./PixelCountdownRing";
 import type { Player } from "@/lib/game-state";
 import { classifyHandStrength } from "@/lib/hand-strength";
 import type { HandStrength } from "@/lib/hand-strength";
@@ -24,6 +27,8 @@ interface PlayerSeatProps {
   alias?: string;
   /** Renders a small edit affordance next to the label (own seat only). */
   onEditAlias?: () => void;
+  /** Fired when the user clicks their own avatar to open the customizer (Issue #153). */
+  onEditAvatar?: () => void;
   hideChipStats?: boolean;
   activeEmote?: string | null;
   /** Board cards needed for hand strength evaluation. */
@@ -34,6 +39,12 @@ interface PlayerSeatProps {
   showStatsTooltip?: boolean;
   /** Stack sizes over recent hands, oldest first, for the trend sparkline (#157). */
   stackTrend?: number[];
+  /** Countdown seconds remaining (0 = hide timer visual). #154 */
+  turnTimerSecondsLeft?: number;
+  /** Total turn-timer duration in seconds. #154 */
+  turnTimerDurationSeconds?: number;
+  /** If true, pulse red near expiration. #154 */
+  turnTimerUrgent?: boolean;
 }
 
 function formatPct(n: number): string {
@@ -57,13 +68,18 @@ export function PlayerSeat({
   labelOverride,
   alias,
   onEditAlias,
+  onEditAvatar,
   hideChipStats = false,
   activeEmote = null,
   boardCards = [],
   gamePhase = "",
   showStatsTooltip = true,
   stackTrend,
+  turnTimerSecondsLeft,
+  turnTimerDurationSeconds,
+  turnTimerUrgent,
 }: PlayerSeatProps) {
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const t = useT();
   const [hud, setHud] = useState<PlayerHudStats | null>(null);
   const [hudLoaded, setHudLoaded] = useState(false);
@@ -167,17 +183,33 @@ export function PlayerSeat({
           />
         </div>
       )}
-      {/* Turn indicator */}
+      {/* Turn indicator + countdown ring (Issue #154) */}
       {isCurrentTurn && !player.folded && (
-        <div style={{
-          animation: 'textPulse 1s ease-in-out infinite',
-          fontSize: '9px',
-          color: '#f1c40f',
-          textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
-          whiteSpace: 'nowrap',
-          marginBottom: '2px',
-        }}>
-          {isUser ? t("seat.yourTurn") : t("seat.theirTurn")}
+        <div
+          className="flex items-center gap-2"
+          style={{
+            marginBottom: '2px',
+          }}
+        >
+          {typeof turnTimerSecondsLeft === "number" && turnTimerSecondsLeft > 0 &&
+           typeof turnTimerDurationSeconds === "number" && turnTimerDurationSeconds > 0 && (
+            <PixelCountdownRing
+              size={22}
+              durationSeconds={turnTimerDurationSeconds}
+              timeLeftSeconds={turnTimerSecondsLeft}
+              urgent={!!turnTimerUrgent}
+              label=""
+            />
+          )}
+          <div style={{
+            animation: 'textPulse 1s ease-in-out infinite',
+            fontSize: '9px',
+            color: '#f1c40f',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+            whiteSpace: 'nowrap',
+          }}>
+            {isUser ? t("seat.yourTurn") : t("seat.theirTurn")}
+          </div>
         </div>
       )}
 
@@ -219,7 +251,7 @@ export function PlayerSeat({
         )}
       </div>
 
-      {/* Avatar */}
+      {/* Avatar — Issue #153: on-chain SVG / NFT profile pics with Identicon fallback */}
       <div style={{ marginBottom: '4px', position: 'relative' }}>
         {isBot ? (
           <img
@@ -231,20 +263,56 @@ export function PlayerSeat({
           />
         ) : (
           <>
-            <PixelCat
-              sprite={sprite}
-              size={isUser ? 72 : 48}
-              isUser={isUser}
-            />
-            {/* Deterministic identicon badge — a stable visual fingerprint of
-                the seat's Stellar address, independent of the cat sprite
-                (which is assigned by seat index, not identity). */}
-            <div style={{ position: 'absolute', bottom: '-2px', right: '-2px' }}>
-              <Identicon seed={player.address} size={5} cellSize={3} />
+            <div
+              onClick={
+                isUser
+                  ? () => {
+                      if (onEditAvatar) {
+                        onEditAvatar();
+                      } else {
+                        setShowAvatarPicker(true);
+                      }
+                    }
+                  : undefined
+              }
+              title={isUser ? t("seat.editAvatar") ?? "Click to customize avatar" : undefined}
+            >
+              <Avatar
+                address={player.address}
+                size={isUser ? 56 : 40}
+                pixelated={true}
+                showIdenticonBadge={true}
+              />
+            </div>
+            {/* Legacy PixelCat is shown behind the custom avatar for the
+                seat-position visual marker — keeps the "your seat" glow and
+                opponent sprite cycling intact. */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: -1,
+                opacity: isUser ? 0.15 : 0,
+                pointerEvents: 'none',
+              }}
+              aria-hidden="true"
+            >
+              <PixelCat
+                sprite={sprite}
+                size={isUser ? 56 : 40}
+                isUser={isUser}
+              />
             </div>
           </>
         )}
       </div>
+      {/* Inline avatar picker modal (local to this seat) */}
+      {showAvatarPicker && (
+        <AvatarSelector
+          onClose={() => setShowAvatarPicker(false)}
+          onUpdated={() => setShowAvatarPicker(false)}
+        />
+      )}
 
       {/* Cards */}
       <div className="flex gap-1">
