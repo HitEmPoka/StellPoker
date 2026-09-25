@@ -5608,6 +5608,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellpoker-test-vectors"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
+ "hex",
+ "serde",
+ "serde_json",
+ "taceo-poseidon2",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

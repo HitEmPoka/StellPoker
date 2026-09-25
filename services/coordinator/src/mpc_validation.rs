@@ -293,6 +293,45 @@ mod tests {
         );
     }
 
+    /// The commitment helpers above must agree with the circuits. The shared
+    /// vectors in circuits/test-vectors are generated once and asserted by
+    /// the Noir library too (Issue #527), so this is the Rust half of that
+    /// cross-check.
+    #[test]
+    fn commitments_match_shared_test_vectors() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../circuits/test-vectors/vectors.json");
+        let text = std::fs::read_to_string(&path).expect("shared vectors present");
+        let vectors: serde_json::Value = serde_json::from_str(&text).expect("valid vectors json");
+        assert_eq!(vectors["schema"], "stellpoker.test-vectors/v1");
+
+        let cards = vectors["commit_card"]
+            .as_array()
+            .expect("commit_card vectors");
+        assert!(!cards.is_empty());
+        for v in cards {
+            let card = v["card"].as_u64().unwrap() as u32;
+            let salt = parse_field(v["salt"].as_str().unwrap()).unwrap();
+            assert_eq!(hex(commit_card(card, salt)), v["out"].as_str().unwrap());
+        }
+
+        let hands = vectors["commit_hand"]
+            .as_array()
+            .expect("commit_hand vectors");
+        assert!(!hands.is_empty());
+        for v in hands {
+            let c1 = commit_card(
+                v["card1"].as_u64().unwrap() as u32,
+                parse_field(v["salt1"].as_str().unwrap()).unwrap(),
+            );
+            let c2 = commit_card(
+                v["card2"].as_u64().unwrap() as u32,
+                parse_field(v["salt2"].as_str().unwrap()).unwrap(),
+            );
+            assert_eq!(hex(commit_hand(c1, c2)), v["out"].as_str().unwrap());
+        }
+    }
+
     #[test]
     fn parses_hex_and_decimal_field_elements() {
         assert_eq!(parse_field("0x2a").unwrap(), Fr::from(42u64));
