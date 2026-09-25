@@ -324,6 +324,10 @@ fn test_tournament_lifecycle_4_players() {
         jackpot_rake_share_bps: 0,
         min_bad_beat_category: 7,
         min_bad_beat_rank: 12,
+        street_time_limit: OptionalStreetTimeLimit::None,
+        treasury: None,
+        dead_chip_timeout_ledgers: 0,
+        reclaim_period_ledgers: 0,
     };
     let table_id = s.client.create_table(&s.admin, &config);
 

@@ -118,6 +118,10 @@ mod blinds_schedule_test {
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         }
     }
 
@@ -196,12 +200,14 @@ mod blinds_schedule_test {
             big_blind: 10,
             ante: crate::types::AnteMode::None,
             duration_seconds: 100,
+            break_seconds: 0,
         });
         levels.push_back(BlindLevel {
             small_blind: 10,
             big_blind: 20,
             ante: crate::types::AnteMode::None,
             duration_seconds: 0, // final level: lasts indefinitely
+            break_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         let table_id = s.client.create_table(&s.admin, &config);
@@ -261,6 +267,7 @@ mod blinds_schedule_test {
             big_blind: 10,
             ante: crate::types::AnteMode::Fixed(2),
             duration_seconds: 0,
+            break_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         let table_id = s.client.create_table(&s.admin, &config);
@@ -332,6 +339,7 @@ mod blinds_schedule_test {
             big_blind: 10,
             ante: crate::types::AnteMode::None,
             duration_seconds: 0,
+            break_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         s.client.create_table(&s.admin, &config);
@@ -347,12 +355,14 @@ mod blinds_schedule_test {
             big_blind: 10,
             ante: crate::types::AnteMode::None,
             duration_seconds: 0, // invalid: not the final level
+            break_seconds: 0,
         });
         levels.push_back(BlindLevel {
             small_blind: 10,
             big_blind: 20,
             ante: crate::types::AnteMode::None,
             duration_seconds: 0,
+            break_seconds: 0,
         });
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         s.client.create_table(&s.admin, &config);

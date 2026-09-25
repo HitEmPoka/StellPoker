@@ -1,10 +1,9 @@
 use soroban_sdk::{Address, Env, Map, Symbol, Vec};
-use crate::types::DataKey;
 
 /// Player ban/unban list per table (Issue #195)
 /// Stored per-table in persistent storage keyed by (table_id, player)
 
-fn ban_key(env: &Env, table_id: u32) -> Symbol {
+fn ban_key(env: &Env, _table_id: u32) -> Symbol {
     // Use a combined symbol + id as key via Symbol short + table_id in persistent Map
     // For simplicity we use a single Map keyed by (table_id, player) tuple stored as
     // DataKey-like instance storage per table: key is (Symbol("ban"), table_id)

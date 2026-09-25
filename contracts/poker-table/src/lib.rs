@@ -47,6 +47,11 @@ mod ttl;
 #[cfg(test)]
 mod ttl_test;
 mod types;
+mod dispute_window;
+#[cfg(test)]
+mod dispute_window_test;
+#[cfg(test)]
+mod upgrade_inflight_test;
 #[cfg(test)]
 mod upgrade_test;
 mod verifier;
@@ -181,7 +186,7 @@ fn validate_blinds_schedule(schedule: &BlindsSchedule) -> Result<(), PokerTableE
             .levels
             .get(i)
             .ok_or(PokerTableError::InvalidBlindLevel)?;
-        if level.small_blind <= 0 || level.big_blind <= level.small_blind || level.ante < 0 {
+        if level.small_blind <= 0 || level.big_blind <= level.small_blind {
             return Err(PokerTableError::InvalidBlindLevel);
         }
         // Every level but the last must have a nonzero duration, or the
@@ -642,7 +647,7 @@ impl PokerTableContract {
             rake_balance: 0,
             action_deadline: 0,
             hand_actions: Vec::new(&env),
-            rit_state: None,
+            rit_state: OptionalRitState::None,
             jackpot_balance: 0,
             last_raise_size: config
                 .blinds_schedule
@@ -653,7 +658,6 @@ impl PokerTableContract {
             current_blind_level: 0,
             level_started_at: env.ledger().timestamp(),
             break_ends_at: 0,
-            settlement_entered_ledger: 0,
             settlement_entered_ledger: 0,
         };
 
@@ -1254,12 +1258,12 @@ impl PokerTableContract {
         // Check if both have opted in
         if rit.player1_opted_in && rit.player2_opted_in {
             rit.active = true;
-            table.rit_state = Some(rit);
+            table.rit_state = OptionalRitState::Some(rit);
 
             // Pre-compute board indices for both runs
-            let mut rit_state = table.rit_state.clone().unwrap();
+            let mut rit_state = table.rit_state.clone_inner().unwrap();
             compute_rit_board_indices(&env, &table, &mut rit_state)?;
-            table.rit_state = Some(rit_state);
+            table.rit_state = OptionalRitState::Some(rit_state);
 
             // Transition to appropriate dealing phase based on how many shared cards
             table.phase = match shared_board_count {
@@ -1278,7 +1282,7 @@ impl PokerTableContract {
             );
         } else {
             // Waiting for other player
-            table.rit_state = Some(rit);
+            table.rit_state = OptionalRitState::Some(rit);
             save_table(&env, &table);
             env.events().publish(
                 (Symbol::new(&env, "rit_opted_in"), table_id),
@@ -1358,7 +1362,7 @@ impl PokerTableContract {
 
             // Track in board_cards (both runs get their board here)
             table.board_cards.push_back(card);
-            if let Some(ref mut rit) = table.rit_state {
+            if let OptionalRitState::Some(ref mut rit) = table.rit_state {
                 if rit.active && rit_run == 1 {
                     rit.run1_board_indices.push_back(idx);
                 }
@@ -1477,7 +1481,7 @@ impl PokerTableContract {
 
         if is_rit_run1 {
             // Record Run 1 winner, then transition to Run 2 dealing
-            if let Some(ref mut rit) = table.rit_state {
+            if let OptionalRitState::Some(ref mut rit) = table.rit_state {
                 rit.run1_winner = winner_index;
                 rit.current_run = 2;
             }
@@ -1509,7 +1513,7 @@ impl PokerTableContract {
             Ok(())
         } else if is_rit_run2 {
             // Record Run 2 winner, then go to RIT settlement
-            if let Some(ref mut rit) = table.rit_state {
+            if let OptionalRitState::Some(ref mut rit) = table.rit_state {
                 rit.run2_winner = winner_index;
             }
             table.phase = GamePhase::RitSettlement;
@@ -2003,19 +2007,12 @@ impl PokerTableContract {
     /// `new_wasm_hash` — it is equivalent to `execute_upgrade`. Tables that
     /// predate governance keep the original single-admin behaviour.
     pub fn upgrade(
-    /// Propose a contract-wasm upgrade (admin only). The upgrade can only be
-    /// executed after `delay_seconds` have elapsed (minimum
-    /// `MIN_UPGRADE_DELAY_SECONDS`), giving seated players a window to
-    /// notice and exit before it lands. Replaces any existing proposal.
-    pub fn propose_upgrade(
         env: Env,
         table_id: u32,
         new_wasm_hash: BytesN<32>,
-        delay_seconds: u64,
     ) -> Result<(), PokerTableError> {
         let table = load_table(&env, table_id)?;
         if !governance::governance_configured(&env, table_id) {
-            // Legacy path: any table admin may push a wasm upgrade directly.
             table.admin.require_auth();
             env.deployer().update_current_contract_wasm(new_wasm_hash);
             return Ok(());
@@ -2023,6 +2020,11 @@ impl PokerTableContract {
 
         Self::execute_upgrade_with(env, table_id, new_wasm_hash)
     }
+
+    /// Propose a contract-wasm upgrade (admin only). The upgrade can only be
+    /// executed after `delay_seconds` have elapsed (minimum
+    /// `MIN_UPGRADE_DELAY_SECONDS`), giving seated players a window to
+    /// notice and exit before it lands. Replaces any existing proposal.
 
     /// Configure N-of-M upgrade governance for a table (admin only).
     ///
@@ -2055,7 +2057,7 @@ impl PokerTableContract {
     ///
     /// Only a configured signer may call this. Returns the number of distinct
     /// approvals collected so far for the proposal.
-    pub fn propose_upgrade(
+    pub fn propose_governance_upgrade(
         env: Env,
         table_id: u32,
         signer: Address,
@@ -2074,9 +2076,10 @@ impl PokerTableContract {
         Ok(approvals)
     }
 
-    /// Execute the pending upgrade once it is fully approved and its timelock
-    /// has elapsed. No arguments — the target is taken from the proposal.
-    pub fn execute_upgrade(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+    /// Execute the pending governance upgrade once it is fully approved and
+    /// its timelock has elapsed. No arguments — the target is taken from the
+    /// proposal.
+    pub fn execute_governance_upgrade(env: Env, table_id: u32) -> Result<(), PokerTableError> {
         if !governance::governance_configured(&env, table_id) {
             return Err(PokerTableError::InvalidGovernanceConfig);
         }
@@ -2084,8 +2087,9 @@ impl PokerTableContract {
         Self::execute_upgrade_with(env, table_id, pending.wasm_hash)
     }
 
-    /// Shared tail for `upgrade` / `execute_upgrade`: enforce threshold +
-    /// timelock, apply the WASM update, then clear the pending proposal.
+    /// Shared tail for `upgrade` / governance `execute_upgrade`: enforce
+    /// threshold + timelock, apply the WASM update, then clear the pending
+    /// proposal.
     fn execute_upgrade_with(
         env: Env,
         table_id: u32,
@@ -2098,6 +2102,22 @@ impl PokerTableContract {
         env.events().publish(
             (Symbol::new(&env, "upgrade_executed"), table_id),
             pending.wasm_hash,
+        );
+        Ok(())
+    }
+
+    /// Propose a contract-wasm upgrade (admin only). The upgrade can only be
+    /// executed after `delay_seconds` have elapsed (minimum
+    /// `MIN_UPGRADE_DELAY_SECONDS`), giving seated players a window to
+    /// notice and exit before it lands. Replaces any existing proposal.
+    pub fn propose_upgrade(
+        env: Env,
+        table_id: u32,
+        new_wasm_hash: BytesN<32>,
+        delay_seconds: u64,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
 
         if delay_seconds < MIN_UPGRADE_DELAY_SECONDS {
             return Err(PokerTableError::UpgradeDelayTooShort);
@@ -2226,6 +2246,9 @@ impl PokerTableContract {
         governance::clear_pending(&env, table_id);
         env.events()
             .publish((Symbol::new(&env, "upgrade_cancelled"), table_id), caller);
+        Ok(())
+    }
+
     /// Fast, no-timelock rollback of the most recently *executed* upgrade
     /// (issue #348). Intended for a canary/gradual-rollout process to call
     /// automatically when the new code's error rate exceeds a threshold
@@ -3231,9 +3254,10 @@ impl PokerTableContract {
         }
 
         env.storage().persistent().set(&commit_key, &action_hash);
+        let nonce_key = DataKey::ActionCommitmentNonce(table_id, table.hand_number, seat);
         env.storage()
             .persistent()
-            .set(&format!("{}_nonce", commit_key.to_string()), &nonce_hash);
+            .set(&nonce_key, &nonce_hash);
         ttl::bump_persistent(&env, &commit_key, ttl::HAND);
 
         env.events().publish(
@@ -3279,7 +3303,8 @@ impl PokerTableContract {
 
         let computed_hash = commit_reveal::compute_action_hash(&env, &action, amount, &nonce);
 
-        if stored_hash != computed_hash {
+        let computed_hash_bytes: Bytes = computed_hash.into();
+        if stored_hash != computed_hash_bytes {
             return Err(PokerTableError::InvalidActionReveal);
         }
 

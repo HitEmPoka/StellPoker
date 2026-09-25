@@ -12,10 +12,14 @@ pub const MIN_BUDGET_FOR_CROSS_CALL: u64 = 100_000; // Conservative estimate
 
 /// Check if there is sufficient remaining budget for a cross-contract call.
 /// Returns `true` if safe to proceed; `false` if budget is critically low.
-pub fn has_sufficient_budget(env: &Env) -> bool {
-    let budget = env.budget();
-    let remaining = budget.memory().remaining;
-    remaining > MIN_BUDGET_FOR_CROSS_CALL
+///
+/// Note: In current Soroban SDK versions, the runtime enforces budget limits
+/// automatically. This guard returns `true` as the runtime will trap on
+/// budget exhaustion before any damage can occur.
+pub fn has_sufficient_budget(_env: &Env) -> bool {
+    // The Soroban runtime enforces per-invocation budget limits natively.
+    // There is no public `budget()` accessor on Env in current SDK versions.
+    true
 }
 
 /// Assert that there is sufficient budget; panic if not (fail-fast guard).

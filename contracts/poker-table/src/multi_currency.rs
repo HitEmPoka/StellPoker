@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Map, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, Symbol};
 use crate::types::PokerTableError;
 
 /// Multi-currency support for buy-ins via Stellar anchors (Issue #193)

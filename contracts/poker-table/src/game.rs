@@ -229,7 +229,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     table.dealt_indices = Vec::new(env);
     table.hand_commitments = Vec::new(env);
     table.side_pots = Vec::new(env);
-    table.rit_state = None;
+    table.rit_state = crate::types::OptionalRitState::None;
     history::reset_actions(env, table);
 
     // Reset minimum-raise size to one big blind for the new hand.

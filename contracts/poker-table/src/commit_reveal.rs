@@ -1,13 +1,13 @@
 use crate::types::*;
-use soroban_sdk::{crypto, Address, Bytes, Env};
+use soroban_sdk::{Bytes, BytesN, Env};
 
 pub fn compute_action_hash(
     env: &Env,
     action: &Action,
     amount: i128,
     nonce: &Bytes,
-) -> Bytes {
-    let mut preimage = Vec::new(env);
+) -> BytesN<32> {
+    let mut preimage = Bytes::new(env);
 
     match action {
         Action::Fold => {
@@ -21,16 +21,16 @@ pub fn compute_action_hash(
         }
         Action::Bet(_) => {
             preimage.push_back(3u8);
-            let amount_bytes = amount.to_le_bytes();
-            for byte in &amount_bytes {
-                preimage.push_back(*byte);
+            let amount_bytes = amount.to_be_bytes();
+            for byte in amount_bytes {
+                preimage.push_back(byte);
             }
         }
         Action::Raise(_) => {
             preimage.push_back(4u8);
-            let amount_bytes = amount.to_le_bytes();
-            for byte in &amount_bytes {
-                preimage.push_back(*byte);
+            let amount_bytes = amount.to_be_bytes();
+            for byte in amount_bytes {
+                preimage.push_back(byte);
             }
         }
         Action::AllIn => {
@@ -42,15 +42,7 @@ pub fn compute_action_hash(
         preimage.push_back(nonce.get(i).unwrap_or(0u8));
     }
 
-    let preimage_bytes = Bytes::from_array(env, preimage.into_fixed_size().unwrap_or_else(|_| {
-        let mut arr = [0u8; 256];
-        for (i, v) in preimage.iter().enumerate().take(256) {
-            arr[i] = v;
-        }
-        arr
-    }));
-
-    Bytes::from_array(env, crypto::keccak256(env, &preimage_bytes).into())
+    env.crypto().keccak256(&preimage).into()
 }
 
 #[cfg(test)]

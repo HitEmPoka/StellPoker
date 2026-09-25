@@ -111,6 +111,10 @@ fn two_player_table(
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         },
         phase: GamePhase::Preflop,
         players,
@@ -131,9 +135,11 @@ fn two_player_table(
         hand_actions: Vec::new(env),
         jackpot_balance: 0,
         last_raise_size: big_blind,
-        rit_state: None,
+        rit_state: OptionalRitState::None,
         current_blind_level: 0,
         level_started_at: 0,
+        break_ends_at: 0,
+        settlement_entered_ledger: 0,
     };
 
     // Post SB/BB manually so both players have placed their blinds.
