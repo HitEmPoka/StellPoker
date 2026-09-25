@@ -325,7 +325,7 @@ def main() -> int:
     data_dir = ROOT / "benchmark_data"
     data_dir.mkdir(exist_ok=True)
     with (data_dir / "public_inputs.csv").open("w", newline="") as fh:
-        writer = csv.writer(fh)
+        writer = csv.writer(fh, lineterminator="\n")
         writer.writerow(["kind", "name", "public_fields", "acir_opcodes", "circuit_size", "proof_bytes", "public_bytes", "total_bytes", "verify_ms", "measured"])
         for r in sweep:
             writer.writerow(["synthetic", f"K={r['public_fields'] - 1}", r["public_fields"], r["acir_opcodes"], r["circuit_size"] or "", r["proof_bytes"], r["public_bytes"], r["proof_bytes"] + r["public_bytes"], r["verify_ms"] or "", r["measured"]])
