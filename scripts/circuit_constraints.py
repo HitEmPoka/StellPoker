@@ -20,7 +20,16 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_CIRCUITS = ("deal_valid", "reveal_board_valid", "showdown_valid")
+DEFAULT_CIRCUITS = (
+    "deal_valid",
+    "reveal_board_valid",
+    "showdown_valid",
+    "muck_valid",
+    "burn_card_valid",
+    "side_pot_valid",
+    "split_pot_valid",
+    "fold_valid",
+)
 
 
 @dataclass

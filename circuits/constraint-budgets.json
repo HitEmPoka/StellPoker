@@ -30,6 +30,11 @@
       "max_acir_opcodes": 12000,
       "max_backend_opcodes": 20000,
       "max_increase_pct": 5.0
+    },
+    "split_pot_valid": {
+      "max_acir_opcodes": 13000,
+      "max_backend_opcodes": 22000,
+      "max_increase_pct": 5.0
     }
   }
 }

@@ -64,3 +64,179 @@ fn main(
 
     derived_count
 }
+
+#[test]
+fn test_valid_no_all_in_single_main_pot() {
+    let num_players = 3;
+    let commitments = [100, 100, 100, 0, 0, 0];
+    let all_in = [false, false, false, false, false, false];
+    let folded = [false, false, false, true, true, true];
+
+    let num_pots = 1;
+    let declared_amounts = [300, 0, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, true, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    let result = main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+    assert(result == 1);
+}
+
+#[test]
+fn test_valid_two_way_all_in() {
+    let num_players = 2;
+    let commitments = [50, 100, 0, 0, 0, 0];
+    let all_in = [true, true, false, false, false, false];
+    let folded = [false, false, true, true, true, true];
+
+    let num_pots = 2;
+    let declared_amounts = [100, 50, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, false, false, false, false],
+        [false, true, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    let result = main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+    assert(result == 2);
+}
+
+#[test(should_fail)]
+fn test_invalid_wrong_pot_count() {
+    let num_players = 2;
+    let commitments = [50, 100, 0, 0, 0, 0];
+    let all_in = [true, true, false, false, false, false];
+    let folded = [false, false, true, true, true, true];
+
+    let num_pots = 1;
+    let declared_amounts = [100, 50, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, false, false, false, false],
+        [false, true, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+}
+
+#[test(should_fail)]
+fn test_invalid_wrong_pot_amount() {
+    let num_players = 2;
+    let commitments = [50, 100, 0, 0, 0, 0];
+    let all_in = [true, true, false, false, false, false];
+    let folded = [false, false, true, true, true, true];
+
+    let num_pots = 2;
+    let declared_amounts = [99, 50, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, false, false, false, false],
+        [false, true, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+}
+
+#[test(should_fail)]
+fn test_invalid_wrong_eligibility() {
+    let num_players = 2;
+    let commitments = [50, 100, 0, 0, 0, 0];
+    let all_in = [true, true, false, false, false, false];
+    let folded = [false, false, true, true, true, true];
+
+    let num_pots = 2;
+    let declared_amounts = [100, 50, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, false, false, false, false],
+        [true, true, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+}
+
+#[test(should_fail)]
+fn test_invalid_chips_not_conserved() {
+    let num_players = 2;
+    let commitments = [50, 100, 0, 0, 0, 0];
+    let all_in = [true, true, false, false, false, false];
+    let folded = [false, false, true, true, true, true];
+
+    let num_pots = 2;
+    let declared_amounts = [100, 49, 0, 0, 0, 0];
+    let declared_eligible = [
+        [true, true, false, false, false, false],
+        [false, true, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+        [false, false, false, false, false, false],
+    ];
+
+    main(
+        num_players,
+        commitments,
+        all_in,
+        folded,
+        num_pots,
+        declared_amounts,
+        declared_eligible,
+    );
+}
