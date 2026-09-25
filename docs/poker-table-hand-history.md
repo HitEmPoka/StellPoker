@@ -62,25 +62,52 @@ actions across all four betting rounds.
 
 ## Reading history
 
-| Function | Returns |
-|----------|---------|
-| `get_hand_history(table_id, limit)` | Up to `limit` records, **newest first**. `limit = 0` reads the whole window. |
-| `get_hand(table_id, hand_number)` | One record, or `None` once it has been evicted. |
-| `get_hand_history_meta(table_id)` | How many records are retained and how many hands have been archived in total. |
-| `hand_history_capacity()` | The buffer size (16). |
+### Full and Basic Reads
 
-All four are read-only and require no authorization.
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `get_hand_history(table_id, limit)` | Up to `limit` records, **newest first**. `limit = 0` reads the whole window. | Simple API; use when you know history fits in footprint |
+| `get_hand(table_id, hand_number)` | One record, or `None` once it has been evicted. | Lookup by hand number (useful for disputes) |
+| `get_hand_history_meta(table_id)` | Buffer state: `{next_slot, stored, total_archived}` | Tells you how many records exist |
+| `hand_history_capacity()` | The buffer size (16). | Constant; useful for pagination math |
 
+### Paginated Export (Issue #550)
+
+For large-scale exports or to avoid loading the entire history buffer into a single transaction:
+
+| Function | Parameters | Returns | TTL Handling |
+|----------|-----------|---------|--------------|
+| `get_hand_history_chunk(table_id, offset, limit)` | `offset` = records to skip from newest (0 = start at newest); `limit` = max to return | Up to `limit` records, **newest first**, starting after `offset` | Each record's TTL is extended (bump-on-read) |
+
+**Pagination Example:**
 ```bash
-# Latest three hands at table 0
-stellar contract invoke --id "$POKER_TABLE" -- get_hand_history --table_id 0 --limit 3
+# Get metadata first
+stellar contract invoke --id "$POKER_TABLE" -- get_hand_history_meta --table_id 0
 
-# One specific hand
-stellar contract invoke --id "$POKER_TABLE" -- get_hand --table_id 0 --hand_number 12
+# Paginate in chunks of 5 (newest first)
+# Page 1: offset=0, limit=5   → records 0-4 (newest)
+# Page 2: offset=5, limit=5   → records 5-9
+# Page 3: offset=10, limit=5  → records 10-14
+# ...and so on
+
+# Fetch page 1
+stellar contract invoke --id "$POKER_TABLE" -- get_hand_history_chunk --table_id 0 --offset 0 --limit 5
+
+# Fetch page 2
+stellar contract invoke --id "$POKER_TABLE" -- get_hand_history_chunk --table_id 0 --offset 5 --limit 5
 ```
 
-Pass a small `limit` when you only need the most recent hands — reading the
-full window loads all 16 records into the transaction footprint.
+**Benefits of chunked export:**
+- **Footprint control**: Each call loads only the requested records (not the whole buffer)
+- **TTL extension**: Pagination cursors (via read-time TTL bumps) remain hot as long as queries are frequent
+- **Graceful degradation**: If `offset >= stored`, an empty response is returned (no error)
+
+All functions are read-only and require no authorization.
+
+**Performance Notes:**
+- Pass a small `limit` when you only need the most recent hands
+- For full-table exports: read meta first to know the total count, then paginate in chunks
+- Each read bumps the target record's TTL, so active pagination keeps history alive
 
 ## Events
 

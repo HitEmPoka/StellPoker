@@ -950,4 +950,8 @@ pub enum DataKey {
     JackpotClaim(u32, u32),
     /// Commit-reveal scheme: action hash commitment: (table_id, hand_number, seat) -> hash
     ActionCommitmentHash(u32, u32, u32),
+    /// Current configuration version for a table (Issue #553).
+    ConfigVersion(u32),
+    /// Configuration change log: (table_id, version) -> ConfigChangeEvent (Issue #553).
+    ConfigChangeLog(u32, u32),
 }
