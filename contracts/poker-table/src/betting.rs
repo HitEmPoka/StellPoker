@@ -12,16 +12,10 @@ pub fn process_action(
     player: &Address,
     action: &Action,
 ) -> Result<(), PokerTableError> {
-    // Find the player
-    let seat = find_player_seat(env, table, player)?;
+    let (seat, mut p, current_bet) = find_player_and_max_bet(env, table, player)?;
     if constant_time::u32_ne(seat, table.current_turn) {
         return Err(PokerTableError::NotYourTurn);
     }
-
-    let mut p = table
-        .players
-        .get(seat)
-        .ok_or(PokerTableError::InvalidPlayerIndex)?;
     if p.folded {
         return Err(PokerTableError::PlayerAlreadyFolded);
     }
@@ -29,13 +23,12 @@ pub fn process_action(
         return Err(PokerTableError::PlayerAlreadyAllIn);
     }
 
-    let current_bet = max_bet_this_round(table)?;
     let pot_before = table.pot;
 
     match action {
         Action::Fold => {
             p.folded = true;
-            table.players.set(seat, p);
+            table.players.set(seat, p.clone());
 
             // Check if only one player remains
             if game::active_player_count(table) == 1 {
@@ -65,7 +58,7 @@ pub fn process_action(
             if p.stack == 0 {
                 p.all_in = true;
             }
-            table.players.set(seat, p);
+            table.players.set(seat, p.clone());
         }
         Action::Bet(amount) => {
             if current_bet != 0 {
@@ -106,7 +99,7 @@ pub fn process_action(
             if p.stack == 0 {
                 p.all_in = true;
             }
-            table.players.set(seat, p);
+            table.players.set(seat, p.clone());
         }
         Action::Raise(amount) => {
             // Enforce straddle re-raise rights: when the active straddle is live-only
@@ -165,7 +158,7 @@ pub fn process_action(
             if p.stack == 0 {
                 p.all_in = true;
             }
-            table.players.set(seat, p);
+            table.players.set(seat, p.clone());
         }
         Action::AllIn => {
             let amount = p.stack;
@@ -174,7 +167,7 @@ pub fn process_action(
             table.pot += amount;
             p.stack = 0;
             p.all_in = true;
-            table.players.set(seat, p);
+            table.players.set(seat, p.clone());
         }
     }
 
@@ -187,8 +180,10 @@ pub fn process_action(
     // Reset action deadline for the next player
     table.action_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
 
-    // Advance turn
-    advance_turn(env, table)
+    // Only the actor's bet can have changed, so the round's highest bet is
+    // known without another pass over the players.
+    let round_max = core::cmp::max(current_bet, p.bet_this_round);
+    advance_turn(env, table, round_max)
 }
 
 /// Publish a `player_action` event describing a betting move. Topic carries the
@@ -214,15 +209,6 @@ fn emit_action(env: &Env, table: &TableState, player: &Address, action: &Action,
 
 /// Reset betting state for a new round.
 pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
-    for i in 0..table.players.len() {
-        let mut p = table
-            .players
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        p.bet_this_round = 0;
-        table.players.set(i, p);
-    }
-
     // Reset minimum raise size to one big blind for the new betting round.
     table.last_raise_size = match table.config.betting_structure {
         BettingStructure::FixedLimit(ref cfg) => match table.phase {
@@ -232,22 +218,33 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
         _ => game::current_blind_level(table)?.big_blind,
     };
 
-    // First active player after dealer acts first post-flop
     let num_players = table.players.len() as u32;
     if num_players == 0 {
         return Err(PokerTableError::NotEnoughPlayers);
     }
+
+    // One pass from the seat after the dealer clears every bet (writing back
+    // only players whose bet changed) and finds the first player to act.
     let mut seat = (table.dealer_seat + 1) % num_players;
+    let mut first_to_act: Option<u32> = None;
     for _ in 0..num_players {
-        let p = table
+        let mut p = table
             .players
             .get(seat)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
-            table.current_turn = seat;
-            return Ok(());
+        if first_to_act.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+            first_to_act = Some(seat);
+        }
+        if p.bet_this_round != 0 {
+            p.bet_this_round = 0;
+            table.players.set(seat, p);
         }
         seat = (seat + 1) % num_players;
+    }
+
+    if let Some(first) = first_to_act {
+        table.current_turn = first;
+        return Ok(());
     }
 
     // All players are all-in or folded — skip to next deal phase
@@ -255,52 +252,42 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
 }
 
 /// Advance to the next player's turn, or end the betting round.
-fn advance_turn(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+///
+/// `round_max` is the highest bet this round. A single pass finds the next
+/// player to act and checks whether everyone who can still act has matched it.
+fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<(), PokerTableError> {
     let num_players = table.players.len() as u32;
     if num_players == 0 {
         return Err(PokerTableError::NotEnoughPlayers);
     }
-    let mut next = (table.current_turn + 1) % num_players;
+    let mut seat = (table.current_turn + 1) % num_players;
+    let mut next: Option<u32> = None;
+    let mut round_complete = true;
 
-    // Find next active player
     for _ in 0..num_players {
         let p = table
             .players
-            .get(next)
+            .get(seat)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
-            break;
+        if next.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+            next = Some(seat);
         }
-        next = (next + 1) % num_players;
+        let matched_or_out =
+            p.folded || p.all_in || p.sitting_out || p.stack == 0 || p.bet_this_round == round_max;
+        if !matched_or_out {
+            round_complete = false;
+        }
+        seat = (seat + 1) % num_players;
     }
 
-    // Check if betting round is complete
-    if is_round_complete(table)? {
+    if round_complete {
         advance_to_next_phase(env, table)?;
     } else {
-        table.current_turn = next;
+        // With no one left to act the loop ends back on the seat after the
+        // current turn, matching the previous fallback.
+        table.current_turn = next.unwrap_or(seat);
     }
     Ok(())
-}
-
-/// Check if all active players have matched the current bet.
-fn is_round_complete(table: &TableState) -> Result<bool, PokerTableError> {
-    let current_bet = max_bet_this_round(table)?;
-    for i in 0..table.players.len() {
-        let p = table
-            .players
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if p.folded || p.all_in || p.sitting_out || p.stack == 0 {
-            continue;
-        }
-        if p.bet_this_round != current_bet {
-            return Ok(false);
-        }
-    }
-
-    // All active non-all-in players have matched the current bet
-    Ok(true)
 }
 
 /// Check if exactly 2 non-folded players are both all-in (heads-up all-in).
@@ -397,24 +384,14 @@ fn advance_to_next_phase(env: &Env, table: &mut TableState) -> Result<(), PokerT
     Ok(())
 }
 
-fn find_player_seat(
+/// Find `player`'s seat and record, and the highest bet this round, in one
+/// pass over the players.
+fn find_player_and_max_bet(
     env: &Env,
     table: &TableState,
     player: &Address,
-) -> Result<u32, PokerTableError> {
-    for i in 0..table.players.len() {
-        let p = table
-            .players
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if constant_time::address_eq(env, &p.address, player) {
-            return Ok(p.seat_index);
-        }
-    }
-    Err(PokerTableError::PlayerNotAtTable)
-}
-
-fn max_bet_this_round(table: &TableState) -> Result<i128, PokerTableError> {
+) -> Result<(u32, PlayerState, i128), PokerTableError> {
+    let mut found: Option<PlayerState> = None;
     let mut max_bet: i128 = 0;
     for i in 0..table.players.len() {
         let p = table
@@ -424,6 +401,10 @@ fn max_bet_this_round(table: &TableState) -> Result<i128, PokerTableError> {
         if p.bet_this_round > max_bet {
             max_bet = p.bet_this_round;
         }
+        if found.is_none() && constant_time::address_eq(env, &p.address, player) {
+            found = Some(p);
+        }
     }
-    Ok(max_bet)
+    let p = found.ok_or(PokerTableError::PlayerNotAtTable)?;
+    Ok((p.seat_index, p, max_bet))
 }

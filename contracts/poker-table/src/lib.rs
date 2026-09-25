@@ -13,6 +13,10 @@ mod betting;
 mod blinds_schedule_test;
 mod commit_reveal;
 mod constant_time;
+#[cfg(test)]
+mod event_schema;
+#[cfg(test)]
+mod event_schema_test;
 mod game;
 mod game_hub;
 #[cfg(test)]
@@ -37,6 +41,9 @@ mod time_bank;
 mod timeout;
 #[cfg(test)]
 mod tournament_lifecycle_test;
+mod ttl;
+#[cfg(test)]
+mod ttl_test;
 mod types;
 #[cfg(test)]
 mod upgrade_test;
@@ -44,9 +51,9 @@ mod verifier;
 
 use types::*;
 
-/// TTL for table storage (30 days in ledgers, ~5 seconds per ledger)
-const TABLE_TTL_THRESHOLD: u32 = 17_280; // ~1 day — trigger extension when below this
-const TABLE_TTL_EXTEND: u32 = 518_400; // ~30 days
+/// TTL for table storage; see [`ttl::TABLE`].
+const TABLE_TTL_THRESHOLD: u32 = ttl::TABLE.threshold;
+const TABLE_TTL_EXTEND: u32 = ttl::TABLE.extend;
 const BOARD_INDICES_COUNT: u32 = 5; // flop(3) + turn(1) + river(1)
 const MAX_PLAYERS_PER_TABLE: u32 = 6;
 const MAX_QUEUE_SIZE: u32 = 12;
@@ -213,6 +220,16 @@ pub(crate) fn load_table(env: &Env, table_id: u32) -> Result<TableState, PokerTa
     Ok(table)
 }
 
+/// Load a table the caller will write back with [`save_table`]. `save_table`
+/// extends the TTL, so the extension on read is skipped. A failed call rolls
+/// back either way, so the stored TTL ends up the same as with [`load_table`].
+fn load_table_for_update(env: &Env, table_id: u32) -> Result<TableState, PokerTableError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Table(table_id))
+        .ok_or(PokerTableError::TableNotFound)
+}
+
 fn save_table(env: &Env, table: &TableState) {
     let key = DataKey::Table(table.id);
     env.storage().persistent().set(&key, table);
@@ -220,9 +237,7 @@ fn save_table(env: &Env, table: &TableState) {
         .persistent()
         .extend_ttl(&key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
     // Keep instance storage alive too
-    env.storage()
-        .instance()
-        .extend_ttl(TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+    ttl::bump_instance(env, ttl::TABLE);
 }
 
 /// Extract a u32 from a BN254 field element at `field_index` in public_inputs.
@@ -1125,7 +1140,7 @@ impl PokerTableContract {
             .persistent()
             .extend_ttl(&counter_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 
-        let mut table = load_table(&env, table_id)?;
+        let mut table = load_table_for_update(&env, table_id)?;
 
         if !matches!(
             table.phase,
@@ -1286,7 +1301,7 @@ impl PokerTableContract {
         committee.require_auth();
         require_not_paused(&env, table_id)?;
 
-        let mut table = load_table(&env, table_id)?;
+        let mut table = load_table_for_update(&env, table_id)?;
 
         if constant_time::address_ne(&env, &committee, &table.committee) {
             return Err(PokerTableError::NotAuthorizedCommittee);
@@ -1391,7 +1406,7 @@ impl PokerTableContract {
         committee.require_auth();
         require_not_paused(&env, table_id)?;
 
-        let mut table = load_table(&env, table_id)?;
+        let mut table = load_table_for_update(&env, table_id)?;
 
         let is_rit_run1 = matches!(table.phase, GamePhase::ShowdownRun1);
         let is_rit_run2 = matches!(table.phase, GamePhase::ShowdownRun2);
@@ -3154,7 +3169,7 @@ impl PokerTableContract {
             .set(&claim_key, &claimant);
         env.storage()
             .persistent()
-            .extend_ttl(&claim_key, 17_280, 518_400);
+            .extend_ttl(&claim_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
 
         let payout = table.jackpot_balance;
         table.jackpot_balance = 0;
@@ -3217,9 +3232,7 @@ impl PokerTableContract {
         env.storage()
             .persistent()
             .set(&format!("{}_nonce", commit_key.to_string()), &nonce_hash);
-        env.storage()
-            .persistent()
-            .extend_ttl(&commit_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+        ttl::bump_persistent(&env, &commit_key, ttl::HAND);
 
         env.events().publish(
             (Symbol::new(&env, "action_committed"), table_id),

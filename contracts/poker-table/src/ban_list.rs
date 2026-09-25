@@ -27,9 +27,7 @@ pub fn ban_player(env: &Env, table_id: u32, player: Address, reason: Symbol) {
         .unwrap_or(Map::new(env));
     bans.set(player, reason);
     env.storage().persistent().set(&key, &bans);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
 }
 
 /// Unban a player
@@ -42,9 +40,7 @@ pub fn unban_player(env: &Env, table_id: u32, player: &Address) {
         .unwrap_or(Map::new(env));
     bans.remove(player.clone());
     env.storage().persistent().set(&key, &bans);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, 17_280, 518_400);
+    crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
 }
 
 /// Check if a player is banned

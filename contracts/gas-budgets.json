@@ -38,6 +38,10 @@
     "withdraw_rake": {
       "cpu_insns": 6000000,
       "notes": "Transfers accumulated rake to admin. No-op if rake_balance == 0."
+    },
+    "submit_showdown": {
+      "cpu_insns": 10000000,
+      "notes": "Six-handed showdown: side pots, rake, payouts and the history archive. ZK proof verification is mocked in tests."
     }
   }
 }

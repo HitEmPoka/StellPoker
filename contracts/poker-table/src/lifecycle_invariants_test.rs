@@ -2,6 +2,8 @@
 //!
 //! These tests drive the public contract API through randomized hand flows and
 //! assert the conservation/accounting invariants after every successful action.
+//! `prop_chips_conserved_across_hands` checks the chip conservation invariant
+//! `sum(stacks) + pot == sum(buy_ins) - rake_paid` across several hands (#549).
 
 #![cfg(test)]
 
@@ -311,7 +313,13 @@ fn settle_showdown(s: &Setup, table_id: u32) {
         return;
     }
     let active = active_seats(&table);
-    let winner = active.first().copied().unwrap_or(0);
+    // A busted player is dealt in but never contributes, so the proved winner
+    // is the first contender who put chips in.
+    let winner = (0..table.players.len())
+        .map(|i| table.players.get(i).unwrap())
+        .find(|p| !p.folded && p.committed > 0)
+        .map(|p| p.seat_index)
+        .unwrap_or(0);
     let public_inputs = showdown_inputs(&s.env, &table, winner, 0);
     let mut hole_cards: Vec<(u32, u32)> = Vec::new(&s.env);
     let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&s.env);
@@ -411,5 +419,134 @@ proptest! {
             settle_showdown(&s, table_id);
         }
         assert_invariants(&s, table_id, initial_total, rake_bps);
+    }
+}
+
+/// `sum(stacks) + pot == sum(buy_ins) - rake_paid`, where rake paid is
+/// everything taken out of play as rake: the house balance still held, the
+/// jackpot pool, and rake already withdrawn by the admin. The token balance
+/// held by the contract must equal the buy-ins minus the withdrawn rake.
+fn assert_chip_conservation(s: &Setup, table_id: u32, total_buy_ins: i128, rake_withdrawn: i128) {
+    let table = s.client.get_table(&table_id);
+    let mut stacks = 0i128;
+    for i in 0..table.players.len() {
+        let p = table.players.get(i).unwrap();
+        assert!(p.stack >= 0);
+        stacks += p.stack;
+    }
+    assert!(table.pot >= 0);
+    assert!(table.rake_balance >= 0);
+    assert!(table.jackpot_balance >= 0);
+
+    let rake_paid = table.rake_balance + table.jackpot_balance + rake_withdrawn;
+    assert_eq!(stacks + table.pot, total_buy_ins - rake_paid);
+    assert_eq!(
+        s.token.balance(&s.client.address),
+        total_buy_ins - rake_withdrawn
+    );
+}
+
+fn next_seq(seqs: &mut [u32], seat: u32) -> u32 {
+    seqs[seat as usize] += 1;
+    seqs[seat as usize]
+}
+
+/// Drive one hand from the deal to settlement, taking `moves` first and then
+/// calling or checking. Returns false if the hand did not settle.
+fn play_hand_to_settlement(
+    s: &Setup,
+    table_id: u32,
+    players: &[Address],
+    seqs: &mut [u32],
+    moves: &[FuzzMove],
+    check: &dyn Fn(),
+) -> bool {
+    let mut next_board_index = players.len() as u32 * 2;
+    let mut moves = moves.iter();
+    for _ in 0..256 {
+        let table = s.client.get_table(&table_id);
+        match table.phase {
+            GamePhase::Preflop | GamePhase::Flop | GamePhase::Turn | GamePhase::River => {
+                let seat = table.current_turn;
+                let mv = moves.next().unwrap_or(&FuzzMove::Conservative);
+                let action = choose_action(&table, mv);
+                let seq = next_seq(seqs, seat);
+                s.client
+                    .player_action(&table_id, &players[seat as usize], &seq, &action);
+            }
+            GamePhase::DealingFlop | GamePhase::DealingTurn | GamePhase::DealingRiver => {
+                reveal_if_needed(s, table_id, &table.phase, &mut next_board_index);
+            }
+            GamePhase::AwaitingRunItTwice => {
+                let all_in = (0..table.players.len())
+                    .map(|i| table.players.get(i).unwrap())
+                    .find(|p| !p.folded && p.all_in)
+                    .unwrap();
+                s.client
+                    .rit_opt_in(&table_id, &players[all_in.seat_index as usize], &false);
+            }
+            GamePhase::Showdown => settle_showdown(s, table_id),
+            GamePhase::Settlement => return true,
+            _ => return false,
+        }
+        check();
+    }
+    false
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// Chip conservation across several hands: buy-in, blinds, bets, all-ins,
+    /// showdowns and fold wins, rake split into the jackpot pool, and rake
+    /// withdrawn between hands.
+    #[test]
+    fn prop_chips_conserved_across_hands(
+        player_count in 2u32..=6,
+        rake_bps in 0u32..=MAX_RAKE_BPS,
+        jackpot_share_bps in 0u32..=10_000,
+        buy_in_seed in prop::collection::vec(100i128..=2_000i128, 6),
+        hands in prop::collection::vec((moves_strategy(), any::<bool>()), 1..=4),
+    ) {
+        let s = setup();
+        let mut cfg = config(&s, player_count, rake_bps);
+        cfg.jackpot_rake_share_bps = jackpot_share_bps;
+        let table_id = s.client.create_table(&s.admin, &cfg);
+
+        let buy_ins = &buy_in_seed[..player_count as usize];
+        let total_buy_ins: i128 = buy_ins.iter().sum();
+        let players = join_players(&s, table_id, buy_ins);
+        let mut seqs = std::vec![0u32; players.len()];
+        let mut rake_withdrawn = 0i128;
+        assert_chip_conservation(&s, table_id, total_buy_ins, 0);
+
+        for (moves, withdraw) in &hands {
+            // Stops once fewer than two players have chips left.
+            if s.client.try_start_hand(&table_id).is_err() {
+                break;
+            }
+            assert_chip_conservation(&s, table_id, total_buy_ins, rake_withdrawn);
+            commit_deal(&s, table_id, player_count);
+            assert_chip_conservation(&s, table_id, total_buy_ins, rake_withdrawn);
+
+            let withdrawn_so_far = rake_withdrawn;
+            let settled = play_hand_to_settlement(
+                &s,
+                table_id,
+                &players,
+                &mut seqs,
+                moves,
+                &|| assert_chip_conservation(&s, table_id, total_buy_ins, withdrawn_so_far),
+            );
+            if !settled {
+                break;
+            }
+
+            if *withdraw {
+                rake_withdrawn += s.client.withdraw_rake(&table_id);
+                assert_chip_conservation(&s, table_id, total_buy_ins, rake_withdrawn);
+            }
+        }
+        assert_chip_conservation(&s, table_id, total_buy_ins, rake_withdrawn);
     }
 }
