@@ -11,7 +11,9 @@ mod ban_list;
 mod betting;
 #[cfg(test)]
 mod blinds_schedule_test;
+mod budget_guard;
 mod commit_reveal;
+mod config_versioning;
 mod constant_time;
 #[cfg(test)]
 mod event_schema;
@@ -3304,5 +3306,38 @@ impl PokerTableContract {
         );
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Configuration Versioning (Issue #553)
+    // ========================================================================
+
+    /// Get the current config version for a table (0 = genesis/unversioned).
+    pub fn get_config_version(env: Env, table_id: u32) -> u32 {
+        config_versioning::get_config_version(&env, table_id)
+    }
+
+    /// Fetch configuration change history (newest first, up to 50 records).
+    pub fn get_config_history(env: Env, table_id: u32) -> Vec<config_versioning::ConfigChangeEvent> {
+        config_versioning::get_config_history(&env, table_id)
+    }
+
+    /// Fetch a specific configuration change by version.
+    pub fn get_config_change(
+        env: Env,
+        table_id: u32,
+        version: u32,
+    ) -> Option<config_versioning::ConfigChangeEvent> {
+        config_versioning::get_config_change(&env, table_id, version)
+    }
+
+    // ========================================================================
+    // Budget Guards (Issue #552)
+    // ========================================================================
+
+    /// Check if there is sufficient budget for cross-contract calls.
+    /// Useful for preventing DoS via deep call chains.
+    pub fn has_sufficient_budget(env: Env) -> bool {
+        budget_guard::has_sufficient_budget(&env)
     }
 }
