@@ -17,6 +17,7 @@ members = [
     "stellar-zk-cards",
     "services/coordinator",
     "services/node",
+    "circuits/test-vectors",
 ]
 
 [workspace.dependencies]

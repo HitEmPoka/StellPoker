@@ -40,6 +40,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
+      # circuits/test-vectors renders vectors.json and circuits/lib/src/test_vectors.nr
+      # from one generator; a hash construction changed on either side without
+      # `cargo run -p stellpoker-test-vectors -- generate` fails here.
+      - name: Check shared Noir/Rust test vectors
+        run: cargo run -p stellpoker-test-vectors -- check
+
   log-redaction:
     name: Log redaction policy (Issue #508)
     runs-on: ubuntu-latest
@@ -57,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [poker-table, zk-verifier, committee-registry, game-hub, player-rating, stellar-zk-cards]
+        package: [poker-table, zk-verifier, committee-registry, game-hub, player-rating, stellar-zk-cards, stellpoker-test-vectors]
     steps:
       - uses: actions/checkout@v4
 
@@ -183,8 +189,14 @@ jobs:
           echo "$HOME/.nargo/bin" >> $GITHUB_PATH
           $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
 
-      - name: Check all circuits
-        run: nargo check --all
+      # nargo has no `--all` and there is no workspace manifest, so check the
+      # shared library and each circuit scripts/compile-circuits.sh maintains.
+      # (Six unmaintained circuit directories do not compile and are not built.)
+      - name: Check shared library and maintained circuits
+        run: |
+          for circuit in lib deal_valid reveal_board_valid showdown_valid burn_card_valid side_pot_valid deck_complete time_bank_valid batched_hand_packing; do
+            nargo check --program-dir "circuits/${circuit}"
+          done
 
       - name: Compile all Noir circuits
         run: ./scripts/compile-circuits.sh
