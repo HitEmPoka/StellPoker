@@ -332,7 +332,7 @@ fn advance_to_next_phase(env: &Env, table: &mut TableState) -> Result<(), PokerT
     }
 
     // If RIT is active, handle special phase transitions
-    if let Some(ref rit) = table.rit_state {
+    if let crate::types::OptionalRitState::Some(ref rit) = table.rit_state {
         if rit.active {
             if matches!(table.phase, GamePhase::River) {
                 // River completes -> go to appropriate showdown phase

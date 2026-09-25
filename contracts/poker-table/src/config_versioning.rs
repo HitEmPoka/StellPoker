@@ -5,7 +5,7 @@
 //! timestamp, and change details.
 
 use soroban_sdk::{contracttype, Env, Symbol, Vec};
-use crate::types::{DataKey, TableConfig, PokerTableError};
+use crate::types::{DataKey, PokerTableError};
 
 /// A single configuration change event.
 #[contracttype]
@@ -42,7 +42,7 @@ pub fn record_config_change(
         version: new_version,
         changed_at_ledger: env.ledger().sequence(),
         changed_at_timestamp: env.ledger().timestamp(),
-        change_summary,
+        change_summary: change_summary.clone(),
     };
 
     // Store the event in the changelog for this table

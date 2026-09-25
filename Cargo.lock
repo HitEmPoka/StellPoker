@@ -5912,6 +5912,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "token-gated-table"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "tokio"
 version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

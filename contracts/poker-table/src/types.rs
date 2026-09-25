@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, BytesN, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -13,6 +13,57 @@ pub enum BettingStructure {
 pub struct FixedLimitConfig {
     pub small_bet: i128,
     pub big_bet: i128,
+}
+
+/// Per-street action time limits in seconds. Allows different time limits
+/// for each betting street (e.g. shorter for preflop in turbo tables).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreetTimeLimit {
+    /// Time limit for preflop actions, in seconds.
+    pub preflop_seconds: u64,
+    /// Time limit for flop actions, in seconds.
+    pub flop_seconds: u64,
+    /// Time limit for turn actions, in seconds.
+    pub turn_seconds: u64,
+    /// Time limit for river actions, in seconds.
+    pub river_seconds: u64,
+}
+
+/// Soroban-compatible optional wrapper for [`StreetTimeLimit`].
+///
+/// The Soroban SDK's `#[contracttype]` macro does not generate the
+/// `From<T> for ScVal` trait impl needed by `Option<T>` in test mode,
+/// so we wrap it in an explicit enum.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum OptionalStreetTimeLimit {
+    None,
+    Some(StreetTimeLimit),
+}
+
+impl OptionalStreetTimeLimit {
+    pub fn is_none(&self) -> bool {
+        matches!(self, OptionalStreetTimeLimit::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(self, OptionalStreetTimeLimit::Some(_))
+    }
+    pub fn as_ref_inner(&self) -> Option<&StreetTimeLimit> {
+        match self {
+            OptionalStreetTimeLimit::Some(v) => Some(v),
+            OptionalStreetTimeLimit::None => None,
+        }
+    }
+}
+
+impl From<Option<StreetTimeLimit>> for OptionalStreetTimeLimit {
+    fn from(opt: Option<StreetTimeLimit>) -> Self {
+        match opt {
+            Some(v) => OptionalStreetTimeLimit::Some(v),
+            None => OptionalStreetTimeLimit::None,
+        }
+    }
 }
 
 #[contracttype]
@@ -56,7 +107,7 @@ pub struct TableConfig {
     /// Per-street action time limits in seconds. Allows different time
     /// limits for each betting street (e.g. shorter for turbo tables).
     /// `None` falls back to the global `timeout_ledgers` converted to seconds.
-    pub street_time_limit: Option<StreetTimeLimit>,
+    pub street_time_limit: OptionalStreetTimeLimit,
     /// Treasury contract address for sweeping uncollected/dead chips.
     /// When set, unclaimed chips from abandoned tables are transferred here
     /// after the dead chip timeout expires.
@@ -277,21 +328,6 @@ pub struct ActiveStraddle {
     pub position: StraddlePosition,
 }
 
-/// Per-street action time limits in seconds. Allows different time limits
-/// for each betting street (e.g. shorter for preflop in turbo tables).
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct StreetTimeLimit {
-    /// Time limit for preflop actions, in seconds.
-    pub preflop_seconds: u64,
-    /// Time limit for flop actions, in seconds.
-    pub flop_seconds: u64,
-    /// Time limit for turn actions, in seconds.
-    pub turn_seconds: u64,
-    /// Time limit for river actions, in seconds.
-    pub river_seconds: u64,
-}
-
 impl StreetTimeLimit {
     /// Standard time limits: 30s preflop, 60s for other streets.
     pub fn standard() -> Self {
@@ -447,8 +483,6 @@ pub enum PokerTableError {
     RunItTwiceNotEnabled = 48,
     RitAlreadyActive = 49,
     BoardAlreadyRevealedForRun = 50,
-    JackpotNotConfigured = 45,
-    BadBeatHandDataInvalid = 46,
     // Governance (Issue #504): timelock + multi-sig gated upgrades.
     NotAnUpgradeSigner = 51,
     NotEnoughUpgradeApprovals = 52,
@@ -456,12 +490,6 @@ pub enum PokerTableError {
     NoPendingUpgrade = 54,
     InvalidGovernanceConfig = 55,
     UpgradeAlreadyApproved = 56,
-    JackpotNotConfigured = 51,
-    BadBeatHandDataInvalid = 52,
-    StaleActionSequence = 53,
-    EmptyBlindsSchedule = 54,
-    InvalidBlindLevel = 55,
-    AlreadyQueued = 56,
     NotQueued = 57,
     QueueFull = 58,
     NoUpgradeProposal = 59,
@@ -521,6 +549,28 @@ pub enum PokerTableError {
     InvalidAction = 99,
     NoUpgradeToRevert = 100,
     RollbackWindowExpired = 101,
+    // --- Betting structure errors ---
+    ExceedsPotLimit = 102,
+    InvalidFixedLimitBet = 103,
+    InvalidAntePercentage = 104,
+    // --- Jackpot ---
+    JackpotNotConfigured = 105,
+    BadBeatHandDataInvalid = 106,
+    // --- Blinds / queue ---
+    StaleActionSequence = 107,
+    EmptyBlindsSchedule = 108,
+    InvalidBlindLevel = 109,
+    AlreadyQueued = 110,
+    // --- Settlement dispute window ---
+    DisputeWindowNotOpen = 111,
+    DisputeWindowExpired = 112,
+    SettlementAlreadyChallenged = 113,
+    ChallengeNotFound = 114,
+    ChallengeNotResolved = 115,
+    InvalidEvidenceHash = 116,
+    // --- Token allowlist ---
+    TokenNotAllowlisted = 117,
+    TokenAlreadyAllowlisted = 118,
 }
 
 #[contracttype]
@@ -589,7 +639,7 @@ pub struct SidePot {
 /// State tracking for Run-It-Twice when two players are all-in heads-up.
 /// RIT deals the remaining board twice and splits the pot based on wins.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RitState {
     pub active: bool,
     /// Seat indices of the two all-in players who opted in
@@ -610,6 +660,52 @@ pub struct RitState {
     pub run1_winner: u32,
     /// Winner seat for Run 2
     pub run2_winner: u32,
+}
+
+/// Soroban-compatible optional wrapper for [`RitState`].
+///
+/// See [`OptionalStreetTimeLimit`] for rationale.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum OptionalRitState {
+    None,
+    Some(RitState),
+}
+
+impl OptionalRitState {
+    pub fn is_none(&self) -> bool {
+        matches!(self, OptionalRitState::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(self, OptionalRitState::Some(_))
+    }
+    pub fn as_ref(&self) -> Option<&RitState> {
+        match self {
+            OptionalRitState::Some(v) => Some(v),
+            OptionalRitState::None => None,
+        }
+    }
+    pub fn clone_inner(&self) -> Option<RitState> {
+        match self {
+            OptionalRitState::Some(v) => Some(v.clone()),
+            OptionalRitState::None => None,
+        }
+    }
+    pub fn unwrap(self) -> RitState {
+        match self {
+            OptionalRitState::Some(v) => v,
+            OptionalRitState::None => panic!("called unwrap on OptionalRitState::None"),
+        }
+    }
+    pub fn map<F, U>(&self, f: F) -> Option<U>
+    where
+        F: FnOnce(&RitState) -> U,
+    {
+        match self {
+            OptionalRitState::Some(v) => Some(f(v)),
+            OptionalRitState::None => None,
+        }
+    }
 }
 
 /// The kind of a betting action, without its amount. Stored in hand history
@@ -697,6 +793,8 @@ pub struct PendingUpgrade {
     pub approvals: Vec<Address>,
     /// Ledger sequence the proposal was first opened on.
     pub started_ledger: u32,
+}
+
 /// Cumulative winner distribution used to detect unusually concentrated table
 /// outcomes. Counts are indexed by seat.
 #[contracttype]
@@ -865,7 +963,7 @@ pub struct TableState {
     /// starts and archived into the hand-history buffer when it settles.
     pub hand_actions: Vec<ActionRecord>,
     /// Run-It-Twice state when two players are all-in heads-up.
-    pub rit_state: Option<RitState>,
+    pub rit_state: OptionalRitState,
     /// Size of the last bet or raise in the current betting round.
     /// The next raise must be at least this large (standard poker minimum-raise
     /// rule). Cleared to `big_blind` when a new betting round begins.
@@ -950,6 +1048,8 @@ pub enum DataKey {
     JackpotClaim(u32, u32),
     /// Commit-reveal scheme: action hash commitment: (table_id, hand_number, seat) -> hash
     ActionCommitmentHash(u32, u32, u32),
+    /// Commit-reveal scheme: nonce hash: (table_id, hand_number, seat) -> nonce hash
+    ActionCommitmentNonce(u32, u32, u32),
     /// Current configuration version for a table (Issue #553).
     ConfigVersion(u32),
     /// Configuration change log: (table_id, version) -> ConfigChangeEvent (Issue #553).

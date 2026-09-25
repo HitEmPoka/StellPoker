@@ -1,6 +1,5 @@
 use soroban_sdk::{contracttype, Env, Symbol};
 use crate::types::*;
-use soroban_sdk::{Env, Symbol};
 
 /// Hand cancellation mechanism for invalid states
 /// Issue #194
@@ -38,7 +37,7 @@ pub fn cancel_hand(
     table.dealt_indices = soroban_sdk::Vec::new(env);
     table.hand_commitments = soroban_sdk::Vec::new(env);
     table.side_pots = soroban_sdk::Vec::new(env);
-    table.rit_state = None;
+    table.rit_state = crate::types::OptionalRitState::None;
 
     // Emit cancellation event
     let event_name = match reason {
