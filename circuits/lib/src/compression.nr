@@ -18,7 +18,7 @@ pub fn pack_permutation_52(perm: [u32; 52]) -> [u32; 10] {
     let mut packed: [u32; 10] = [0; 10];
 
     // Pack 5 indices per u32 (5 * 6 = 30 bits, leaving 2 bits unused)
-    // Index positions: [0-4] → packed[0], [5-9] → packed[1], etc.
+    // Index positions: [0-4] -> packed[0], [5-9] -> packed[1], etc.
     for i in 0..52 {
         let packed_idx = i / 5;
         let bit_offset = (i % 5) * 6;

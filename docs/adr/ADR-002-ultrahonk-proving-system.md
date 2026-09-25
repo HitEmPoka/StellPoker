@@ -90,3 +90,4 @@ The current production backend for Nargo 1.x. Supports custom gates, lookup tabl
 - Proof generation uses `bb prove --scheme ultra_honk`. In MPC mode, this is replaced by `co-noir prove` which runs the collaborative prover.
 - The BN254 SRS (Common Reference String) must be downloaded once per machine: `./scripts/download-crs.sh`. The CRS is universal — the same SRS works for all circuits.
 - Proof and public input sizes are fixed constants in the `zk-verifier` contract source (`PROOF_BYTES`, `DEAL_BYTES`, `REVEAL_BYTES`, `SHOWDOWN_BYTES`). If Barretenberg changes proof format, these must be updated together.
+- For the formal cryptographic model, Fiat-Shamir transformation, CRS toxic waste assumptions, Poseidon2 algebraic security, and the circuit review checklist (Issue #312), see [Circuit Soundness Assumptions](../circuit-soundness-assumptions.md).
