@@ -12,6 +12,15 @@ pub fn process_action(
     player: &Address,
     action: &Action,
 ) -> Result<(), PokerTableError> {
+    let betting_paused = env
+        .storage()
+        .instance()
+        .get::<crate::DataKey, bool>(&crate::DataKey::BettingPaused(table.id))
+        .unwrap_or(false);
+    if betting_paused {
+        return Err(PokerTableError::ContractPaused);
+    }
+
     let (seat, mut p, current_bet) = find_player_and_max_bet(env, table, player)?;
     if constant_time::u32_ne(seat, table.current_turn) {
         return Err(PokerTableError::NotYourTurn);

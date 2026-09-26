@@ -1911,6 +1911,70 @@ impl PokerTableContract {
             .unwrap_or(false)
     }
 
+    /// Pause betting actions for a table (admin only). Allows settlement to continue.
+    pub fn pause_betting(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::BettingPaused(table_id), &true);
+        env.events()
+            .publish((Symbol::new(&env, "betting_paused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Resume betting actions for a table (admin only).
+    pub fn unpause_betting(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::BettingPaused(table_id), &false);
+        env.events()
+            .publish((Symbol::new(&env, "betting_unpaused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Returns true if betting is currently paused at this table.
+    pub fn is_betting_paused(env: Env, table_id: u32) -> bool {
+        env.storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::BettingPaused(table_id))
+            .unwrap_or(false)
+    }
+
+    /// Pause settlement actions for a table (admin only). Blocks hand settlement.
+    pub fn pause_settlement(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::SettlementPaused(table_id), &true);
+        env.events()
+            .publish((Symbol::new(&env, "settlement_paused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Resume settlement actions for a table (admin only).
+    pub fn unpause_settlement(env: Env, table_id: u32) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::SettlementPaused(table_id), &false);
+        env.events()
+            .publish((Symbol::new(&env, "settlement_unpaused"), table_id), table.admin);
+        Ok(())
+    }
+
+    /// Returns true if settlement is currently paused at this table.
+    pub fn is_settlement_paused(env: Env, table_id: u32) -> bool {
+        env.storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::SettlementPaused(table_id))
+            .unwrap_or(false)
+    }
+
     /// Get the admin address for a table.
     pub fn get_admin(env: Env, table_id: u32) -> Result<Address, PokerTableError> {
         let table = load_table(&env, table_id)?;

@@ -986,7 +986,9 @@ pub struct TableState {
 #[derive(Clone)]
 pub enum DataKey {
     Table(u32),
-    Paused(u32), // per-table pause flag
+    Paused(u32), // per-table pause flag (legacy: full table pause)
+    BettingPaused(u32), // per-table betting pause (blocks new betting actions)
+    SettlementPaused(u32), // per-table settlement pause (blocks hand settlement)
     /// One archived hand: (table_id, circular buffer slot).
     HandRecord(u32, u32),
     /// Circular buffer bookkeeping for a table's hand history.

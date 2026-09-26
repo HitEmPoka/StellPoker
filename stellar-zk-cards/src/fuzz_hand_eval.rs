@@ -190,6 +190,32 @@ prop_compose! {
     }
 }
 
+/// libFuzzer-compatible entry point for continuous fuzzing via cargo-fuzz.
+/// This harness finds hand evaluation divergences between contract and circuit implementations.
+#[cfg(fuzzing)]
+pub fn fuzz_hand_evaluator(data: &[u8]) {
+    if data.len() < 7 {
+        return;
+    }
+
+    let mut cards = [0u32; 7];
+    for i in 0..7 {
+        cards[i] = (data[i] as u32) % 52;
+    }
+
+    let contract_rank = evaluate_hand(&cards);
+    let circuit_rank = circuit_evaluate_hand_rank(cards);
+
+    let contract_category = contract_rank.category();
+    let circuit_category = circuit_category(circuit_rank);
+
+    assert_eq!(
+        contract_category, circuit_category,
+        "Hand evaluation divergence: cards={:?}, contract_category={}, circuit_category={}",
+        cards, contract_category, circuit_category
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(10_000))]
 
