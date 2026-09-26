@@ -571,6 +571,11 @@ pub enum PokerTableError {
     // --- Token allowlist ---
     TokenNotAllowlisted = 117,
     TokenAlreadyAllowlisted = 118,
+    // --- Sunset ---
+    /// The table has been sunset: it is frozen and takes no new deposits.
+    TableSunset = 119,
+    /// The table still holds player chips or a live hand, so it cannot be sunset yet.
+    SunsetNotReady = 120,
 }
 
 #[contracttype]
@@ -931,6 +936,59 @@ pub struct TableClosureProposal {
     pub execute_after: u64,
 }
 
+/// Contract-wide aggregate counters (Issue #563).
+///
+/// Every field is a running counter kept up to date by the entrypoint that
+/// changes it, so reading them is a single storage read regardless of how many
+/// tables or hands the contract has served. See `docs/contract-metrics.md`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractMetrics {
+    /// Tables ever created.
+    pub tables_created: u32,
+    /// Settlements archived across all tables.
+    pub hands_played: u64,
+    /// Rake taken across all tables, including the jackpot share. Cumulative:
+    /// withdrawing rake does not reduce it.
+    pub total_rake: i128,
+    /// Players currently seated across all tables (queued players excluded).
+    pub active_seats: u32,
+}
+
+/// Running per-table totals behind [`TableMetrics`] (Issue #563).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableTotals {
+    pub hands_played: u64,
+    pub total_rake: i128,
+}
+
+/// Aggregate view of one table (Issue #563).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableMetrics {
+    /// Settlements archived at this table.
+    pub hands_played: u64,
+    /// Rake taken at this table, including the jackpot share. Cumulative.
+    pub total_rake: i128,
+    /// Players currently seated at this table.
+    pub active_seats: u32,
+}
+
+/// What a table's sunset swept and refunded (Issue #564).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SunsetRecord {
+    /// Ledger sequence at which the table was frozen.
+    pub sunset_at_ledger: u32,
+    /// Accrued house rake paid to the table admin.
+    pub rake_swept: i128,
+    /// Jackpot pool balance paid to the table admin.
+    pub jackpot_swept: i128,
+    /// Escrowed queue buy-ins refunded to waiting players.
+    pub queue_refunded: i128,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableState {
@@ -1056,4 +1114,10 @@ pub enum DataKey {
     ConfigVersion(u32),
     /// Configuration change log: (table_id, version) -> ConfigChangeEvent (Issue #553).
     ConfigChangeLog(u32, u32),
+    /// Contract-wide aggregate counters for dashboards (Issue #563).
+    ContractMetrics,
+    /// Per-table hand and rake totals for dashboards (Issue #563).
+    TableMetrics(u32),
+    /// Sunset record for a table: present once the table is frozen (Issue #564).
+    TableSunset(u32),
 }

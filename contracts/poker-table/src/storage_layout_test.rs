@@ -66,6 +66,9 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ActionCommitmentNonce", 3, true),
     ("ConfigVersion", 1, true),
     ("ConfigChangeLog", 2, true),
+    ("ContractMetrics", 0, false),
+    ("TableMetrics", 1, true),
+    ("TableSunset", 1, true),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -110,6 +113,9 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ActionCommitmentNonce(table_id, 0, 0),
         DataKey::ConfigVersion(table_id),
         DataKey::ConfigChangeLog(table_id, 0),
+        DataKey::ContractMetrics,
+        DataKey::TableMetrics(table_id),
+        DataKey::TableSunset(table_id),
     ]
 }
 
@@ -153,6 +159,9 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ActionCommitmentNonce(_, _, _) => "ActionCommitmentNonce",
         DataKey::ConfigVersion(_) => "ConfigVersion",
         DataKey::ConfigChangeLog(_, _) => "ConfigChangeLog",
+        DataKey::ContractMetrics => "ContractMetrics",
+        DataKey::TableMetrics(_) => "TableMetrics",
+        DataKey::TableSunset(_) => "TableSunset",
     }
 }
 
@@ -186,7 +195,9 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::AuthManager(_)
         | DataKey::RbacAudit(_)
         | DataKey::JackpotVerifier(_)
-        | DataKey::ConfigVersion(_) => 1,
+        | DataKey::ConfigVersion(_)
+        | DataKey::TableMetrics(_)
+        | DataKey::TableSunset(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
@@ -195,7 +206,7 @@ fn variant_arity(key: &DataKey) -> u32 {
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,
-        DataKey::HandTypeDistribution => 0,
+        DataKey::HandTypeDistribution | DataKey::ContractMetrics => 0,
     }
 }
 

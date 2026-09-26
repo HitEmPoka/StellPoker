@@ -29,6 +29,10 @@ This document specifies which parties can call which functions in the Stellar Po
 | `get_config_history(table_id)` | Configuration change audit log | None |
 | `get_config_change(table_id, version)` | Fetch specific config version | None |
 | `has_sufficient_budget()` | Budget guard status | None |
+| `get_contract_metrics()` | Tables created, hands played, total rake, active seats (O(1) counters) | None |
+| `get_table_metrics(table_id)` | Hands played, total rake and seated players for one table | None |
+| `is_table_sunset(table_id)` | Whether the table has been frozen by `finalize_sunset` | None |
+| `get_sunset_record(table_id)` | What `finalize_sunset` swept and refunded | None |
 
 ### Player Functions (Requires Auth)
 
@@ -68,6 +72,7 @@ This document specifies which parties can call which functions in the Stellar Po
 | `unpause(table_id)` | Resume table | Table Admin | Re-enables play |
 | `propose_table_closure(table_id, caller)` | Initiate closure with notice | Table Admin | 1-day notice period |
 | `execute_table_closure(table_id)` | Finalize closure & refund | Anyone (after notice) | Auto-refunds all players |
+| `finalize_sunset(table_id)` | Sweep rake, jackpot pool and queue escrow, then freeze the table | Table Admin | Only once no seat holds chips; see `docs/contract-sunset-runbook.md` |
 | `approve_emergency_withdrawal(table_id, caller)` | Approve player withdrawal | Table Admin | Up to N approvals for emergency |
 | `admin_emergency_withdrawal(table_id)` | Execute emergency withdrawal | Table Admin | Requires N approvals first |
 

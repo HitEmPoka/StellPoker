@@ -134,7 +134,7 @@ fn circuit_score_five(mut ranks: [u32; 5], suits: [u32; 5]) -> u32 {
 }
 
 /// Re-implementation of `evaluate_hand_rank` from `circuits/lib/src/cards.nr`.
-fn circuit_evaluate_hand_rank(cards: [u32; 7]) -> u32 {
+pub(crate) fn circuit_evaluate_hand_rank(cards: [u32; 7]) -> u32 {
     const NUM_RANKS: u32 = 13;
     let mut ranks = [0u32; 7];
     let mut suits = [0u32; 7];
