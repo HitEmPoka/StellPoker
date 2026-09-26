@@ -76,10 +76,13 @@ jobs:
             --baseline ../baseline/reports/circuits-baseline/circuit-constraints.json \
             --output-dir reports/circuits
 
-      - name: Use budget-only report when no baseline is available
+      - name: Compare current against stored baseline JSON when no checkout baseline is available
         if: steps.baseline_collect.outcome != 'success'
         working-directory: current
-        run: cp -R reports/circuits-current reports/circuits
+        run: |
+          python3 scripts/circuit_constraints.py \
+            --baseline circuits/baseline-constraints.json \
+            --output-dir reports/circuits
 
       - name: Publish step summary
         if: always()
