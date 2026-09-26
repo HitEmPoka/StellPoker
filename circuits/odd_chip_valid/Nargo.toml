@@ -1,0 +1,12 @@
+[package]
+name = "odd_chip_valid"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Proves deterministic odd-chip remainder distribution matches declared rule (left of button etc.) in split pots (matching contracts/poker-table/src/pot.rs)."
+max_players = 6

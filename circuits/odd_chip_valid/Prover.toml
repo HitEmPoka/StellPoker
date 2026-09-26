@@ -1,0 +1,8 @@
+# Prover.toml for odd_chip_valid
+# Example: 3-way split of 100 chips among seats 0, 1, 2 with dealer at seat 0 (left of button receives odd chip)
+pot_amount = "100"
+num_players = "3"
+dealer_seat = "0"
+tied_winners = ["true", "true", "true", "false", "false", "false"]
+rule = "0"
+claimed_payouts = ["33", "34", "33", "0", "0", "0"]

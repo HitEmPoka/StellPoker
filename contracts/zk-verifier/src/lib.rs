@@ -101,6 +101,11 @@ pub enum VerifierError {
     InvalidGovernanceConfig = 17,
     UpgradeAlreadyApproved = 18,
     InvalidVkVersion = 19,
+    // Multi-circuit VK hot-swap by ID
+    UnknownCircuitId = 20,
+    StaleCircuitId = 21,
+    UnknownId = 22,
+    StaleId = 23,
 }
 
 #[contracttype]
@@ -109,6 +114,35 @@ pub enum CircuitType {
     DealValid,
     RevealBoardValid,
     ShowdownValid,
+}
+
+impl CircuitType {
+    pub fn default_id(&self) -> u32 {
+        match self {
+            CircuitType::DealValid => 1,
+            CircuitType::RevealBoardValid => 2,
+            CircuitType::ShowdownValid => 3,
+        }
+    }
+}
+
+/// Status of a circuit verification key in the registry.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum CircuitStatus {
+    Active = 1,
+    Stale = 2,
+    Deprecated = 3,
+}
+
+/// Multi-circuit registry entry combining circuit metadata, VK entry, and status.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircuitEntry {
+    pub circuit_id: u32,
+    pub vk: VerificationKeyEntry,
+    pub status: CircuitStatus,
 }
 
 #[contracttype]
@@ -122,6 +156,9 @@ pub enum StorageKey {
     UpgradeThreshold,
     UpgradeDelay,
     PendingUpgrade,
+    // Multi-circuit VK registry by circuit ID
+    VkById(u32),
+    CircuitStatus(u32),
 }
 
 /// Versioned registry entry for a circuit verification key. The content hash
@@ -624,6 +661,463 @@ impl ZkVerifierContract {
         // 4. Run the UltraHonk verification
         Self::verify_proof(env, CircuitType::ShowdownValid, proof, public_inputs)
     }
+
+    // ====================================================================
+    // Multi-circuit VK hot-swap by ID
+    // ====================================================================
+
+    /// Internal helper to load raw VK entry by circuit ID, falling back to
+    /// legacy `CircuitType` storage for default IDs (deal=1, reveal=2, showdown=3).
+    fn load_raw_vk_entry(env: &Env, circuit_id: u32) -> Option<VerificationKeyEntry> {
+        if let Some(entry) = env
+            .storage()
+            .persistent()
+            .get::<StorageKey, VerificationKeyEntry>(&StorageKey::VkById(circuit_id))
+        {
+            return Some(entry);
+        }
+        let legacy_circuit = match circuit_id {
+            1 => Some(CircuitType::DealValid),
+            2 => Some(CircuitType::RevealBoardValid),
+            3 => Some(CircuitType::ShowdownValid),
+            _ => None,
+        };
+        if let Some(c) = legacy_circuit {
+            env.storage()
+                .persistent()
+                .get::<StorageKey, VerificationKeyEntry>(&StorageKey::Vk(c))
+        } else {
+            None
+        }
+    }
+
+    /// Admin update path: Hot-swap or register a verification key for a given `circuit_id`.
+    ///
+    /// Validates VK parseability, enforces monotonic version increments, stores
+    /// the entry in persistent storage under `StorageKey::VkById(circuit_id)`,
+    /// sets its status to `Active`, and emits a `vk_updated` event.
+    pub fn update_vk(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+        vk_data: Bytes,
+        version: u32,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if !ct_address_eq(&env, &admin, &stored_admin) {
+            return Err(VerifierError::NotAdmin);
+        }
+
+        // Validate the VK can be parsed before storing
+        UltraHonkVerifier::new(&env, &vk_data).map_err(|_| VerifierError::VkParseError)?;
+
+        if version == 0 {
+            return Err(VerifierError::InvalidVkVersion);
+        }
+
+        if let Some(current) = Self::load_raw_vk_entry(&env, circuit_id) {
+            if version <= current.version {
+                return Err(VerifierError::InvalidVkVersion);
+            }
+        }
+
+        let entry = VerificationKeyEntry {
+            hash: env.crypto().keccak256(&vk_data).into(),
+            version,
+            activated_at: env.ledger().sequence(),
+            vk_data,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&StorageKey::VkById(circuit_id), &entry);
+
+        env.storage()
+            .persistent()
+            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Active);
+
+        env.events().publish(
+            (Symbol::new(&env, "vk_updated"), circuit_id),
+            (entry.hash.clone(), version, entry.activated_at),
+        );
+        Ok(())
+    }
+
+    /// Alias for `update_vk` to set/hot-swap verification key by circuit ID.
+    pub fn set_vk_by_id(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+        vk_data: Bytes,
+        version: u32,
+    ) -> Result<(), VerifierError> {
+        Self::update_vk(env, admin, circuit_id, vk_data, version)
+    }
+
+    /// Mark a verification key / circuit ID as stale (admin only).
+    /// Calls with this circuit_id will subsequently return `VerifierError::StaleCircuitId`.
+    pub fn mark_vk_stale(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+    ) -> Result<(), VerifierError> {
+        Self::deprecate_vk(env, admin, circuit_id)
+    }
+
+    /// Deprecate/retire a circuit ID (admin only).
+    pub fn deprecate_vk(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if !ct_address_eq(&env, &admin, &stored_admin) {
+            return Err(VerifierError::NotAdmin);
+        }
+
+        if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
+            return Err(VerifierError::UnknownCircuitId);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Stale);
+
+        env.events().publish(
+            (Symbol::new(&env, "vk_deprecated"), circuit_id),
+            env.ledger().sequence(),
+        );
+        Ok(())
+    }
+
+    /// Set explicit circuit status (admin only): Active, Stale, or Deprecated.
+    pub fn set_circuit_status(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+        status: CircuitStatus,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if !ct_address_eq(&env, &admin, &stored_admin) {
+            return Err(VerifierError::NotAdmin);
+        }
+
+        if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
+            return Err(VerifierError::UnknownCircuitId);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&StorageKey::CircuitStatus(circuit_id), &status);
+
+        env.events().publish(
+            (Symbol::new(&env, "circuit_status_updated"), circuit_id),
+            status,
+        );
+        Ok(())
+    }
+
+    /// Lookup verification key entry by circuit ID.
+    ///
+    /// Returns `Err(VerifierError::UnknownCircuitId)` if ID is unknown.
+    /// Returns `Err(VerifierError::StaleCircuitId)` if ID is marked stale/deprecated.
+    pub fn get_vk_by_id(
+        env: Env,
+        circuit_id: u32,
+    ) -> Result<VerificationKeyEntry, VerifierError> {
+        let entry = Self::load_raw_vk_entry(&env, circuit_id)
+            .ok_or(VerifierError::UnknownCircuitId)?;
+
+        let status = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+
+        if status == CircuitStatus::Stale || status == CircuitStatus::Deprecated {
+            return Err(VerifierError::StaleCircuitId);
+        }
+
+        Ok(entry)
+    }
+
+    /// Alias for `get_vk_by_id`.
+    pub fn get_verification_key_by_id(
+        env: Env,
+        circuit_id: u32,
+    ) -> Result<VerificationKeyEntry, VerifierError> {
+        Self::get_vk_by_id(env, circuit_id)
+    }
+
+    /// Lookup verification key entry by circuit ID and expected version.
+    ///
+    /// Returns `Err(VerifierError::UnknownCircuitId)` if ID is unknown or version is in the future.
+    /// Returns `Err(VerifierError::StaleCircuitId)` if circuit is stale or version < active version.
+    pub fn get_vk_by_id_version(
+        env: Env,
+        circuit_id: u32,
+        version: u32,
+    ) -> Result<VerificationKeyEntry, VerifierError> {
+        let entry = Self::load_raw_vk_entry(&env, circuit_id)
+            .ok_or(VerifierError::UnknownCircuitId)?;
+
+        let status = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+
+        if status == CircuitStatus::Stale || status == CircuitStatus::Deprecated {
+            return Err(VerifierError::StaleCircuitId);
+        }
+
+        if version < entry.version {
+            return Err(VerifierError::StaleCircuitId);
+        }
+        if version > entry.version {
+            return Err(VerifierError::UnknownCircuitId);
+        }
+
+        Ok(entry)
+    }
+
+    /// Get current circuit status: Active, Stale, or Deprecated.
+    pub fn get_circuit_status(
+        env: Env,
+        circuit_id: u32,
+    ) -> Result<CircuitStatus, VerifierError> {
+        if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
+            return Err(VerifierError::UnknownCircuitId);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active))
+    }
+
+    /// Returns true if circuit ID exists and is currently active.
+    pub fn is_circuit_active(env: Env, circuit_id: u32) -> bool {
+        match Self::get_vk_by_id(env, circuit_id) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Returns true if circuit ID exists and is stale/deprecated.
+    pub fn is_circuit_stale(env: Env, circuit_id: u32) -> bool {
+        if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
+            return false;
+        }
+        let status = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+        status == CircuitStatus::Stale || status == CircuitStatus::Deprecated
+    }
+
+    /// Read full `CircuitEntry` containing id, VK, and status.
+    pub fn get_circuit_entry(
+        env: Env,
+        circuit_id: u32,
+    ) -> Result<CircuitEntry, VerifierError> {
+        let vk = Self::load_raw_vk_entry(&env, circuit_id)
+            .ok_or(VerifierError::UnknownCircuitId)?;
+        let status = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+        Ok(CircuitEntry {
+            circuit_id,
+            vk,
+            status,
+        })
+    }
+
+    /// Verify an UltraHonk proof using VK looked up by circuit ID.
+    ///
+    /// 1. Rejects if contract is paused (`ContractPaused`)
+    /// 2. Validates proof size (`ProofSizeError`)
+    /// 3. Looks up VK by ID (`UnknownCircuitId` or `StaleCircuitId`)
+    /// 4. Verifies proof with UltraHonk
+    /// 5. Stores proof hash in persistent storage
+    pub fn verify_proof_by_id(
+        env: Env,
+        circuit_id: u32,
+        proof: Bytes,
+        public_inputs: Bytes,
+    ) -> Result<bool, VerifierError> {
+        if env
+            .storage()
+            .instance()
+            .get::<StorageKey, bool>(&StorageKey::Paused)
+            .unwrap_or(false)
+        {
+            return Err(VerifierError::ContractPaused);
+        }
+
+        if proof.len() as usize != PROOF_BYTES {
+            return Err(VerifierError::ProofSizeError);
+        }
+
+        let vk_entry = Self::get_vk_by_id(env.clone(), circuit_id)?;
+
+        let verifier = UltraHonkVerifier::new(&env, &vk_entry.vk_data)
+            .map_err(|_| VerifierError::VkParseError)?;
+
+        verifier
+            .verify(&proof, &public_inputs)
+            .map_err(|_| VerifierError::VerificationFailed)?;
+
+        let proof_hash = env.crypto().keccak256(&proof);
+        env.storage()
+            .persistent()
+            .set(&StorageKey::ProofVerified(proof_hash.clone().into()), &true);
+
+        env.events().publish(
+            (Symbol::new(&env, "proof_verified_by_id"), circuit_id),
+            proof_hash,
+        );
+
+        Ok(true)
+    }
+
+    /// Verify a deal proof by circuit ID.
+    pub fn verify_deal_by_id(
+        env: Env,
+        circuit_id: u32,
+        proof: Bytes,
+        public_inputs: Bytes,
+        deck_root: BytesN<32>,
+        hand_commitments: Vec<BytesN<32>>,
+    ) -> Result<bool, VerifierError> {
+        if public_inputs.len() != DEAL_BYTES {
+            return Err(VerifierError::PublicInputSizeError);
+        }
+        if hand_commitments.len() > MAX_PLAYERS {
+            return Err(VerifierError::WrongCommitmentCount);
+        }
+
+        if !Self::check_bytes32_field(&public_inputs, 1, &deck_root) {
+            return Err(VerifierError::PublicInputMismatch);
+        }
+
+        for i in 0..hand_commitments.len() {
+            let expected = hand_commitments
+                .get(i)
+                .ok_or(VerifierError::PublicInputMismatch)?;
+            if !Self::check_bytes32_field(&public_inputs, 2 + i, &expected) {
+                return Err(VerifierError::PublicInputMismatch);
+            }
+        }
+
+        Self::verify_proof_by_id(env, circuit_id, proof, public_inputs)
+    }
+
+    /// Verify a board reveal proof by circuit ID.
+    pub fn verify_reveal_by_id(
+        env: Env,
+        circuit_id: u32,
+        proof: Bytes,
+        public_inputs: Bytes,
+        deck_root: BytesN<32>,
+        revealed_cards: Vec<u32>,
+        revealed_indices: Vec<u32>,
+    ) -> Result<bool, VerifierError> {
+        if public_inputs.len() != REVEAL_BYTES {
+            return Err(VerifierError::PublicInputSizeError);
+        }
+        let num_revealed = revealed_cards.len();
+        if num_revealed != revealed_indices.len() || num_revealed > 3 {
+            return Err(VerifierError::PublicInputMismatch);
+        }
+
+        if !Self::check_bytes32_field(&public_inputs, 0, &deck_root) {
+            return Err(VerifierError::PublicInputMismatch);
+        }
+
+        for i in 0..num_revealed {
+            let expected = revealed_cards
+                .get(i)
+                .ok_or(VerifierError::PublicInputMismatch)?;
+            if !Self::check_u32_field(&public_inputs, 19 + i, expected) {
+                return Err(VerifierError::PublicInputMismatch);
+            }
+        }
+
+        for i in 0..num_revealed {
+            let expected = revealed_indices
+                .get(i)
+                .ok_or(VerifierError::PublicInputMismatch)?;
+            if !Self::check_u32_field(&public_inputs, 22 + i, expected) {
+                return Err(VerifierError::PublicInputMismatch);
+            }
+        }
+
+        Self::verify_proof_by_id(env, circuit_id, proof, public_inputs)
+    }
+
+    /// Verify a showdown proof by circuit ID.
+    pub fn verify_showdown_by_id(
+        env: Env,
+        circuit_id: u32,
+        proof: Bytes,
+        public_inputs: Bytes,
+        hand_commitments: Vec<BytesN<32>>,
+        board_indices: Vec<u32>,
+        deck_root: BytesN<32>,
+    ) -> Result<bool, VerifierError> {
+        if public_inputs.len() != SHOWDOWN_BYTES {
+            return Err(VerifierError::PublicInputSizeError);
+        }
+        if hand_commitments.len() > MAX_PLAYERS {
+            return Err(VerifierError::WrongCommitmentCount);
+        }
+        if board_indices.len() != BOARD_INDICES_COUNT {
+            return Err(VerifierError::WrongBoardIndicesCount);
+        }
+
+        for i in 0..hand_commitments.len() {
+            let expected = hand_commitments
+                .get(i)
+                .ok_or(VerifierError::PublicInputMismatch)?;
+            if !Self::check_bytes32_field(&public_inputs, 1 + i, &expected) {
+                return Err(VerifierError::PublicInputMismatch);
+            }
+        }
+
+        for i in 0..BOARD_INDICES_COUNT {
+            let expected = board_indices
+                .get(i)
+                .ok_or(VerifierError::PublicInputMismatch)?;
+            if !Self::check_u32_field(&public_inputs, 7 + i, expected) {
+                return Err(VerifierError::PublicInputMismatch);
+            }
+        }
+
+        if !Self::check_bytes32_field(&public_inputs, 12, &deck_root) {
+            return Err(VerifierError::PublicInputMismatch);
+        }
+
+        Self::verify_proof_by_id(env, circuit_id, proof, public_inputs)
+    }
 }
 
 #[cfg(test)]
@@ -821,5 +1315,237 @@ mod test {
             client.try_configure_upgrade_governance(&stranger, &vec![&env, s1], &1, &GOV_DELAY),
             Err(Ok(VerifierError::NotAdmin))
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Multi-circuit VK hot-swap tests
+    // ------------------------------------------------------------------
+
+    fn dummy_vk(env: &Env, tag: u8) -> Bytes {
+        let mut arr = [0u8; 1824];
+        arr[0] = tag;
+        Bytes::from_slice(env, &arr)
+    }
+
+    #[test]
+    fn test_unknown_id() {
+        let (env, client, _admin) = setup();
+        let unknown_id = 999;
+
+        // get_vk_by_id fails with UnknownCircuitId
+        let res = client.try_get_vk_by_id(&unknown_id);
+        assert_eq!(res, Err(Ok(VerifierError::UnknownCircuitId)));
+
+        // get_verification_key_by_id alias also fails with UnknownCircuitId
+        let res_alias = client.try_get_verification_key_by_id(&unknown_id);
+        assert_eq!(res_alias, Err(Ok(VerifierError::UnknownCircuitId)));
+
+        // get_circuit_status fails with UnknownCircuitId
+        let status_res = client.try_get_circuit_status(&unknown_id);
+        assert_eq!(status_res, Err(Ok(VerifierError::UnknownCircuitId)));
+
+        // get_circuit_entry fails with UnknownCircuitId
+        let entry_res = client.try_get_circuit_entry(&unknown_id);
+        assert_eq!(entry_res, Err(Ok(VerifierError::UnknownCircuitId)));
+
+        // is_circuit_active returns false, is_circuit_stale returns false
+        assert!(!client.is_circuit_active(&unknown_id));
+        assert!(!client.is_circuit_stale(&unknown_id));
+
+        // verify_proof_by_id fails with UnknownCircuitId
+        let proof = Bytes::from_slice(&env, &[0u8; PROOF_BYTES]);
+        let inputs = Bytes::new(&env);
+        let verify_res = client.try_verify_proof_by_id(&unknown_id, &proof, &inputs);
+        assert_eq!(verify_res, Err(Ok(VerifierError::UnknownCircuitId)));
+    }
+
+    #[test]
+    fn test_stale_id() {
+        let (env, client, admin) = setup();
+        let circuit_id = 100;
+        let vk_data = dummy_vk(&env, 42);
+
+        // Admin registers VK for circuit_id 100 with version 1
+        client.update_vk(&admin, &circuit_id, &vk_data, &1);
+        assert!(client.is_circuit_active(&circuit_id));
+        assert!(!client.is_circuit_stale(&circuit_id));
+
+        // Lookup works
+        let entry = client.get_vk_by_id(&circuit_id);
+        assert_eq!(entry.version, 1);
+
+        // Admin marks VK as stale
+        client.mark_vk_stale(&admin, &circuit_id);
+        assert!(!client.is_circuit_active(&circuit_id));
+        assert!(client.is_circuit_stale(&circuit_id));
+        assert_eq!(
+            client.get_circuit_status(&circuit_id),
+            CircuitStatus::Stale
+        );
+
+        // get_vk_by_id fails with StaleCircuitId
+        let res = client.try_get_vk_by_id(&circuit_id);
+        assert_eq!(res, Err(Ok(VerifierError::StaleCircuitId)));
+
+        // get_verification_key_by_id alias also fails with StaleCircuitId
+        let res_alias = client.try_get_verification_key_by_id(&circuit_id);
+        assert_eq!(res_alias, Err(Ok(VerifierError::StaleCircuitId)));
+
+        // verify_proof_by_id fails with StaleCircuitId
+        let proof = Bytes::from_slice(&env, &[0u8; PROOF_BYTES]);
+        let inputs = Bytes::new(&env);
+        let verify_res = client.try_verify_proof_by_id(&circuit_id, &proof, &inputs);
+        assert_eq!(verify_res, Err(Ok(VerifierError::StaleCircuitId)));
+
+        // get_vk_by_id_version with older version returns StaleCircuitId
+        let ver_res = client.try_get_vk_by_id_version(&circuit_id, &0);
+        assert_eq!(ver_res, Err(Ok(VerifierError::StaleCircuitId)));
+    }
+
+    #[test]
+    fn test_admin_update_path() {
+        let (env, client, admin) = setup();
+        let stranger = Address::generate(&env);
+        let circuit_id = 200;
+        let vk = dummy_vk(&env, 5);
+
+        // Stranger cannot update VK
+        let res_stranger = client.try_update_vk(&stranger, &circuit_id, &vk, &1);
+        assert_eq!(res_stranger, Err(Ok(VerifierError::NotAdmin)));
+
+        // Stranger cannot mark VK stale
+        let res_stale_stranger = client.try_mark_vk_stale(&stranger, &circuit_id);
+        assert_eq!(res_stale_stranger, Err(Ok(VerifierError::NotAdmin)));
+
+        // Admin updates VK successfully
+        client.update_vk(&admin, &circuit_id, &vk, &1);
+        let entry = client.get_vk_by_id(&circuit_id);
+        assert_eq!(entry.version, 1);
+        assert_eq!(client.get_circuit_status(&circuit_id), CircuitStatus::Active);
+
+        // Monotonic version: updating with same or lower version fails with InvalidVkVersion
+        let res_same_ver = client.try_update_vk(&admin, &circuit_id, &vk, &1);
+        assert_eq!(res_same_ver, Err(Ok(VerifierError::InvalidVkVersion)));
+
+        let res_zero_ver = client.try_update_vk(&admin, &circuit_id, &vk, &0);
+        assert_eq!(res_zero_ver, Err(Ok(VerifierError::InvalidVkVersion)));
+
+        // Hot-swap with version 2 succeeds
+        let vk_v2 = dummy_vk(&env, 6);
+        client.update_vk(&admin, &circuit_id, &vk_v2, &2);
+        let entry_v2 = client.get_vk_by_id(&circuit_id);
+        assert_eq!(entry_v2.version, 2);
+    }
+
+    #[test]
+    fn test_stale_id_reactivation_via_hot_swap() {
+        let (env, client, admin) = setup();
+        let circuit_id = 101;
+        let vk_v1 = dummy_vk(&env, 1);
+        let vk_v2 = dummy_vk(&env, 2);
+
+        client.update_vk(&admin, &circuit_id, &vk_v1, &1);
+        client.mark_vk_stale(&admin, &circuit_id);
+        assert_eq!(
+            client.try_get_vk_by_id(&circuit_id),
+            Err(Ok(VerifierError::StaleCircuitId))
+        );
+
+        // Hot-swap with new version 2 reactivates the circuit
+        client.update_vk(&admin, &circuit_id, &vk_v2, &2);
+        assert!(client.is_circuit_active(&circuit_id));
+        let entry = client.get_vk_by_id(&circuit_id);
+        assert_eq!(entry.version, 2);
+    }
+
+    #[test]
+    fn test_multi_circuit_hot_swap_multiple_circuits() {
+        let (env, client, admin) = setup();
+
+        // Register multiple circuits: deal(1), reveal(2), showdown(3), omaha(4), short_deck(5)
+        let vk1 = dummy_vk(&env, 1);
+        let vk2 = dummy_vk(&env, 2);
+        let vk3 = dummy_vk(&env, 3);
+        let vk4 = dummy_vk(&env, 4);
+        let vk5 = dummy_vk(&env, 5);
+
+        client.update_vk(&admin, &1, &vk1, &1);
+        client.update_vk(&admin, &2, &vk2, &1);
+        client.update_vk(&admin, &3, &vk3, &1);
+        client.update_vk(&admin, &4, &vk4, &1);
+        client.update_vk(&admin, &5, &vk5, &1);
+
+        // Verify independent lookups
+        assert_eq!(client.get_vk_by_id(&1).version, 1);
+        assert_eq!(client.get_vk_by_id(&2).version, 1);
+        assert_eq!(client.get_vk_by_id(&3).version, 1);
+        assert_eq!(client.get_vk_by_id(&4).version, 1);
+        assert_eq!(client.get_vk_by_id(&5).version, 1);
+
+        // Hot-swap variant 4 to version 2
+        let vk4_v2 = dummy_vk(&env, 42);
+        client.update_vk(&admin, &4, &vk4_v2, &2);
+        assert_eq!(client.get_vk_by_id(&4).version, 2);
+
+        // Others unaffected
+        assert_eq!(client.get_vk_by_id(&1).version, 1);
+        assert_eq!(client.get_vk_by_id(&2).version, 1);
+        assert_eq!(client.get_vk_by_id(&3).version, 1);
+        assert_eq!(client.get_vk_by_id(&5).version, 1);
+
+        // Deprecate circuit 2
+        client.deprecate_vk(&admin, &2);
+        assert_eq!(client.try_get_vk_by_id(&2), Err(Ok(VerifierError::StaleCircuitId)));
+        assert_eq!(client.get_vk_by_id(&1).version, 1);
+        assert_eq!(client.get_vk_by_id(&3).version, 1);
+        assert_eq!(client.get_vk_by_id(&4).version, 2);
+        assert_eq!(client.get_vk_by_id(&5).version, 1);
+    }
+
+    #[test]
+    fn test_legacy_circuit_fallback() {
+        let (env, client, admin) = setup();
+        let vk = dummy_vk(&env, 10);
+        client.set_verification_key(&admin, &CircuitType::DealValid, &vk, &1);
+
+        // Querying via circuit_id 1 resolves legacy DealValid key
+        let entry = client.get_vk_by_id(&1);
+        assert_eq!(entry.version, 1);
+
+        // Hot-swap with update_vk overrides legacy
+        let vk_v2 = dummy_vk(&env, 11);
+        client.update_vk(&admin, &1, &vk_v2, &2);
+        let entry_v2 = client.get_vk_by_id(&1);
+        assert_eq!(entry_v2.version, 2);
+    }
+
+    #[test]
+    fn test_paused_blocks_verify_proof_by_id() {
+        let (env, client, admin) = setup();
+        let circuit_id = 300;
+        let vk = dummy_vk(&env, 12);
+        client.update_vk(&admin, &circuit_id, &vk, &1);
+
+        client.pause(&admin);
+        let proof = Bytes::from_slice(&env, &[0u8; PROOF_BYTES]);
+        let inputs = Bytes::new(&env);
+        let res = client.try_verify_proof_by_id(&circuit_id, &proof, &inputs);
+        assert_eq!(res, Err(Ok(VerifierError::ContractPaused)));
+
+        client.unpause(&admin);
+        // While unpaused, fails on verification rather than ContractPaused
+        let res_unpaused = client.try_verify_proof_by_id(&circuit_id, &proof, &inputs);
+        assert_ne!(res_unpaused, Err(Ok(VerifierError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_admin_can_update_vk_while_paused() {
+        let (env, client, admin) = setup();
+        client.pause(&admin);
+        let circuit_id = 301;
+        let vk = dummy_vk(&env, 13);
+        // Admin update path must work while paused for emergency hot-swaps
+        let res = client.try_update_vk(&admin, &circuit_id, &vk, &1);
+        assert_eq!(res, Ok(Ok(())));
     }
 }
