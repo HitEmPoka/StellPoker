@@ -17,9 +17,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **#563** `poker-table` metrics views `get_contract_metrics` and `get_table_metrics` (tables created, hands played, total rake, active seats) backed by O(1) counters, shown on the admin dashboard; update costs in `docs/contract-metrics.md`
 - **#564** `poker-table` `finalize_sunset` sweeps residual rake, jackpot pool and waiting-list escrow and freezes the table; sunset runbook in `docs/contract-sunset-runbook.md`
 - **#565** Showdown winner consistency suite: circuit vs contract winner and tie mask on random deals, run nightly (`.github/workflows/showdown-winner-consistency.yml`)
+- **#558** Exhaustive button-rotation tests for 2–6 seat tables (sit-outs, busted seats, players leaving between hands, 2-max)
+- **#559** Queryable rake configuration history for `poker-table`: `get_rake_history`, `get_rake_history_len`, `get_rake_bps_at` and a `rake_config_changed` event (`docs/rake-configuration-history.md`)
+- **#560** `get_player_positions` batch read (bounded to 20 tables, `BatchTooLarge` over the limit); the dashboard lists a wallet's seats with one call
+- **#561** Property tests for pot, rake and bet math at `i128` boundaries
 
 ### Fixed
 - **#564** `execute_table_closure` no longer refunds stale `committed` chips after a hand has settled, which paid the pot out twice and could exhaust the contract's token balance
+- **#561** `apply_rake` / `split_jackpot_rake` overflowed `i128` for pots above `i128::MAX / rake_bps`, and a `Raise` or pot-limit check with an oversized amount overflowed instead of returning `NotEnoughChips`
 
 ---
 

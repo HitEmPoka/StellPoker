@@ -24,6 +24,17 @@ pub fn min_bad_beat_qualifying_score(category: u32, rank: u32) -> u32 {
     (category << 28) | (rank << 4)
 }
 
+/// `amount * bps / 10_000`, rounded towards zero, without the intermediate
+/// `amount * bps` product that overflows `i128` for pots above `i128::MAX / bps`.
+///
+/// Splitting `amount = q * 10_000 + r` gives `q * bps + r * bps / 10_000`, which
+/// is exactly the naive result. Both terms are bounded by `amount` for any
+/// `bps <= 10_000`, so nothing can overflow.
+pub(crate) fn mul_bps(amount: i128, bps: u32) -> i128 {
+    let bps = bps as i128;
+    (amount / 10_000) * bps + (amount % 10_000) * bps / 10_000
+}
+
 /// Split `total_rake` into the house share and the jackpot share according to
 /// `jackpot_share_bps` (basis points of the rake).  When jackpot is disabled
 /// (`jackpot_share_bps == 0`), the entire rake goes to the house.
@@ -31,7 +42,7 @@ pub fn split_jackpot_rake(total_rake: i128, jackpot_share_bps: u32) -> (i128, i1
     if jackpot_share_bps == 0 {
         return (total_rake, 0);
     }
-    let jackpot = (total_rake * jackpot_share_bps as i128) / 10_000;
+    let jackpot = mul_bps(total_rake, jackpot_share_bps);
     let house = total_rake - jackpot;
     (house, jackpot)
 }
@@ -73,7 +84,7 @@ pub fn apply_rake(
 
     for i in 0..pots.len() {
         let pot = pots.get(i).ok_or(PokerTableError::InvalidPlayerIndex)?;
-        let rake = (pot.amount * rake_bps as i128) / 10_000;
+        let rake = mul_bps(pot.amount, rake_bps);
         total_rake += rake;
         net_pots.push_back(SidePot {
             amount: pot.amount - rake,
