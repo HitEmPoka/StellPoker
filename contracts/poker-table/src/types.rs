@@ -576,6 +576,31 @@ pub enum PokerTableError {
     TableSunset = 119,
     /// The table still holds player chips or a live hand, so it cannot be sunset yet.
     SunsetNotReady = 120,
+    // --- Batched reads ---
+    /// A batched read was given more table ids than `MAX_POSITIONS_BATCH`.
+    BatchTooLarge = 121,
+}
+
+/// A wallet's position at one table, as returned in bulk by
+/// `get_player_positions` for multi-table dashboards.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerPosition {
+    pub table_id: u32,
+    /// The table exists. When false every other field is a default.
+    pub exists: bool,
+    /// The wallet holds a seat at the table. When false the chip and seat
+    /// fields are zero, but `phase` / `hand_number` still describe the table.
+    pub seated: bool,
+    pub seat_index: u32,
+    /// Chips behind, not in the pot.
+    pub stack: i128,
+    /// Chips this wallet has put in the pot this hand.
+    pub committed: i128,
+    /// Total buy-in including rebuys.
+    pub total_buy_in: i128,
+    pub phase: GamePhase,
+    pub hand_number: u32,
 }
 
 #[contracttype]
