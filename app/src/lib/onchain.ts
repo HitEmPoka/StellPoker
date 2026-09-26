@@ -10,6 +10,12 @@ import {
 } from "@stellar/stellar-sdk";
 import type { WalletSession } from "./wallet";
 import { getChainConfig } from "./api";
+import {
+  parseContractMetrics,
+  parseTableMetrics,
+  type ContractMetrics,
+  type TableMetrics,
+} from "./contract-metrics";
 
 type LobstrSignResult = {
   signedTxXdr?: string;
@@ -270,6 +276,35 @@ async function simulateReadCall(
     throw new Error(`No result returned for ${method}`);
   }
   return scValToNative(result.retval);
+}
+
+/**
+ * Reads the contract-wide aggregate counters (tables created, hands played,
+ * total rake, active seats) via `get_contract_metrics` (Issue #563). The view
+ * reads running counters, so it costs the same however much the contract has
+ * done.
+ */
+export async function getContractMetrics(sourceAddress: string): Promise<ContractMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(
+    sourceAddress,
+    cfg.pokerTableContract,
+    "get_contract_metrics",
+    []
+  );
+  return parseContractMetrics(native);
+}
+
+/** Reads one table's hands played, total rake and seated players via `get_table_metrics` (Issue #563). */
+export async function getTableMetrics(
+  sourceAddress: string,
+  tableId: number
+): Promise<TableMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table_metrics", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ]);
+  return parseTableMetrics(native);
 }
 
 /** Subset of contracts/poker-table's TableConfig needed by auto-rebuy (Issue #164). */

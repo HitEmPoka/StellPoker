@@ -74,6 +74,24 @@ pub enum DataKey {
     RentalListing(u32),
     ActiveRental(u32),
     TableIds,
+    /// Address (normally the poker-table contract) allowed to report hand
+    /// lifecycle events for every table token.
+    HandReporter,
+    /// Present while a hand is in flight on the table this token represents.
+    HandActive(u32),
+    /// Transfer queued to execute once the in-flight hand completes.
+    PendingTransfer(u32),
+}
+
+/// A transfer that was requested while a hand was in flight. It executes
+/// automatically when the reporter marks the hand complete.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingTransfer {
+    pub from: Address,
+    pub to: Address,
+    pub requested_by: Address,
+    pub requested_at: u64,
 }
 
 #[contracterror]
@@ -96,6 +114,18 @@ pub enum TableNftError {
     CannotTransferRentedTable = 14,
     InvalidPayment = 15,
     InvalidAmount = 16,
+    /// A hand is in flight, so ownership cannot change right now.
+    HandInProgress = 17,
+    /// The table is idle; there is no hand to wait for.
+    NoHandInProgress = 18,
+    /// The reporter already marked a hand as started for this table.
+    HandAlreadyInProgress = 19,
+    /// A transfer is already queued behind the in-flight hand.
+    TransferAlreadyPending = 20,
+    /// No queued transfer exists for this table.
+    NoPendingTransfer = 21,
+    /// A queued transfer blocks new leases until it settles.
+    TransferPending = 22,
 }
 
 #[contract]
@@ -211,7 +241,11 @@ impl TableNftContract {
     }
 
     /// Transfer table NFT ownership to another address.
-    /// Fails if table is currently actively leased.
+    ///
+    /// Only succeeds while the table is idle: it fails if the table is
+    /// actively leased or a hand is in flight. To hand a table over while a
+    /// hand is running, use [`Self::queue_transfer`], which completes the
+    /// transfer once the hand ends.
     pub fn transfer(
         env: Env,
         caller: Address,
@@ -227,50 +261,203 @@ impl TableNftContract {
 
         Self::require_approved_or_owner(&env, &caller, &owner, token_id)?;
 
+        // Ownership must not change under players mid-hand.
+        if Self::is_hand_active(env.clone(), token_id) {
+            return Err(TableNftError::HandInProgress);
+        }
+
         // Ensure table is not actively leased
         if Self::is_rented(env.clone(), token_id) {
             return Err(TableNftError::CannotTransferRentedTable);
         }
 
-        // Clear approval
-        env.storage().persistent().remove(&DataKey::Approved(token_id));
+        Self::execute_transfer(&env, &from, &to, token_id);
+        Ok(())
+    }
 
-        // Update balances
-        let from_bal = env
-            .storage()
-            .persistent()
-            .get::<DataKey, u32>(&DataKey::Balance(from.clone()))
-            .unwrap_or(1);
-        let to_bal = env
-            .storage()
-            .persistent()
-            .get::<DataKey, u32>(&DataKey::Balance(to.clone()))
-            .unwrap_or(0);
+    // ==========================================
+    // Pending-hand transfer safety
+    // ==========================================
 
-        if from_bal > 0 {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Balance(from.clone()), &(from_bal - 1));
+    /// Set the address allowed to report hand lifecycle events (admin only).
+    /// This is normally the poker-table contract that runs the hands.
+    pub fn set_hand_reporter(
+        env: Env,
+        admin: Address,
+        reporter: Address,
+    ) -> Result<(), TableNftError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        env.storage()
+            .instance()
+            .set(&DataKey::HandReporter, &reporter);
+        env.events()
+            .publish((Symbol::new(&env, "hand_reporter_set"),), (admin, reporter));
+        Ok(())
+    }
+
+    /// Get the configured hand reporter, if any.
+    pub fn get_hand_reporter(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::HandReporter)
+    }
+
+    /// Reporter marks a hand as started on this table. Until it is reported
+    /// complete, the token cannot be transferred directly.
+    pub fn report_hand_started(
+        env: Env,
+        reporter: Address,
+        token_id: u32,
+    ) -> Result<(), TableNftError> {
+        reporter.require_auth();
+        Self::require_hand_reporter(&env, &reporter)?;
+        Self::owner_of(env.clone(), token_id)?;
+
+        if Self::is_hand_active(env.clone(), token_id) {
+            return Err(TableNftError::HandAlreadyInProgress);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(to.clone()), &(to_bal + 1));
 
-        // Set new owner
+        let key = DataKey::HandActive(token_id);
+        env.storage().persistent().set(&key, &true);
         env.storage()
             .persistent()
-            .set(&DataKey::Owner(token_id), &to);
+            .extend_ttl(&key, 100_000, 100_000);
 
-        // Remove any open rental listings upon transfer
+        env.events()
+            .publish((Symbol::new(&env, "hand_started"),), (reporter, token_id));
+        Ok(())
+    }
+
+    /// Reporter marks the in-flight hand as complete. A transfer queued behind
+    /// the hand executes here.
+    pub fn report_hand_completed(
+        env: Env,
+        reporter: Address,
+        token_id: u32,
+    ) -> Result<(), TableNftError> {
+        reporter.require_auth();
+        Self::require_hand_reporter(&env, &reporter)?;
+
+        if !Self::is_hand_active(env.clone(), token_id) {
+            return Err(TableNftError::NoHandInProgress);
+        }
+
+        Self::complete_hand(&env, token_id);
+        env.events()
+            .publish((Symbol::new(&env, "hand_completed"),), (reporter, token_id));
+        Ok(())
+    }
+
+    /// Admin escape hatch for a hand that will never be reported complete
+    /// (for example a reporter that was decommissioned mid-hand). Clears the
+    /// hand and, like a normal completion, runs any queued transfer.
+    pub fn force_clear_hand(
+        env: Env,
+        admin: Address,
+        token_id: u32,
+    ) -> Result<(), TableNftError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if !Self::is_hand_active(env.clone(), token_id) {
+            return Err(TableNftError::NoHandInProgress);
+        }
+
+        Self::complete_hand(&env, token_id);
+        env.events()
+            .publish((Symbol::new(&env, "hand_force_cleared"),), (admin, token_id));
+        Ok(())
+    }
+
+    /// True while a hand is in flight on this table.
+    pub fn is_hand_active(env: Env, token_id: u32) -> bool {
         env.storage()
             .persistent()
-            .remove(&DataKey::RentalListing(token_id));
+            .get::<DataKey, bool>(&DataKey::HandActive(token_id))
+            .unwrap_or(false)
+    }
+
+    /// Queue a transfer to run when the in-flight hand completes.
+    ///
+    /// Authorization matches [`Self::transfer`] (owner, approved address or
+    /// operator). It only applies while a hand is running; when the table is
+    /// idle, call `transfer` directly. While a transfer is queued, new leases
+    /// are rejected so the hand-over cannot be blocked by a fresh rental.
+    pub fn queue_transfer(
+        env: Env,
+        caller: Address,
+        from: Address,
+        to: Address,
+        token_id: u32,
+    ) -> Result<(), TableNftError> {
+        caller.require_auth();
+        let owner = Self::owner_of(env.clone(), token_id)?;
+        if owner != from {
+            return Err(TableNftError::Unauthorized);
+        }
+        Self::require_approved_or_owner(&env, &caller, &owner, token_id)?;
+
+        if !Self::is_hand_active(env.clone(), token_id) {
+            return Err(TableNftError::NoHandInProgress);
+        }
+        if Self::get_pending_transfer(env.clone(), token_id).is_some() {
+            return Err(TableNftError::TransferAlreadyPending);
+        }
+        // A lease outlives the hand, so the transfer could never complete.
+        if Self::is_rented(env.clone(), token_id) {
+            return Err(TableNftError::CannotTransferRentedTable);
+        }
+
+        let pending = PendingTransfer {
+            from: from.clone(),
+            to: to.clone(),
+            requested_by: caller.clone(),
+            requested_at: env.ledger().timestamp(),
+        };
+        let key = DataKey::PendingTransfer(token_id);
+        env.storage().persistent().set(&key, &pending);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, 100_000, 100_000);
 
         env.events().publish(
-            (Symbol::new(&env, "table_transferred"),),
-            (from, to, token_id),
+            (Symbol::new(&env, "transfer_queued"),),
+            (from, to, token_id, caller),
         );
         Ok(())
+    }
+
+    /// Cancel a queued transfer. Callable by whoever queued it, the owner, or
+    /// an approved address.
+    pub fn cancel_queued_transfer(
+        env: Env,
+        caller: Address,
+        token_id: u32,
+    ) -> Result<(), TableNftError> {
+        caller.require_auth();
+        let owner = Self::owner_of(env.clone(), token_id)?;
+        let pending = Self::get_pending_transfer(env.clone(), token_id)
+            .ok_or(TableNftError::NoPendingTransfer)?;
+
+        if caller != pending.requested_by {
+            Self::require_approved_or_owner(&env, &caller, &owner, token_id)?;
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingTransfer(token_id));
+        env.events().publish(
+            (Symbol::new(&env, "transfer_cancelled"),),
+            (pending.from, pending.to, token_id, caller),
+        );
+        Ok(())
+    }
+
+    /// Get the transfer queued behind the in-flight hand, if any.
+    pub fn get_pending_transfer(env: Env, token_id: u32) -> Option<PendingTransfer> {
+        env.storage()
+            .persistent()
+            .get::<DataKey, PendingTransfer>(&DataKey::PendingTransfer(token_id))
     }
 
     /// Approve an address to manage this table token
@@ -551,6 +738,9 @@ impl TableNftContract {
         if Self::is_rented(env.clone(), token_id) {
             return Err(TableNftError::TableAlreadyRented);
         }
+        if Self::get_pending_transfer(env.clone(), token_id).is_some() {
+            return Err(TableNftError::TransferPending);
+        }
 
         // Calculate rent payment: price_per_day * duration / 86400
         let total_rent = (listing.price_per_day * (duration_seconds as i128)) / (SECONDS_PER_DAY as i128);
@@ -606,6 +796,9 @@ impl TableNftContract {
         }
         if Self::is_rented(env.clone(), token_id) {
             return Err(TableNftError::TableAlreadyRented);
+        }
+        if Self::get_pending_transfer(env.clone(), token_id).is_some() {
+            return Err(TableNftError::TransferPending);
         }
 
         if rent_fee > 0 {
@@ -696,6 +889,86 @@ impl TableNftContract {
     // Internal Helper Functions
     // ==========================================
 
+    /// Move ownership of `token_id` from `from` to `to`. Callers have already
+    /// authorized the move and checked the hand and lease gates.
+    fn execute_transfer(env: &Env, from: &Address, to: &Address, token_id: u32) {
+        // Clear approval
+        env.storage().persistent().remove(&DataKey::Approved(token_id));
+
+        // Update balances
+        let from_bal = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u32>(&DataKey::Balance(from.clone()))
+            .unwrap_or(1);
+        let to_bal = env
+            .storage()
+            .persistent()
+            .get::<DataKey, u32>(&DataKey::Balance(to.clone()))
+            .unwrap_or(0);
+
+        if from_bal > 0 {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(from.clone()), &(from_bal - 1));
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(to.clone()), &(to_bal + 1));
+
+        // Set new owner
+        env.storage()
+            .persistent()
+            .set(&DataKey::Owner(token_id), to);
+
+        // Remove any open rental listings upon transfer
+        env.storage()
+            .persistent()
+            .remove(&DataKey::RentalListing(token_id));
+
+        env.events().publish(
+            (Symbol::new(env, "table_transferred"),),
+            (from.clone(), to.clone(), token_id),
+        );
+    }
+
+    /// Clear the in-flight hand and run the transfer queued behind it, if any.
+    fn complete_hand(env: &Env, token_id: u32) {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::HandActive(token_id));
+
+        let pending = match env
+            .storage()
+            .persistent()
+            .get::<DataKey, PendingTransfer>(&DataKey::PendingTransfer(token_id))
+        {
+            Some(p) => p,
+            None => return,
+        };
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingTransfer(token_id));
+
+        Self::execute_transfer(env, &pending.from, &pending.to, token_id);
+        env.events().publish(
+            (Symbol::new(env, "queued_transfer_executed"),),
+            (pending.from, pending.to, token_id),
+        );
+    }
+
+    fn require_hand_reporter(env: &Env, reporter: &Address) -> Result<(), TableNftError> {
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::HandReporter)
+            .ok_or(TableNftError::Unauthorized)?;
+        if stored != *reporter {
+            return Err(TableNftError::Unauthorized);
+        }
+        Ok(())
+    }
+
     fn require_admin(env: &Env, admin: &Address) -> Result<(), TableNftError> {
         let stored_admin: Address = env
             .storage()
@@ -759,6 +1032,9 @@ impl TableNftContract {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod transfer_gate_test;
 
 #[cfg(test)]
 mod test {

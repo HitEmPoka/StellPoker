@@ -235,6 +235,24 @@
       "arity": 2,
       "domain": "persistent",
       "description": "Configuration change log: (table_id, version) (issue #553)."
+    },
+    {
+      "name": "ContractMetrics",
+      "arity": 0,
+      "domain": "instance",
+      "description": "Contract-wide aggregate counters for dashboards (issue #563)."
+    },
+    {
+      "name": "TableMetrics",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Per-table hand and rake totals for dashboards (issue #563)."
+    },
+    {
+      "name": "TableSunset",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Sunset record for a frozen table (issue #564)."
     }
   ]
 }

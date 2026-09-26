@@ -1,6 +1,7 @@
 use soroban_sdk::{Env, Symbol, Vec};
 
 use crate::constant_time;
+use crate::metrics;
 use crate::ttl;
 use crate::types::*;
 
@@ -104,6 +105,7 @@ pub fn archive_hand(
     }
     meta.total_archived = meta.total_archived.saturating_add(1);
     save_meta(env, table.id, &meta);
+    metrics::record_hand_settled(env, table.id, rake);
 
     env.events().publish(
         (Symbol::new(env, "hand_archived"), table.id),

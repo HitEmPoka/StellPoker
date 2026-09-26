@@ -440,6 +440,9 @@ fn sort_desc(arr: &mut [u32; 5]) {
 mod fuzz_hand_eval;
 
 #[cfg(test)]
+mod showdown_winner_consistency;
+
+#[cfg(test)]
 mod test {
     use super::*;
 
