@@ -41,6 +41,8 @@ mod lifecycle_invariants_test;
 mod min_raise_test;
 mod multi_currency;
 mod pot;
+#[cfg(test)]
+mod positions_test;
 mod rake_history;
 #[cfg(test)]
 mod rake_history_test;
@@ -223,6 +225,46 @@ fn require_not_paused(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
         return Err(PokerTableError::ContractPaused);
     }
     Ok(())
+}
+
+/// Most table ids `get_player_positions` accepts in one call. Each id costs a
+/// table read, so this bounds the call's footprint and CPU.
+pub const MAX_POSITIONS_BATCH: u32 = 20;
+
+/// Build the [`PlayerPosition`] of `player` at `table_id`.
+fn player_position(env: &Env, player: &Address, table_id: u32) -> PlayerPosition {
+    let empty = |exists: bool, phase: GamePhase, hand_number: u32| PlayerPosition {
+        table_id,
+        exists,
+        seated: false,
+        seat_index: 0,
+        stack: 0,
+        committed: 0,
+        total_buy_in: 0,
+        phase,
+        hand_number,
+    };
+    let Ok(table) = load_table(env, table_id) else {
+        return empty(false, GamePhase::Waiting, 0);
+    };
+    for i in 0..table.players.len() {
+        if let Some(p) = table.players.get(i) {
+            if constant_time::address_eq(env, &p.address, player) {
+                return PlayerPosition {
+                    table_id,
+                    exists: true,
+                    seated: true,
+                    seat_index: p.seat_index,
+                    stack: p.stack,
+                    committed: p.committed,
+                    total_buy_in: p.total_buy_in,
+                    phase: table.phase.clone(),
+                    hand_number: table.hand_number,
+                };
+            }
+        }
+    }
+    empty(true, table.phase.clone(), table.hand_number)
 }
 
 pub(crate) fn load_table(env: &Env, table_id: u32) -> Result<TableState, PokerTableError> {
@@ -776,6 +818,29 @@ impl PokerTableContract {
             .persistent()
             .get(&DataKey::PlayerTables(player))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// A wallet's position at each of `table_ids`, in one call (view function),
+    /// so a multi-table dashboard need not fetch every table's full state.
+    ///
+    /// Returns one [`PlayerPosition`] per requested id, in request order
+    /// (duplicates included). A table that does not exist, or where the wallet
+    /// is not seated, still gets an entry (`exists` / `seated` say which) rather
+    /// than failing the whole batch. At most [`MAX_POSITIONS_BATCH`] ids are
+    /// accepted; more fails with `BatchTooLarge` before any table is read.
+    pub fn get_player_positions(
+        env: Env,
+        player: Address,
+        table_ids: Vec<u32>,
+    ) -> Result<Vec<PlayerPosition>, PokerTableError> {
+        if table_ids.len() > MAX_POSITIONS_BATCH {
+            return Err(PokerTableError::BatchTooLarge);
+        }
+        let mut positions: Vec<PlayerPosition> = Vec::new(&env);
+        for table_id in table_ids.iter() {
+            positions.push_back(player_position(&env, &player, table_id));
+        }
+        Ok(positions)
     }
 
     /// Number of tables a wallet is currently seated at.

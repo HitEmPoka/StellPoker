@@ -36,6 +36,7 @@ ceremony/
 contracts/*/test_snapshots/state_machine_test/
 contracts/*/test_snapshots/button_test/
 contracts/*/test_snapshots/rake_history_test/
+contracts/*/test_snapshots/positions_test/
 contracts/*/test_snapshots/chip_math_test/
 contracts/*/test_snapshots/lifecycle_invariants_test/
 contracts/*/test_snapshots/gas_regression_test/
