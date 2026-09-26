@@ -10,6 +10,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { WalletSession } from "./wallet";
 import { getChainConfig } from "./api";
+import { fetchPlayerPositions, type PlayerPosition } from "./player-positions";
 
 type LobstrSignResult = {
   signedTxXdr?: string;
@@ -334,6 +335,26 @@ export async function getPlayerRebuyCount(
   ])) as [bigint, number];
 
   return Number(native[1]);
+}
+
+/**
+ * Reads a wallet's position at each of `tableIds` with the contract's batched
+ * `get_player_positions` (#560): one simulated call per 20 tables rather than
+ * one `get_table` per table. Positions come back in the order the ids were
+ * first given; tables that don't exist or where the wallet isn't seated are
+ * included with `exists` / `seated` false.
+ */
+export async function getPlayerPositions(
+  sourceAddress: string,
+  tableIds: readonly number[]
+): Promise<PlayerPosition[]> {
+  const cfg = await getConfig();
+  return fetchPlayerPositions(tableIds, (ids) =>
+    simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_player_positions", [
+      new Address(sourceAddress).toScVal(),
+      xdr.ScVal.scvVec(ids.map((id) => nativeToScVal(id, { type: "u32" }))),
+    ])
+  );
 }
 
 /**
