@@ -126,7 +126,11 @@ pub fn process_action(
                 }
             }
             let to_call = current_bet - p.bet_this_round;
-            let total_needed = to_call + *amount;
+            // `amount` comes straight from the caller, so the sum can overflow;
+            // an amount that large is simply more chips than anyone has.
+            let total_needed = to_call
+                .checked_add(*amount)
+                .ok_or(PokerTableError::NotEnoughChips)?;
             // Standard poker minimum-raise rule: the raise increment must be at
             // least as large as the previous bet or raise in this round, or the
             // current blind level's big blind if no raise has happened yet.
@@ -142,7 +146,7 @@ pub fn process_action(
             match table.config.betting_structure {
                 BettingStructure::NoLimit => {}
                 BettingStructure::PotLimit => {
-                    let max_raise = table.pot + to_call;
+                    let max_raise = table.pot.saturating_add(to_call);
                     if *amount > max_raise {
                         return Err(PokerTableError::ExceedsPotLimit);
                     }
