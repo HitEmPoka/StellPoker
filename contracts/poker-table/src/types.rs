@@ -1120,4 +1120,8 @@ pub enum DataKey {
     TableMetrics(u32),
     /// Sunset record for a table: present once the table is frozen (Issue #564).
     TableSunset(u32),
+    /// Number of entries in a table's rake history (Issue #559).
+    RakeHistoryLen(u32),
+    /// Rake history entry: (table_id, index) -> RakeChange (Issue #559).
+    RakeHistory(u32, u32),
 }
