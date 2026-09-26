@@ -18,6 +18,8 @@ import { trySilentReconnect, type WalletSession } from "@/lib/wallet";
 import { getPlayerHudStats } from "@/lib/api";
 import { loadHandHistory } from "@/lib/hand-history";
 import { loadOpenTables } from "@/lib/open-tables";
+import { getPlayerPositions } from "@/lib/onchain";
+import { seatedPositions, type PlayerPosition } from "@/lib/player-positions";
 import { getAlias } from "@/lib/alias-store";
 import {
   computePlayerDashboard,
@@ -32,6 +34,7 @@ export default function PlayerDashboardPage() {
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [stats, setStats] = useState<PlayerDashboardStats | null>(null);
   const [hud, setHud] = useState<{ vpip: number; pfr: number } | null>(null);
+  const [positions, setPositions] = useState<PlayerPosition[]>([]);
   const [busy, setBusy] = useState(true);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [avatarRefreshKey, setAvatarRefreshKey] = useState(0);
@@ -55,6 +58,16 @@ export default function PlayerDashboardPage() {
         tables.length > 0 ? tables : [],
         (id) => loadHandHistory(id)
       );
+      // One batched contract read covers every open table (#560).
+      let seated: PlayerPosition[] = [];
+      if (tables.length > 0) {
+        try {
+          seated = seatedPositions(await getPlayerPositions(w.address, tables));
+        } catch {
+          // The chain being unreachable only hides this panel; lifetime stats
+          // still come from local hand history.
+        }
+      }
       let hudStats: { vpip: number; pfr: number } | null = null;
       try {
         const hud = await getPlayerHudStats(w.address);
@@ -65,6 +78,7 @@ export default function PlayerDashboardPage() {
       }
       if (cancelled) return;
       setHud(hudStats);
+      setPositions(seated);
       setStats(computePlayerDashboard(played, w.address, hudStats ?? undefined));
       setBusy(false);
     }
@@ -141,6 +155,32 @@ export default function PlayerDashboardPage() {
                 </div>
               </div>
             </div>
+
+            {positions.length > 0 && (
+              <div data-testid="open-table-positions">
+                <div className="text-[8px] mb-2" style={{ color: "#95a5a6" }}>
+                  YOUR SEATS ({positions.length})
+                </div>
+                <ul className="flex flex-col gap-1">
+                  {positions.map((p) => (
+                    <li
+                      key={p.tableId}
+                      className="flex justify-between text-[8px]"
+                      style={{ color: "#c8d6e5" }}
+                    >
+                      <Link href={`/table/${p.tableId}`} style={{ color: "#f1c40f" }}>
+                        TABLE {p.tableId}
+                      </Link>
+                      <span>{p.phase.toUpperCase()}</span>
+                      <span>
+                        {formatXlm(Number(p.stack))} XLM
+                        {p.committed > BigInt(0) && ` (+${formatXlm(Number(p.committed))} IN POT)`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {busy ? (
               <div className="text-[9px]" style={{ color: "#8a9ab0" }} aria-live="polite">
