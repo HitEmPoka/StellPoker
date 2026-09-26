@@ -69,6 +69,8 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ContractMetrics", 0, false),
     ("TableMetrics", 1, true),
     ("TableSunset", 1, true),
+    ("RakeHistoryLen", 1, true),
+    ("RakeHistory", 2, true),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -116,6 +118,8 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ContractMetrics,
         DataKey::TableMetrics(table_id),
         DataKey::TableSunset(table_id),
+        DataKey::RakeHistoryLen(table_id),
+        DataKey::RakeHistory(table_id, 0),
     ]
 }
 
@@ -162,6 +166,8 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ContractMetrics => "ContractMetrics",
         DataKey::TableMetrics(_) => "TableMetrics",
         DataKey::TableSunset(_) => "TableSunset",
+        DataKey::RakeHistoryLen(_) => "RakeHistoryLen",
+        DataKey::RakeHistory(_, _) => "RakeHistory",
     }
 }
 
@@ -197,12 +203,14 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::JackpotVerifier(_)
         | DataKey::ConfigVersion(_)
         | DataKey::TableMetrics(_)
-        | DataKey::TableSunset(_) => 1,
+        | DataKey::TableSunset(_)
+        | DataKey::RakeHistoryLen(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
         | DataKey::JackpotClaim(_, _)
-        | DataKey::ConfigChangeLog(_, _) => 2,
+        | DataKey::ConfigChangeLog(_, _)
+        | DataKey::RakeHistory(_, _) => 2,
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,
