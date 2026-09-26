@@ -34,6 +34,10 @@ ceremony/
 # run, one file per generated case (thousands for the proptest suites), and
 # carry no signal. Only the hand-written `test_snapshots/test/` set is tracked.
 contracts/*/test_snapshots/state_machine_test/
+contracts/*/test_snapshots/button_test/
+contracts/*/test_snapshots/rake_history_test/
+contracts/*/test_snapshots/positions_test/
+contracts/*/test_snapshots/chip_math_test/
 contracts/*/test_snapshots/lifecycle_invariants_test/
 contracts/*/test_snapshots/gas_regression_test/
 contracts/*/test_snapshots/tournament_lifecycle_test/

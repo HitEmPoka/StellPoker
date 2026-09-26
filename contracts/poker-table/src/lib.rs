@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contractimpl, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contractimpl, symbol_short, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 mod anti_cheat;
@@ -16,6 +16,10 @@ mod blinds_schedule_test;
 mod budget_guard;
 #[cfg(test)]
 mod budget_ceilings_test;
+#[cfg(test)]
+mod button_test;
+#[cfg(test)]
+mod chip_math_test;
 mod commit_reveal;
 mod config_versioning;
 mod constant_time;
@@ -38,6 +42,11 @@ mod lifecycle_invariants_test;
 mod min_raise_test;
 mod multi_currency;
 mod pot;
+#[cfg(test)]
+mod positions_test;
+mod rake_history;
+#[cfg(test)]
+mod rake_history_test;
 #[cfg(test)]
 mod queue_test;
 #[cfg(test)]
@@ -217,6 +226,46 @@ fn require_not_paused(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
         return Err(PokerTableError::ContractPaused);
     }
     Ok(())
+}
+
+/// Most table ids `get_player_positions` accepts in one call. Each id costs a
+/// table read, so this bounds the call's footprint and CPU.
+pub const MAX_POSITIONS_BATCH: u32 = 20;
+
+/// Build the [`PlayerPosition`] of `player` at `table_id`.
+fn player_position(env: &Env, player: &Address, table_id: u32) -> PlayerPosition {
+    let empty = |exists: bool, phase: GamePhase, hand_number: u32| PlayerPosition {
+        table_id,
+        exists,
+        seated: false,
+        seat_index: 0,
+        stack: 0,
+        committed: 0,
+        total_buy_in: 0,
+        phase,
+        hand_number,
+    };
+    let Ok(table) = load_table(env, table_id) else {
+        return empty(false, GamePhase::Waiting, 0);
+    };
+    for i in 0..table.players.len() {
+        if let Some(p) = table.players.get(i) {
+            if constant_time::address_eq(env, &p.address, player) {
+                return PlayerPosition {
+                    table_id,
+                    exists: true,
+                    seated: true,
+                    seat_index: p.seat_index,
+                    stack: p.stack,
+                    committed: p.committed,
+                    total_buy_in: p.total_buy_in,
+                    phase: table.phase.clone(),
+                    hand_number: table.hand_number,
+                };
+            }
+        }
+    }
+    empty(true, table.phase.clone(), table.hand_number)
 }
 
 pub(crate) fn load_table(env: &Env, table_id: u32) -> Result<TableState, PokerTableError> {
@@ -672,6 +721,8 @@ impl PokerTableContract {
             .instance()
             .set(&Symbol::new(&env, "next_id"), &(table_id + 1));
 
+        rake_history::record_initial(&env, table_id, table.config.rake_bps, &admin);
+
         env.events()
             .publish((Symbol::new(&env, "table_created"), table_id), admin);
 
@@ -768,6 +819,29 @@ impl PokerTableContract {
             .persistent()
             .get(&DataKey::PlayerTables(player))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// A wallet's position at each of `table_ids`, in one call (view function),
+    /// so a multi-table dashboard need not fetch every table's full state.
+    ///
+    /// Returns one [`PlayerPosition`] per requested id, in request order
+    /// (duplicates included). A table that does not exist, or where the wallet
+    /// is not seated, still gets an entry (`exists` / `seated` say which) rather
+    /// than failing the whole batch. At most [`MAX_POSITIONS_BATCH`] ids are
+    /// accepted; more fails with `BatchTooLarge` before any table is read.
+    pub fn get_player_positions(
+        env: Env,
+        player: Address,
+        table_ids: Vec<u32>,
+    ) -> Result<Vec<PlayerPosition>, PokerTableError> {
+        if table_ids.len() > MAX_POSITIONS_BATCH {
+            return Err(PokerTableError::BatchTooLarge);
+        }
+        let mut positions: Vec<PlayerPosition> = Vec::new(&env);
+        for table_id in table_ids.iter() {
+            positions.push_back(player_position(&env, &player, table_id));
+        }
+        Ok(positions)
     }
 
     /// Number of tables a wallet is currently seated at.
@@ -2407,8 +2481,14 @@ impl PokerTableContract {
         }
         let mut table = load_table(&env, table_id)?;
         table.admin.require_auth();
+        let previous_bps = table.config.rake_bps;
         table.config.rake_bps = rake_bps;
         save_table(&env, &table);
+        if rake_history::record_change(&env, table_id, previous_bps, rake_bps, &table.admin)
+            .is_some()
+        {
+            config_versioning::record_config_change(&env, table_id, symbol_short!("rake_bps"))?;
+        }
 
         env.events()
             .publish((Symbol::new(&env, "rake_bps_updated"), table_id), rake_bps);
@@ -2438,6 +2518,37 @@ impl PokerTableContract {
             min_players,
         );
         Ok(())
+    }
+
+    /// Rake configuration history for a table, oldest first (view function).
+    /// Entry 0 is the rake the table was created with; each later entry is a
+    /// `set_rake_bps` change with the time it took effect. Returns at most
+    /// `rake_history::MAX_PAGE_SIZE` entries per call; page with `start`.
+    pub fn get_rake_history(
+        env: Env,
+        table_id: u32,
+        start: u32,
+        limit: u32,
+    ) -> Result<Vec<rake_history::RakeChange>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::page(&env, table_id, start, limit))
+    }
+
+    /// Number of entries in a table's rake history (view function).
+    pub fn get_rake_history_len(env: Env, table_id: u32) -> Result<u32, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::len(&env, table_id))
+    }
+
+    /// The rake (basis points) that was in force at `timestamp` (view
+    /// function), or `None` if `timestamp` precedes the table's history.
+    pub fn get_rake_bps_at(
+        env: Env,
+        table_id: u32,
+        timestamp: u64,
+    ) -> Result<Option<u32>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::rake_bps_at(&env, table_id, timestamp))
     }
 
     /// Read the rake accumulated so far for a table (view function).
