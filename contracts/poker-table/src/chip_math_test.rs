@@ -476,12 +476,24 @@ fn tied_split_hands_out_every_odd_chip() {
 
 /// A pre-flop heads-up table with `stack` chips behind for both players, the
 /// small blind (seat 0) to act facing the big blind.
-fn preflop_table(env: &Env, stack: i128, betting_structure: BettingStructure) -> (TableState, Address) {
+fn preflop_table(
+    env: &Env,
+    stack: i128,
+    betting_structure: BettingStructure,
+) -> (TableState, Address) {
     let (mut table, _) = showdown_table(
         env,
         &[
-            GenPlayer { committed: 10, folded: false, all_in: false },
-            GenPlayer { committed: 20, folded: false, all_in: false },
+            GenPlayer {
+                committed: 10,
+                folded: false,
+                all_in: false,
+            },
+            GenPlayer {
+                committed: 20,
+                folded: false,
+                all_in: false,
+            },
         ],
     );
     table.phase = GamePhase::Preflop;
@@ -507,7 +519,9 @@ fn act(
 ) -> Result<(), PokerTableError> {
     env.mock_all_auths();
     let contract = env.register(crate::PokerTableContract, ());
-    env.as_contract(&contract, || betting::process_action(env, table, actor, &action))
+    env.as_contract(&contract, || {
+        betting::process_action(env, table, actor, &action)
+    })
 }
 
 #[test]
@@ -568,7 +582,10 @@ fn pot_limit_raise_math_survives_a_near_max_pot() {
     );
     let (mut table, actor) = preflop_table(&env, MAX / 8, BettingStructure::PotLimit);
     table.pot = MAX / 2;
-    assert_eq!(act(&env, &mut table, &actor, Action::Raise(MAX / 8 - 10)), Ok(()));
+    assert_eq!(
+        act(&env, &mut table, &actor, Action::Raise(MAX / 8 - 10)),
+        Ok(())
+    );
     assert_eq!(table.players.get(0).unwrap().stack, 0);
 }
 
@@ -579,7 +596,8 @@ fn all_in_and_call_at_max_stack_conserve_chips() {
 
     let stack = MAX / 4;
     let (mut table, actor) = preflop_table(&env, stack, BettingStructure::NoLimit);
-    let before = table.pot + table.players.get(0).unwrap().stack + table.players.get(1).unwrap().stack;
+    let before =
+        table.pot + table.players.get(0).unwrap().stack + table.players.get(1).unwrap().stack;
 
     act(&env, &mut table, &actor, Action::AllIn).unwrap();
 
