@@ -1056,4 +1056,8 @@ pub enum DataKey {
     ConfigVersion(u32),
     /// Configuration change log: (table_id, version) -> ConfigChangeEvent (Issue #553).
     ConfigChangeLog(u32, u32),
+    /// Number of entries in a table's rake history (Issue #559).
+    RakeHistoryLen(u32),
+    /// Rake history entry: (table_id, index) -> RakeChange (Issue #559).
+    RakeHistory(u32, u32),
 }

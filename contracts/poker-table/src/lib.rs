@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contractimpl, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contractimpl, symbol_short, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 mod anti_cheat;
@@ -41,6 +41,9 @@ mod lifecycle_invariants_test;
 mod min_raise_test;
 mod multi_currency;
 mod pot;
+mod rake_history;
+#[cfg(test)]
+mod rake_history_test;
 #[cfg(test)]
 mod queue_test;
 #[cfg(test)]
@@ -674,6 +677,8 @@ impl PokerTableContract {
         env.storage()
             .instance()
             .set(&Symbol::new(&env, "next_id"), &(table_id + 1));
+
+        rake_history::record_initial(&env, table_id, table.config.rake_bps, &admin);
 
         env.events()
             .publish((Symbol::new(&env, "table_created"), table_id), admin);
@@ -2410,8 +2415,14 @@ impl PokerTableContract {
         }
         let mut table = load_table(&env, table_id)?;
         table.admin.require_auth();
+        let previous_bps = table.config.rake_bps;
         table.config.rake_bps = rake_bps;
         save_table(&env, &table);
+        if rake_history::record_change(&env, table_id, previous_bps, rake_bps, &table.admin)
+            .is_some()
+        {
+            config_versioning::record_config_change(&env, table_id, symbol_short!("rake_bps"))?;
+        }
 
         env.events()
             .publish((Symbol::new(&env, "rake_bps_updated"), table_id), rake_bps);
@@ -2441,6 +2452,37 @@ impl PokerTableContract {
             min_players,
         );
         Ok(())
+    }
+
+    /// Rake configuration history for a table, oldest first (view function).
+    /// Entry 0 is the rake the table was created with; each later entry is a
+    /// `set_rake_bps` change with the time it took effect. Returns at most
+    /// `rake_history::MAX_PAGE_SIZE` entries per call; page with `start`.
+    pub fn get_rake_history(
+        env: Env,
+        table_id: u32,
+        start: u32,
+        limit: u32,
+    ) -> Result<Vec<rake_history::RakeChange>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::page(&env, table_id, start, limit))
+    }
+
+    /// Number of entries in a table's rake history (view function).
+    pub fn get_rake_history_len(env: Env, table_id: u32) -> Result<u32, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::len(&env, table_id))
+    }
+
+    /// The rake (basis points) that was in force at `timestamp` (view
+    /// function), or `None` if `timestamp` precedes the table's history.
+    pub fn get_rake_bps_at(
+        env: Env,
+        table_id: u32,
+        timestamp: u64,
+    ) -> Result<Option<u32>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::rake_bps_at(&env, table_id, timestamp))
     }
 
     /// Read the rake accumulated so far for a table (view function).
