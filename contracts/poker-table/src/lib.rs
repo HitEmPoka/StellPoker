@@ -110,6 +110,7 @@ fn require_table_owner_or_governance(
 fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, PokerTableError> {
     let token = token::Client::new(env, &table.config.token);
     let mut refunded = 0i128;
+    let mut payouts: Vec<(Address, i128)> = Vec::new(env);
     for i in 0..table.players.len() {
         let mut player = table
             .players
@@ -118,7 +119,7 @@ fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, Poker
         let balance = player.stack + player.committed;
         let refund = balance;
         if refund > 0 {
-            token.transfer(&env.current_contract_address(), &player.address, &refund);
+            payouts.push_back((player.address.clone(), refund));
             refunded += refund;
         }
         player.stack = 0;
@@ -132,6 +133,10 @@ fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, Poker
     table.phase = GamePhase::Settlement;
     table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
+
+    for payout in payouts.iter() {
+        token.transfer(&env.current_contract_address(), &payout.0, &payout.1);
+    }
     Ok(refunded)
 }
 
@@ -575,6 +580,7 @@ fn require_emergency_timelock(env: &Env, table: &TableState) -> Result<(), Poker
 
 fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let token = token::Client::new(env, &table.config.token);
+    let mut payouts: Vec<(Address, i128)> = Vec::new(env);
     for i in 0..table.players.len() {
         let mut player = table
             .players
@@ -582,7 +588,7 @@ fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(),
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
         let refund = player.stack + player.committed;
         if refund > 0 {
-            token.transfer(&env.current_contract_address(), &player.address, &refund);
+            payouts.push_back((player.address.clone(), refund));
         }
         player.stack = 0;
         player.bet_this_round = 0;
@@ -602,6 +608,10 @@ fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(),
         (Symbol::new(env, "emergency_withdrawal"), table.id),
         table.hand_number,
     );
+
+    for payout in payouts.iter() {
+        token.transfer(&env.current_contract_address(), &payout.0, &payout.1);
+    }
     Ok(())
 }
 
@@ -901,10 +911,6 @@ impl PokerTableContract {
             if constant_time::address_eq(&env, &p.address, &player) {
                 found = true;
                 withdrawn = p.stack;
-                if withdrawn > 0 {
-                    let token = token::Client::new(&env, &table.config.token);
-                    token.transfer(&env.current_contract_address(), &player, &withdrawn);
-                }
             } else {
                 new_players.push_back(p);
             }
@@ -944,10 +950,15 @@ impl PokerTableContract {
 
         env.events().publish(
             (Symbol::new(&env, "player_left"), table_id),
-            (player, withdrawn),
+            (player.clone(), withdrawn),
         );
 
         seat_next_from_queue(&env, table_id)?;
+
+        if withdrawn > 0 {
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), &player, &withdrawn);
+        }
 
         Ok(withdrawn)
     }
@@ -974,13 +985,13 @@ impl PokerTableContract {
             return Err(PokerTableError::NotQueued);
         }
 
+        save_queue(&env, table_id, &new_queue);
+
         if refund > 0 {
             let table = load_table(&env, table_id)?;
             let token = token::Client::new(&env, &table.config.token);
             token.transfer(&env.current_contract_address(), &player, &refund);
         }
-
-        save_queue(&env, table_id, &new_queue);
 
         env.events().publish(
             (Symbol::new(&env, "queue_left"), table_id),
@@ -2552,10 +2563,11 @@ impl PokerTableContract {
 
         let amount = table.rake_balance;
         if amount > 0 {
-            let token = token::Client::new(&env, &table.config.token);
-            token.transfer(&env.current_contract_address(), &table.admin, &amount);
             table.rake_balance = 0;
             save_table(&env, &table);
+
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), &table.admin, &amount);
         }
 
         env.events().publish(
@@ -2605,7 +2617,6 @@ impl PokerTableContract {
             return Err(PokerTableError::DeadChipsAlreadySwept);
         }
 
-        let token = token::Client::new(&env, &table.config.token);
         let mut total_swept: i128 = 0;
         let mut swept_amounts: Vec<(Address, i128)> = Vec::new(&env);
 
@@ -2617,7 +2628,6 @@ impl PokerTableContract {
                 .ok_or(PokerTableError::InvalidPlayerIndex)?;
             let amount = player.stack;
             if amount > 0 {
-                token.transfer(&env.current_contract_address(), treasury_addr, &amount);
                 total_swept += amount;
                 swept_amounts.push_back((player.address.clone(), amount));
                 player.stack = 0;
@@ -2627,7 +2637,6 @@ impl PokerTableContract {
 
         // Sweep any remaining pot (should be 0 in Settlement, but just in case)
         if table.pot > 0 {
-            token.transfer(&env.current_contract_address(), treasury_addr, &table.pot);
             total_swept += table.pot;
             table.pot = 0;
         }
@@ -2636,7 +2645,6 @@ impl PokerTableContract {
         for i in 0..table.side_pots.len() {
             if let Some(pot) = table.side_pots.get(i) {
                 if pot.amount > 0 {
-                    token.transfer(&env.current_contract_address(), treasury_addr, &pot.amount);
                     total_swept += pot.amount;
                 }
             }
@@ -2657,6 +2665,11 @@ impl PokerTableContract {
         // Update table state
         table.phase = GamePhase::Settlement; // Already in Settlement, but explicit
         save_table(&env, &table);
+
+        if total_swept > 0 {
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), treasury_addr, &total_swept);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "dead_chips_swept"), table_id),
