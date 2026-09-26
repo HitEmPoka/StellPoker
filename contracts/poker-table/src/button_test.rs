@@ -26,11 +26,7 @@ use crate::state_machine_test::GameHubContract;
 use crate::types::*;
 use crate::{PokerTableContract, PokerTableContractClient};
 use proptest::prelude::*;
-use soroban_sdk::{
-    testutils::Address as _,
-    token::StellarAssetClient,
-    Address, BytesN, Env, Vec,
-};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, BytesN, Env, Vec};
 use std::cell::RefCell;
 use std::format;
 use std::vec::Vec as StdVec;
@@ -79,7 +75,9 @@ fn all_seat_states(n: usize) -> StdVec<StdVec<Seat>> {
 /// model so it does not share code with `game::next_active_seat`.
 fn nearest_active_after(states: &[Seat], from: usize) -> Option<usize> {
     let n = states.len();
-    (1..=n).map(|step| (from + step) % n).find(|s| states[*s].is_active())
+    (1..=n)
+        .map(|step| (from + step) % n)
+        .find(|s| states[*s].is_active())
 }
 
 fn table_config(admin: &Address) -> TableConfig {
@@ -217,7 +215,10 @@ fn button_moves_to_nearest_active_seat_for_every_layout() {
                 // No active seat was jumped over on the way.
                 let mut seat = (dealer + 1) % n;
                 while seat != expected {
-                    assert!(!states[seat].is_active(), "skipped active seat {seat}: {ctx}");
+                    assert!(
+                        !states[seat].is_active(),
+                        "skipped active seat {seat}: {ctx}"
+                    );
                     seat = (seat + 1) % n;
                 }
                 assert_eq!(table.hand_number, 1, "{ctx}");
@@ -261,7 +262,14 @@ fn blinds_follow_the_button_for_every_layout() {
                         0
                     };
                     assert_eq!(p.bet_this_round, expected_bet, "seat {seat}: {ctx}");
-                    assert_eq!(p.stack + p.bet_this_round, if states[seat] == Seat::Busted { 0 } else { STACK });
+                    assert_eq!(
+                        p.stack + p.bet_this_round,
+                        if states[seat] == Seat::Busted {
+                            0
+                        } else {
+                            STACK
+                        }
+                    );
                 }
                 assert_eq!(table.pot, SMALL_BLIND + BIG_BLIND, "{ctx}");
                 assert_ne!(sb, bb, "{ctx}");
@@ -301,7 +309,11 @@ fn button_visits_every_active_seat_once_per_orbit() {
                 assert_eq!(sorted, active, "{ctx}");
                 // …in clockwise order…
                 for pair in visited.windows(2) {
-                    assert_eq!(pair[1], nearest_active_after(&states, pair[0]).unwrap(), "{ctx}");
+                    assert_eq!(
+                        pair[1],
+                        nearest_active_after(&states, pair[0]).unwrap(),
+                        "{ctx}"
+                    );
                 }
                 // …and the next hand starts a new orbit from the same place.
                 start(&env, &contract, &mut table).unwrap();
@@ -524,7 +536,10 @@ fn contract_heads_up_button_posts_small_blind_and_alternates() {
         f.begin_hand();
         let table = f.table();
         let button = table.players.get(table.dealer_seat).unwrap();
-        assert_eq!(button.bet_this_round, SMALL_BLIND, "button is the SB heads-up");
+        assert_eq!(
+            button.bet_this_round, SMALL_BLIND,
+            "button is the SB heads-up"
+        );
         let other = table.players.get((table.dealer_seat + 1) % 2).unwrap();
         assert_eq!(other.bet_this_round, BIG_BLIND);
         small_blinds.push(button.address);
@@ -561,7 +576,10 @@ fn contract_leaving_between_hands_keeps_seats_contiguous_and_button_on_the_ring(
                 let after = f.table();
                 let remaining = n - 1;
                 assert_eq!(after.players.len(), remaining, "{ctx}");
-                assert!(seat_of(&after, &players[leaver as usize]).is_none(), "{ctx}");
+                assert!(
+                    seat_of(&after, &players[leaver as usize]).is_none(),
+                    "{ctx}"
+                );
                 for i in 0..remaining {
                     assert_eq!(after.players.get(i).unwrap().seat_index, i, "{ctx}");
                 }
@@ -570,7 +588,11 @@ fn contract_leaving_between_hands_keeps_seats_contiguous_and_button_on_the_ring(
 
                 // The next hand moves the button exactly one index further.
                 f.play_hand();
-                assert_eq!(f.dealer(), (button_before % remaining + 1) % remaining, "{ctx}");
+                assert_eq!(
+                    f.dealer(),
+                    (button_before % remaining + 1) % remaining,
+                    "{ctx}"
+                );
                 assert_eq!(f.table().players.len(), remaining, "{ctx}");
             }
         }

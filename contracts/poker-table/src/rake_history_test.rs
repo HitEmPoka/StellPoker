@@ -5,7 +5,7 @@
 
 extern crate std;
 
-use crate::rake_history::{MAX_PAGE_SIZE, RakeChange};
+use crate::rake_history::{RakeChange, MAX_PAGE_SIZE};
 use crate::state_machine_test::GameHubContract;
 use crate::types::*;
 use crate::{PokerTableContract, PokerTableContractClient};
@@ -61,7 +61,12 @@ impl Fixture<'_> {
         let client = PokerTableContractClient::new(&env, &env.register(PokerTableContract, ()));
         let admin = Address::generate(&env);
         let table_id = client.create_table(&admin, &config(&env, &admin, initial_bps));
-        Fixture { env, client, admin, table_id }
+        Fixture {
+            env,
+            client,
+            admin,
+            table_id,
+        }
     }
 
     fn at(&self, timestamp: u64, sequence: u32) {
@@ -72,7 +77,9 @@ impl Fixture<'_> {
     }
 
     fn history(&self) -> std::vec::Vec<RakeChange> {
-        let page = self.client.get_rake_history(&self.table_id, &0, &MAX_PAGE_SIZE);
+        let page = self
+            .client
+            .get_rake_history(&self.table_id, &0, &MAX_PAGE_SIZE);
         page.iter().collect()
     }
 }
@@ -143,7 +150,10 @@ fn setting_the_same_rake_records_nothing() {
 #[test]
 fn a_rejected_rake_is_not_recorded() {
     let f = Fixture::new(250);
-    assert!(f.client.try_set_rake_bps(&f.table_id, &(crate::pot::MAX_RAKE_BPS + 1)).is_err());
+    assert!(f
+        .client
+        .try_set_rake_bps(&f.table_id, &(crate::pot::MAX_RAKE_BPS + 1))
+        .is_err());
 
     assert_eq!(f.client.get_rake_history_len(&f.table_id), 1);
     assert_eq!(f.client.get_table(&f.table_id).config.rake_bps, 250);
@@ -163,7 +173,11 @@ fn rake_at_a_timestamp_is_the_latest_change_at_or_before_it() {
     assert_eq!(at(999), None, "before the table existed");
     assert_eq!(at(1_000), Some(100));
     assert_eq!(at(1_999), Some(100));
-    assert_eq!(at(2_000), Some(200), "a change is effective at its own timestamp");
+    assert_eq!(
+        at(2_000),
+        Some(200),
+        "a change is effective at its own timestamp"
+    );
     assert_eq!(at(2_999), Some(200));
     assert_eq!(at(3_000), Some(300));
     assert_eq!(at(3_999), Some(300));
@@ -196,15 +210,25 @@ fn history_is_paged_oldest_first_and_capped() {
     let first = f.client.get_rake_history(&f.table_id, &0, &1_000);
     assert_eq!(first.len(), MAX_PAGE_SIZE, "an oversized limit is capped");
     assert_eq!(first.get(0).unwrap().index, 0);
-    assert_eq!(first.get(MAX_PAGE_SIZE - 1).unwrap().index, MAX_PAGE_SIZE - 1);
+    assert_eq!(
+        first.get(MAX_PAGE_SIZE - 1).unwrap().index,
+        MAX_PAGE_SIZE - 1
+    );
 
-    let second = f.client.get_rake_history(&f.table_id, &MAX_PAGE_SIZE, &MAX_PAGE_SIZE);
+    let second = f
+        .client
+        .get_rake_history(&f.table_id, &MAX_PAGE_SIZE, &MAX_PAGE_SIZE);
     assert_eq!(second.len(), total - MAX_PAGE_SIZE);
     assert_eq!(second.get(0).unwrap().index, MAX_PAGE_SIZE);
     assert_eq!(second.get(second.len() - 1).unwrap().index, 60);
 
     assert_eq!(f.client.get_rake_history(&f.table_id, &total, &10).len(), 0);
-    assert_eq!(f.client.get_rake_history(&f.table_id, &u32::MAX, &u32::MAX).len(), 0);
+    assert_eq!(
+        f.client
+            .get_rake_history(&f.table_id, &u32::MAX, &u32::MAX)
+            .len(),
+        0
+    );
     assert_eq!(f.client.get_rake_history(&f.table_id, &5, &0).len(), 0);
 }
 
@@ -235,8 +259,14 @@ fn a_table_that_predates_history_keeps_its_old_rake_as_entry_zero() {
     let f = Fixture::new(250);
     // Simulate a table created before this feature: drop the creation entry.
     f.env.as_contract(&f.client.address, || {
-        f.env.storage().persistent().remove(&DataKey::RakeHistoryLen(f.table_id));
-        f.env.storage().persistent().remove(&DataKey::RakeHistory(f.table_id, 0));
+        f.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::RakeHistoryLen(f.table_id));
+        f.env
+            .storage()
+            .persistent()
+            .remove(&DataKey::RakeHistory(f.table_id, 0));
     });
     assert_eq!(f.client.get_rake_history_len(&f.table_id), 0);
     assert_eq!(f.client.get_rake_bps_at(&f.table_id, &5_000), None);
@@ -247,7 +277,10 @@ fn a_table_that_predates_history_keeps_its_old_rake_as_entry_zero() {
     let history = f.history();
     assert_eq!(history.len(), 2);
     // Entry 0 stands for everything before the first recorded change (time 0).
-    assert_eq!((history[0].rake_bps, history[0].effective_at_timestamp), (250, 0));
+    assert_eq!(
+        (history[0].rake_bps, history[0].effective_at_timestamp),
+        (250, 0)
+    );
     assert_eq!((history[1].rake_bps, history[1].previous_bps), (400, 250));
     assert_eq!(f.client.get_rake_bps_at(&f.table_id, &4_999), Some(250));
     assert_eq!(f.client.get_rake_bps_at(&f.table_id, &5_000), Some(400));
