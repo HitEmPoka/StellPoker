@@ -1,0 +1,85 @@
+name: Hand Evaluator Fuzzing
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:     # Allow manual trigger
+
+jobs:
+  fuzz:
+    name: fuzz_hand_eval (1 hour)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-zk-cards
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run hand evaluator fuzz for 1 hour
+        working-directory: stellar-zk-cards
+        run: |
+          mkdir -p crash-artifacts
+          timeout 3600 cargo fuzz run fuzz_hand_eval \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=7 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=10 \
+            -max_total_time=3600 \
+            || true  # Allow timeout without failing
+
+      - name: Check for crashes
+        if: always()
+        working-directory: stellar-zk-cards
+        run: |
+          if [ -d crash-artifacts ] && [ -n "$(ls -A crash-artifacts)" ]; then
+            echo "❌ Fuzzer found crashes!"
+            ls -la crash-artifacts/
+            exit 1
+          else
+            echo "✅ No crashes found"
+          fi
+
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-inputs
+          path: stellar-zk-cards/crash-artifacts/
+          retention-days: 30
+
+      - name: Report fuzzing statistics
+        if: always()
+        working-directory: stellar-zk-cards
+        run: |
+          echo "## Fuzzing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: fuzz_hand_eval" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration**: 1 hour" >> $GITHUB_STEP_SUMMARY
+          echo "- **Input Size**: max 7 bytes (7-card hand)" >> $GITHUB_STEP_SUMMARY
+          if [ -d crash-artifacts ] && [ -n "$(ls -A crash-artifacts)" ]; then
+            echo "- **Status**: ❌ **CRASHES FOUND**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Crashes**: $(ls -1 crash-artifacts/ | wc -l)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status**: ✅ No crashes" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on crash
+        if: failure()
+        run: |
+          echo "Hand evaluator fuzzing found crashes. Review the artifact uploads."

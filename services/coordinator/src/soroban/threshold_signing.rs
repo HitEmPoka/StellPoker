@@ -68,10 +68,27 @@ pub struct ThresholdSubmissionResult {
     pub duration_ms: u64,
 }
 
-/// Compute the canonical cryptographic digest over a settlement transaction payload.
+/// Domain separation magic and purpose identifiers to prevent cross-protocol signature reuse.
+pub mod domain {
+    pub const MAGIC: &[u8] = b"StellarPoker";
+    pub const NETWORK_ID: u32 = 1; // 1 = testnet, varies by network
+    pub const PURPOSE_SETTLEMENT: &[u8] = b"settlement";
+    pub const PURPOSE_MPC_SESSION: &[u8] = b"mpc_session";
+    pub const PURPOSE_COORDINATOR: &[u8] = b"coordinator";
+}
+
+/// Compute the canonical cryptographic digest over a settlement transaction payload
+/// with Stellar domain separation to prevent signature reuse across protocols.
 pub fn canonical_settlement_digest(payload: &SettlementCallPayload) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"stellpoker-settlement|");
+
+    // Domain separation: magic + network ID + purpose
+    hasher.update(domain::MAGIC);
+    hasher.update(domain::NETWORK_ID.to_be_bytes());
+    hasher.update(domain::PURPOSE_SETTLEMENT);
+
+    // Payload data with delimiters
+    hasher.update(b"|");
     hasher.update(payload.table_id.to_be_bytes());
     hasher.update(b"|");
     hasher.update(payload.hand_number.to_be_bytes());

@@ -423,6 +423,15 @@ pub fn settle_showdown(
     tie_mask: u32,
     bad_beat_scores: &Vec<(u32, u32)>,
 ) -> Result<(), PokerTableError> {
+    let settlement_paused = env
+        .storage()
+        .instance()
+        .get::<crate::DataKey, bool>(&crate::DataKey::SettlementPaused(table.id))
+        .unwrap_or(false);
+    if settlement_paused {
+        return Err(PokerTableError::ContractPaused);
+    }
+
     let total_pot = table.pot;
 
     // Compute the main pot and any side pots from cumulative contributions,
@@ -667,6 +676,15 @@ fn build_ranking_and_ties(
 
 /// Award pot to last player standing (all others folded).
 pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+    let settlement_paused = env
+        .storage()
+        .instance()
+        .get::<crate::DataKey, bool>(&crate::DataKey::SettlementPaused(table.id))
+        .unwrap_or(false);
+    if settlement_paused {
+        return Err(PokerTableError::ContractPaused);
+    }
+
     if let Some(winner_seat) = last_player_standing(table) {
         let total_pot = table.pot;
         let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
@@ -710,6 +728,15 @@ pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTab
 /// - Same player wins both → they take the entire pot
 /// - Different winners → split 50/50 (odd chip to earliest seat)
 pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+    let settlement_paused = env
+        .storage()
+        .instance()
+        .get::<crate::DataKey, bool>(&crate::DataKey::SettlementPaused(table.id))
+        .unwrap_or(false);
+    if settlement_paused {
+        return Err(PokerTableError::ContractPaused);
+    }
+
     let rit = table
         .rit_state
         .as_ref()
