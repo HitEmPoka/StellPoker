@@ -6,12 +6,16 @@ use soroban_sdk::{
 };
 
 mod anti_cheat;
+#[cfg(test)]
+mod arg_validation_fuzz_test;
 mod auth;
 mod ban_list;
 mod betting;
 #[cfg(test)]
 mod blinds_schedule_test;
 mod budget_guard;
+#[cfg(test)]
+mod budget_ceilings_test;
 mod commit_reveal;
 mod config_versioning;
 mod constant_time;
@@ -38,6 +42,8 @@ mod pot;
 mod queue_test;
 #[cfg(test)]
 mod state_machine_test;
+#[cfg(test)]
+mod storage_layout_test;
 mod test;
 mod time_bank;
 mod timeout;
