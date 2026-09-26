@@ -235,6 +235,18 @@
       "arity": 2,
       "domain": "persistent",
       "description": "Configuration change log: (table_id, version) (issue #553)."
+    },
+    {
+      "name": "RakeHistoryLen",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Number of entries in a table's rake history (issue #559)."
+    },
+    {
+      "name": "RakeHistory",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Rake configuration history entry: (table_id, index) (issue #559)."
     }
   ]
 }

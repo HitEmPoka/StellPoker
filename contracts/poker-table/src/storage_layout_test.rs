@@ -66,6 +66,8 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ActionCommitmentNonce", 3, true),
     ("ConfigVersion", 1, true),
     ("ConfigChangeLog", 2, true),
+    ("RakeHistoryLen", 1, true),
+    ("RakeHistory", 2, true),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -110,6 +112,8 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ActionCommitmentNonce(table_id, 0, 0),
         DataKey::ConfigVersion(table_id),
         DataKey::ConfigChangeLog(table_id, 0),
+        DataKey::RakeHistoryLen(table_id),
+        DataKey::RakeHistory(table_id, 0),
     ]
 }
 
@@ -153,6 +157,8 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ActionCommitmentNonce(_, _, _) => "ActionCommitmentNonce",
         DataKey::ConfigVersion(_) => "ConfigVersion",
         DataKey::ConfigChangeLog(_, _) => "ConfigChangeLog",
+        DataKey::RakeHistoryLen(_) => "RakeHistoryLen",
+        DataKey::RakeHistory(_, _) => "RakeHistory",
     }
 }
 
@@ -186,12 +192,14 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::AuthManager(_)
         | DataKey::RbacAudit(_)
         | DataKey::JackpotVerifier(_)
-        | DataKey::ConfigVersion(_) => 1,
+        | DataKey::ConfigVersion(_)
+        | DataKey::RakeHistoryLen(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
         | DataKey::JackpotClaim(_, _)
-        | DataKey::ConfigChangeLog(_, _) => 2,
+        | DataKey::ConfigChangeLog(_, _)
+        | DataKey::RakeHistory(_, _) => 2,
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,
