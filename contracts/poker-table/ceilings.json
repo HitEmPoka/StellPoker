@@ -1,0 +1,58 @@
+{
+  "_comment": "Hard CPU/memory ceilings per poker-table entrypoint (issue #567). CI fails if any function exceeds its ceiling. Baselines live in ../gas-budgets.json; ceilings are baseline + headroom and must only be raised with justification. Regenerate guidance: run `cargo test -p poker-table gas_ -- --nocapture` for CPU and `cargo test -p poker-table budget_ceiling -- --nocapture` for live mem, then update this file and scripts/check_soroban_budgets.py report.",
+  "_updated": "2026-09-26",
+  "_max_regression_pct": 5,
+  "_policy": "CI fails when measured cpu_insns > cpu_ceiling or mem_bytes > mem_ceiling. Ceilings must stay >= baseline in gas-budgets.json. Lowering a ceiling is always allowed; raising requires a PR note.",
+  "functions": {
+    "create_table": {
+      "cpu_ceiling": 6000000,
+      "mem_ceiling": 1500000,
+      "notes": "Creates a new table entry in persistent storage. Cost scales with TableConfig size."
+    },
+    "join_table": {
+      "cpu_ceiling": 6000000,
+      "mem_ceiling": 1500000,
+      "notes": "Reads table, appends player, writes back. Includes token transfer."
+    },
+    "start_hand": {
+      "cpu_ceiling": 8000000,
+      "mem_ceiling": 2000000,
+      "notes": "Rotates dealer, posts blinds, transitions to Dealing phase."
+    },
+    "commit_deal": {
+      "cpu_ceiling": 8000000,
+      "mem_ceiling": 2000000,
+      "notes": "Stores hand commitments + deck root. ZK proof verification is mocked in tests."
+    },
+    "player_action": {
+      "cpu_ceiling": 8000000,
+      "mem_ceiling": 2000000,
+      "notes": "Highest variance: Fold can trigger Settlement + pot distribution. Ceiling covers worst case."
+    },
+    "reveal_board": {
+      "cpu_ceiling": 8000000,
+      "mem_ceiling": 2000000,
+      "notes": "Appends board cards, resets betting round. Called 3x per hand (flop/turn/river)."
+    },
+    "leave_table": {
+      "cpu_ceiling": 6000000,
+      "mem_ceiling": 1500000,
+      "notes": "Removes player, transfers token balance back. Only allowed in Waiting/Settlement."
+    },
+    "claim_timeout": {
+      "cpu_ceiling": 8000000,
+      "mem_ceiling": 2000000,
+      "notes": "Checks ledger sequence, auto-folds stalling player. May trigger Settlement."
+    },
+    "withdraw_rake": {
+      "cpu_ceiling": 6000000,
+      "mem_ceiling": 1500000,
+      "notes": "Transfers accumulated rake to admin. No-op if rake_balance == 0."
+    },
+    "submit_showdown": {
+      "cpu_ceiling": 10000000,
+      "mem_ceiling": 3500000,
+      "notes": "Six-handed showdown: side pots, rake, payouts and the history archive. ZK proof verification is mocked in tests."
+    }
+  }
+}

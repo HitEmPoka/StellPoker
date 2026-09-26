@@ -1,0 +1,109 @@
+name: Soroban Budget Ceilings
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/**/src/**"
+      - "contracts/**/ceilings.json"
+      - "contracts/**/gas-budgets.json"
+      - "scripts/check_soroban_budgets.py"
+      - ".github/workflows/soroban-budget.yml"
+
+jobs:
+  budget-definition:
+    name: Budget ceilings definition check (issue #567)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check ceilings vs baselines
+        run: |
+          python3 scripts/check_soroban_budgets.py --report budget-report.md
+          cat budget-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload budget definition report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: budget-definition-report
+          path: budget-report.md
+          retention-days: 90
+
+  budget-live:
+    name: Live budget enforcement (poker-table)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run gas regression tests (CPU baselines, 5% tolerance)
+        run: cargo test -p poker-table gas_ -- --nocapture | tee gas-report.txt
+
+      - name: Run hard ceiling tests (CPU + MEM)
+        run: cargo test -p poker-table budget_ceiling -- --nocapture | tee budget-live.txt
+
+      - name: Publish live budget summary
+        if: always()
+        run: |
+          {
+            echo "## Live Soroban budget results (issue #567)"
+            echo '```'
+            cat budget-live.txt
+            echo '```'
+            echo "## Gas regression output"
+            echo '```'
+            cat gas-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload live budget logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: budget-live-logs
+          path: |
+            gas-report.txt
+            budget-live.txt
+          retention-days: 90
+
+  budget-report:
+    name: Comment budget report on PR
+    runs-on: ubuntu-latest
+    needs: [budget-definition, budget-live]
+    if: github.event_name == 'pull_request' && always()
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate definition report
+        run: python3 scripts/check_soroban_budgets.py --report budget-report.md
+
+      - name: Comment report on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('budget-report.md', 'utf8') +
+              '\n\nLive enforcement: see the `Live budget enforcement` job summary for per-function CPU/MEM measurements vs `contracts/poker-table/ceilings.json`.';
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body
+            });
