@@ -16,6 +16,7 @@ mod blinds_schedule_test;
 mod budget_guard;
 #[cfg(test)]
 mod budget_ceilings_test;
+mod chip_math_test;
 mod commit_reveal;
 mod config_versioning;
 mod constant_time;
