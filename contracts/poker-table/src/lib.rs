@@ -2681,6 +2681,8 @@ impl PokerTableContract {
             total_rake: totals.total_rake,
             active_seats: table.players.len(),
         })
+    }
+
     /// Rake configuration history for a table, oldest first (view function).
     /// Entry 0 is the rake the table was created with; each later entry is a
     /// `set_rake_bps` change with the time it took effect. Returns at most
