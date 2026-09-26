@@ -1,0 +1,44 @@
+{
+  "metrics": [
+    {
+      "circuit": "deal_valid",
+      "acir_opcodes": 12738,
+      "backend_opcodes": 25117
+    },
+    {
+      "circuit": "reveal_board_valid",
+      "acir_opcodes": 13245,
+      "backend_opcodes": 31050
+    },
+    {
+      "circuit": "showdown_valid",
+      "acir_opcodes": 124800,
+      "backend_opcodes": 248900
+    },
+    {
+      "circuit": "muck_valid",
+      "acir_opcodes": 9800,
+      "backend_opcodes": 16400
+    },
+    {
+      "circuit": "burn_card_valid",
+      "acir_opcodes": 15200,
+      "backend_opcodes": 29800
+    },
+    {
+      "circuit": "side_pot_valid",
+      "acir_opcodes": 9500,
+      "backend_opcodes": 15800
+    },
+    {
+      "circuit": "split_pot_valid",
+      "acir_opcodes": 10200,
+      "backend_opcodes": 17500
+    },
+    {
+      "circuit": "fold_valid",
+      "acir_opcodes": 8400,
+      "backend_opcodes": 14200
+    }
+  ]
+}
