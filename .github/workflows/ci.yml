@@ -263,8 +263,11 @@ jobs:
       - name: Start Soroban and MPC stack
         run: docker compose up -d --build soroban mpc-node-0 mpc-node-1 mpc-node-2 coordinator
 
-      - name: Run full hand lifecycle flow
+      - name: Run full hand lifecycle flow (2 players)
         run: python3 scripts/test-flow.py
+
+      - name: Run complete 6-player hand e2e flow
+        run: python3 scripts/test-6player-flow.py
 
       - name: Install schemathesis for conformance test
         run: pip install schemathesis pyyaml
