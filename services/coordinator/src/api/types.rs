@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[cfg(feature = "arbitrary")]
+use arbitrary::Arbitrary;
+
 /// Shared query parameters for offset/limit paginated endpoints.
 #[derive(Deserialize, ToSchema)]
 pub struct PaginatedQuery {
@@ -33,6 +36,7 @@ pub struct SetFlagBody {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct DealRequest {
     pub players: Vec<String>,
     #[serde(default = "default_circuit")]
@@ -73,6 +77,7 @@ pub struct ShowdownResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct PlayerActionRequest {
     pub action: String,
     pub amount: Option<i128>,
@@ -111,6 +116,7 @@ pub struct CommitteeStatusResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct RegisterNodeRequest {
     /// Stable node identifier (e.g. "0", "1", "2").
     pub id: String,
@@ -135,6 +141,7 @@ pub struct ChainConfigResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CreateTableRequest {
     pub max_players: Option<u32>,
     pub solo: Option<bool>,
@@ -215,6 +222,7 @@ pub struct LobbySeat {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct RitOptInRequest {
     pub opt_in: bool,
 }
@@ -251,6 +259,7 @@ pub struct WalletVerifyResponse {
 /// Allows a player to transfer chips from one table to another they are seated at.
 /// A small fee is deducted from the transferred amount.
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct TransferChipsRequest {
     /// Destination table ID where chips will be transferred to.
     pub destination_table_id: u32,

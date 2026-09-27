@@ -1,0 +1,127 @@
+name: Coordinator Endpoint Fuzzing (PR)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/coordinator/src/**"
+      - "services/coordinator/Cargo.toml"
+      - ".github/workflows/fuzz-coordinator-pr.yml"
+
+jobs:
+  fuzz-pr:
+    name: coordinator endpoint fuzz (30s per target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/coordinator
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run table_lifecycle fuzz (30s)
+        working-directory: services/coordinator
+        run: |
+          mkdir -p crash-artifacts
+          timeout 30 cargo fuzz run fuzz_table_lifecycle \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=512 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=5 \
+            -max_total_time=30 \
+            || true
+
+      - name: Run game_actions fuzz (30s)
+        working-directory: services/coordinator
+        run: |
+          timeout 30 cargo fuzz run fuzz_game_actions \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=1024 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=5 \
+            -max_total_time=30 \
+            || true
+
+      - name: Run state_queries fuzz (30s)
+        working-directory: services/coordinator
+        run: |
+          timeout 30 cargo fuzz run fuzz_state_queries \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=512 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=5 \
+            -max_total_time=30 \
+            || true
+
+      - name: Run node_discovery fuzz (30s)
+        working-directory: services/coordinator
+        run: |
+          timeout 30 cargo fuzz run fuzz_node_discovery \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=512 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=5 \
+            -max_total_time=30 \
+            || true
+
+      - name: Check for crashes
+        if: always()
+        working-directory: services/coordinator
+        run: |
+          if [ -d crash-artifacts ] && [ -n "$(ls -A crash-artifacts)" ]; then
+            echo "❌ Fuzzer found crashes!"
+            ls -la crash-artifacts/
+            exit 1
+          else
+            echo "✅ No crashes found"
+          fi
+
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinator-fuzz-crash-inputs-pr
+          path: services/coordinator/crash-artifacts/
+          retention-days: 30
+
+      - name: Report fuzzing statistics
+        if: always()
+        working-directory: services/coordinator
+        run: |
+          echo "## Coordinator Fuzzing Results (PR)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Targets**: fuzz_table_lifecycle, fuzz_game_actions, fuzz_state_queries, fuzz_node_discovery" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration**: 30 seconds per target (smoke test)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Input Sizes**: 512-1024 bytes max" >> $GITHUB_STEP_SUMMARY
+          if [ -d crash-artifacts ] && [ -n "$(ls -A crash-artifacts)" ]; then
+            echo "- **Status**: ❌ **CRASHES FOUND**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Crashes**: $(ls -1 crash-artifacts/ | wc -l)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status**: ✅ No crashes" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on crash
+        if: failure()
+        run: |
+          echo "Coordinator endpoint fuzzing found crashes. Review the artifact uploads and triage per docs/coordinator-fuzzing.md"

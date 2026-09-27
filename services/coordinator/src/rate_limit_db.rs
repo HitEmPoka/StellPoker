@@ -82,7 +82,7 @@ pub async fn get_rate_limit_for_request(
         .bind(endpoint)
         .bind(wallet_addr)
         .fetch_optional(pool)
-        .await? 
+        .await?
         {
             return Ok(Some(config));
         }
@@ -98,7 +98,7 @@ pub async fn get_rate_limit_for_request(
         )
         .bind(wallet_addr)
         .fetch_optional(pool)
-        .await? 
+        .await?
         {
             return Ok(Some(config));
         }

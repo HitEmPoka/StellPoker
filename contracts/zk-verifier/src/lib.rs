@@ -263,8 +263,10 @@ impl ZkVerifierContract {
         }
         governance::validate_governance_config(&env, &signers, threshold, delay_ledgers)?;
         governance::store_governance_config(&env, signers, threshold, delay_ledgers);
-        env.events()
-            .publish((Symbol::new(&env, "governance_configured"),), (threshold, delay_ledgers));
+        env.events().publish(
+            (Symbol::new(&env, "governance_configured"),),
+            (threshold, delay_ledgers),
+        );
         Ok(())
     }
 
@@ -298,7 +300,8 @@ impl ZkVerifierContract {
         let pending = governance::load_pending(&env)?;
         let wasm_hash = pending.wasm_hash.clone();
         governance::can_execute(&env, &wasm_hash)?;
-        env.deployer().update_current_contract_wasm(wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(wasm_hash.clone());
         governance::clear_pending(&env);
         env.events()
             .publish((Symbol::new(&env, "upgrade_executed"),), wasm_hash);
@@ -737,9 +740,10 @@ impl ZkVerifierContract {
             .persistent()
             .set(&StorageKey::VkById(circuit_id), &entry);
 
-        env.storage()
-            .persistent()
-            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Active);
+        env.storage().persistent().set(
+            &StorageKey::CircuitStatus(circuit_id),
+            &CircuitStatus::Active,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "vk_updated"), circuit_id),
@@ -761,20 +765,12 @@ impl ZkVerifierContract {
 
     /// Mark a verification key / circuit ID as stale (admin only).
     /// Calls with this circuit_id will subsequently return `VerifierError::StaleCircuitId`.
-    pub fn mark_vk_stale(
-        env: Env,
-        admin: Address,
-        circuit_id: u32,
-    ) -> Result<(), VerifierError> {
+    pub fn mark_vk_stale(env: Env, admin: Address, circuit_id: u32) -> Result<(), VerifierError> {
         Self::deprecate_vk(env, admin, circuit_id)
     }
 
     /// Deprecate/retire a circuit ID (admin only).
-    pub fn deprecate_vk(
-        env: Env,
-        admin: Address,
-        circuit_id: u32,
-    ) -> Result<(), VerifierError> {
+    pub fn deprecate_vk(env: Env, admin: Address, circuit_id: u32) -> Result<(), VerifierError> {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()
@@ -789,9 +785,10 @@ impl ZkVerifierContract {
             return Err(VerifierError::UnknownCircuitId);
         }
 
-        env.storage()
-            .persistent()
-            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Stale);
+        env.storage().persistent().set(
+            &StorageKey::CircuitStatus(circuit_id),
+            &CircuitStatus::Stale,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "vk_deprecated"), circuit_id),
@@ -836,12 +833,9 @@ impl ZkVerifierContract {
     ///
     /// Returns `Err(VerifierError::UnknownCircuitId)` if ID is unknown.
     /// Returns `Err(VerifierError::StaleCircuitId)` if ID is marked stale/deprecated.
-    pub fn get_vk_by_id(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<VerificationKeyEntry, VerifierError> {
-        let entry = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+    pub fn get_vk_by_id(env: Env, circuit_id: u32) -> Result<VerificationKeyEntry, VerifierError> {
+        let entry =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
 
         let status = env
             .storage()
@@ -873,8 +867,8 @@ impl ZkVerifierContract {
         circuit_id: u32,
         version: u32,
     ) -> Result<VerificationKeyEntry, VerifierError> {
-        let entry = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+        let entry =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
 
         let status = env
             .storage()
@@ -897,10 +891,7 @@ impl ZkVerifierContract {
     }
 
     /// Get current circuit status: Active, Stale, or Deprecated.
-    pub fn get_circuit_status(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<CircuitStatus, VerifierError> {
+    pub fn get_circuit_status(env: Env, circuit_id: u32) -> Result<CircuitStatus, VerifierError> {
         if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
             return Err(VerifierError::UnknownCircuitId);
         }
@@ -933,12 +924,9 @@ impl ZkVerifierContract {
     }
 
     /// Read full `CircuitEntry` containing id, VK, and status.
-    pub fn get_circuit_entry(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<CircuitEntry, VerifierError> {
-        let vk = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+    pub fn get_circuit_entry(env: Env, circuit_id: u32) -> Result<CircuitEntry, VerifierError> {
+        let vk =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
         let status = env
             .storage()
             .persistent()
@@ -1195,7 +1183,12 @@ mod test {
         let (env, client, admin) = setup();
         let s1 = Address::generate(&env);
         let s2 = Address::generate(&env);
-        client.configure_upgrade_governance(&admin, &vec![&env, s1.clone(), s2.clone()], &2, &GOV_DELAY);
+        client.configure_upgrade_governance(
+            &admin,
+            &vec![&env, s1.clone(), s2.clone()],
+            &2,
+            &GOV_DELAY,
+        );
 
         let target = wasm_hash(&env, 1);
         // Signer 1 proposes; threshold (2) not yet reached.
@@ -1301,7 +1294,12 @@ mod test {
         );
         // Duplicate signer.
         assert_eq!(
-            client.try_configure_upgrade_governance(&admin, &vec![&env, s1.clone(), s1], &2, &GOV_DELAY),
+            client.try_configure_upgrade_governance(
+                &admin,
+                &vec![&env, s1.clone(), s1],
+                &2,
+                &GOV_DELAY
+            ),
             Err(Ok(VerifierError::InvalidGovernanceConfig))
         );
     }
@@ -1378,10 +1376,7 @@ mod test {
         client.mark_vk_stale(&admin, &circuit_id);
         assert!(!client.is_circuit_active(&circuit_id));
         assert!(client.is_circuit_stale(&circuit_id));
-        assert_eq!(
-            client.get_circuit_status(&circuit_id),
-            CircuitStatus::Stale
-        );
+        assert_eq!(client.get_circuit_status(&circuit_id), CircuitStatus::Stale);
 
         // get_vk_by_id fails with StaleCircuitId
         let res = client.try_get_vk_by_id(&circuit_id);
@@ -1421,7 +1416,10 @@ mod test {
         client.update_vk(&admin, &circuit_id, &vk, &1);
         let entry = client.get_vk_by_id(&circuit_id);
         assert_eq!(entry.version, 1);
-        assert_eq!(client.get_circuit_status(&circuit_id), CircuitStatus::Active);
+        assert_eq!(
+            client.get_circuit_status(&circuit_id),
+            CircuitStatus::Active
+        );
 
         // Monotonic version: updating with same or lower version fails with InvalidVkVersion
         let res_same_ver = client.try_update_vk(&admin, &circuit_id, &vk, &1);
@@ -1495,7 +1493,10 @@ mod test {
 
         // Deprecate circuit 2
         client.deprecate_vk(&admin, &2);
-        assert_eq!(client.try_get_vk_by_id(&2), Err(Ok(VerifierError::StaleCircuitId)));
+        assert_eq!(
+            client.try_get_vk_by_id(&2),
+            Err(Ok(VerifierError::StaleCircuitId))
+        );
         assert_eq!(client.get_vk_by_id(&1).version, 1);
         assert_eq!(client.get_vk_by_id(&3).version, 1);
         assert_eq!(client.get_vk_by_id(&4).version, 2);

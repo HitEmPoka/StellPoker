@@ -39,8 +39,8 @@ use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-mod api;
 mod anti_dumping;
+mod api;
 mod api_version;
 mod archiver;
 mod audit_log;
@@ -1087,7 +1087,10 @@ async fn main() {
         .route("/api/table/:table_id/chat/ws", get(chat_ws_handler))
         .route("/api/table/:table_id/state/ws", get(game_state_ws_handler))
         .route("/api/table/:table_id/spectate/ws", get(spectate_ws_handler))
-        .route("/api/table/:table_id/spectators", get(api::get_spectator_count))
+        .route(
+            "/api/table/:table_id/spectators",
+            get(api::get_spectator_count),
+        )
         .route(
             "/api/session/:session_id/cancel",
             post(api::cancel_mpc_session),
@@ -1158,6 +1161,7 @@ async fn main() {
         .route(
             "/api/admin/anti-dumping/reports",
             get(api::admin_anti_dumping_reports),
+        )
         // Tournament (sit-and-go) endpoints (Issue #17)
         .route(
             "/api/tournaments",
