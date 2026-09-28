@@ -4,6 +4,7 @@ pub mod admin;
 mod admin_extended;
 pub mod api_key_admin;
 mod auth;
+pub mod csp;
 pub mod flags;
 mod parsing;
 pub mod plugins;
@@ -24,8 +25,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    anti_dumping, circuit_pins, feature_flags, mpc, mpc_validation, session_cache, session_gc,
-    session_recovery, soroban, AppState, MpcNodeProgress, TableSession,
+    anti_dumping, circuit_pins, feature_flags, mpc, mpc_validation, rate_limit, session_cache,
+    session_gc, session_recovery, soroban, AppState, TableSession,
 };
 use auth::{allow_insecure_dev_auth, enforce_rate_limit, validate_signed_request};
 use parsing::{
@@ -1566,7 +1567,7 @@ pub async fn transfer_chips(
         .and_then(|(seat, _)| source_view.stacks.get(*seat as usize).copied())
         .unwrap_or(0);
 
-    if player_stack_at_source < req.amount {
+    if (player_stack_at_source as i128) < req.amount {
         return Err(StatusCode::CONFLICT); // Insufficient chips
     }
 
@@ -1615,7 +1616,7 @@ pub async fn transfer_chips(
             "transfer_chips",
             &format!("/api/table/{}/transfer-chips", source_table_id),
             &axum::http::Method::POST,
-            crate::audit_log::extract_ip_address(&headers),
+            crate::audit_log::extract_ip_address(&headers).as_deref(),
             Some(200),
             None,
             Some(source_table_id as i32),
