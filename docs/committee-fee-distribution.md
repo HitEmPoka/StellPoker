@@ -93,6 +93,10 @@ Fees and stake are tracked separately, so a fee withdrawal can never draw down
 another node's staked collateral — asserted directly in
 `fees_never_draw_down_staked_collateral`.
 
+What a slash can and cannot take out of that collateral, and the conservation
+invariants behind it, are reported in
+[Committee Slashing Simulation](committee-slashing-simulation.md).
+
 Read the whole picture in one call:
 
 ```rust
