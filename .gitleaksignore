@@ -1,0 +1,18 @@
+# gitleaks ignore list for StellPoker
+# These patterns are allowed because they are test fixtures, docs, or generated files
+
+# Test fixture files that contain expected cryptographic material
+app/src/lib/csp-report.ts
+app/src/app/api/csp-report/route.ts
+services/coordinator/src/api/csp.rs
+
+# Generated and documentation files
+app/src/types/db.generated.ts
+docs/
+.env.example
+.gitleaksignore
+CHANGELOG.md
+CONFIGURATION.md
+
+# Environment files (contain placeholder values only)
+.env*
