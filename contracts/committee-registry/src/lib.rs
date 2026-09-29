@@ -5,6 +5,9 @@ use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Sym
 
 mod constant_time;
 
+#[cfg(test)]
+mod slashing_sim_test;
+
 /// Committee Registry contract.
 ///
 /// Manages MPC committee membership, staking bonds, and slashing hooks.

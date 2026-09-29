@@ -26,7 +26,8 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use prometheus::{
-    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
+    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts, Registry,
+    TextEncoder,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -41,6 +42,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 mod anti_dumping;
 mod api;
+mod api_keys;
 mod api_version;
 mod archiver;
 mod audit_log;
@@ -89,6 +91,7 @@ mod tls_client;
 mod tournament;
 
 use api::admin::{AdminConfig, AdminState};
+use api::MpcNodeProgress;
 
 #[derive(Serialize, Clone, Debug, utoipa::ToSchema)]
 pub struct LatencyHistogram {
@@ -149,6 +152,7 @@ struct HealthResponse {
     pub contract_deployment: ContractDeployment,
     pub active_mpc_sessions: usize,
     pub request_metrics: HashMap<String, RouteMetric>,
+    pub maintenance_mode: bool,
 }
 
 #[derive(OpenApi)]
@@ -158,42 +162,10 @@ struct HealthResponse {
         get_stats,
         api::get_chain_config,
         api::create_table,
-        api::list_open_tables,
-        api::list_table_overview,
-        api::join_table,
-        api::get_table_lobby,
-        api::request_deal,
-        api::request_reveal,
-        api::request_showdown,
-        api::player_action,
-        api::transfer_chips,
         api::rit_opt_in,
-        api::get_player_cards,
-        api::get_table_state,
-        api::get_mpc_status,
-        api::committee_status,
-        api::register_node,
-        api::node_heartbeat,
-        api::deregister_node,
-        api::cancel_mpc_session,
-        api::get_mpc_session_status,
-        api::admin_health,
-        api::admin_list_sessions,
-        api::admin_cancel_session,
-        api::admin_cleanup_sessions,
-        api::admin_stats,
-        api::admin_reload_config,
+        api::transfer_chips,
         api::flags::list_flags,
         api::flags::set_flag,
-        api::plugins::list_plugins,
-        api::plugins::plugin_health,
-        api::plugins::load_plugin,
-        api::plugins::rescan_plugins,
-        api::plugins::get_plugin,
-        api::plugins::unload_plugin,
-        api::plugins::call_plugin_function,
-        api::auth::get_wallet_challenge,
-        api::auth::verify_wallet,
     ),
     components(schemas(
         LatencyHistogram,
@@ -272,6 +244,114 @@ pub struct PrometheusMetrics {
     pub request_latency: HistogramVec,
     pub process_cpu_percent: Gauge,
     pub process_memory_bytes: Gauge,
+    /// CSP violation reports accepted by `POST /api/csp/report` (issue #136).
+    pub csp_reports_total: IntCounter,
+    /// CSP reports rejected by ingestion validation, labelled by reason
+    /// (`too_large` | `malformed` | `no_violation`) (issue #136).
+    pub csp_reports_rejected_total: IntCounterVec,
+    /// CSP violations by sanitized `effective_directive` and `disposition`
+    /// labels (issue #136).
+    pub csp_violations_total: IntCounterVec,
+}
+
+impl PrometheusMetrics {
+    /// Build the full metric family, registering every instrument on a
+    /// dedicated registry.
+    fn new() -> Self {
+        let registry = Arc::new(Registry::new());
+        let request_counter = IntCounterVec::new(
+            Opts::new("coordinator_requests_total", "Total coordinator requests."),
+            &["method", "route"],
+        )
+        .unwrap();
+        let request_errors = IntCounterVec::new(
+            Opts::new(
+                "coordinator_request_errors_total",
+                "Total coordinator request errors.",
+            ),
+            &["method", "route"],
+        )
+        .unwrap();
+        let request_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "coordinator_request_latency_seconds",
+                "Request latency histogram in seconds.",
+            )
+            .buckets(vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
+            &["method", "route"],
+        )
+        .unwrap();
+        let process_cpu_percent = Gauge::with_opts(Opts::new(
+            "coordinator_process_cpu_percent",
+            "Coordinator process CPU usage percentage.",
+        ))
+        .unwrap();
+        let process_memory_bytes = Gauge::with_opts(Opts::new(
+            "coordinator_process_memory_bytes",
+            "Coordinator process memory usage in bytes.",
+        ))
+        .unwrap();
+        let csp_reports_total = IntCounter::new(
+            "coordinator_csp_reports_total",
+            "Total CSP violation reports ingested.",
+        )
+        .unwrap();
+        let csp_reports_rejected_total = IntCounterVec::new(
+            Opts::new(
+                "coordinator_csp_reports_rejected_total",
+                "CSP reports rejected by ingestion validation.",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        let csp_violations_total = IntCounterVec::new(
+            Opts::new(
+                "coordinator_csp_violations_total",
+                "CSP violations by effective directive and disposition.",
+            ),
+            &["effective_directive", "disposition"],
+        )
+        .unwrap();
+
+        registry
+            .register(Box::new(request_counter.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(request_errors.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(request_latency.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(process_cpu_percent.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(process_memory_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(csp_reports_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(csp_reports_rejected_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(csp_violations_total.clone()))
+            .unwrap();
+
+        Self {
+            registry,
+            request_counter,
+            request_errors,
+            request_latency,
+            process_cpu_percent,
+            process_memory_bytes,
+            csp_reports_total,
+            csp_reports_rejected_total,
+            csp_violations_total,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -357,11 +437,18 @@ struct AppState {
     committee_registry: mpc_identity::CommitteeRegistry,
     /// Replay protection tracker for MPC session messages (Issue #500).
     mpc_nonce_tracker: mpc_identity::SessionNonceTracker,
+    /// In-memory sit-and-go tournament state.
+    tournaments: tournament::TournamentStore,
+    /// Session archive index and retention config (restore/purge admin endpoints).
+    archive_store: archiver::ArchiveStore,
+    archive_config: archiver::ArchiveConfig,
+    /// Validated CSP violation reports for frontend `report-uri` /
+    /// `report-to` ingestion (Issue #136).
+    csp_reports: api::csp::CspReportStore,
 }
 
 #[derive(Clone)]
 #[allow(dead_code)]
-#[derive(Clone)]
 struct MpcConfig {
     /// Endpoints of the 3 MPC nodes
     node_endpoints: Vec<String>,
@@ -521,71 +608,12 @@ async fn main() {
         })
         .collect::<Vec<_>>();
 
-    let prometheus_registry = Arc::new(Registry::new());
-    let request_counter = IntCounterVec::new(
-        Opts::new("coordinator_requests_total", "Total coordinator requests."),
-        &["method", "route"],
-    )
-    .unwrap();
-    let request_errors = IntCounterVec::new(
-        Opts::new(
-            "coordinator_request_errors_total",
-            "Total coordinator request errors.",
-        ),
-        &["method", "route"],
-    )
-    .unwrap();
-    let request_latency = HistogramVec::new(
-        HistogramOpts::new(
-            "coordinator_request_latency_seconds",
-            "Request latency histogram in seconds.",
-        )
-        .buckets(vec![
-            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-        ]),
-        &["method", "route"],
-    )
-    .unwrap();
-    let process_cpu_percent = Gauge::with_opts(Opts::new(
-        "coordinator_process_cpu_percent",
-        "Coordinator process CPU usage percentage.",
-    ))
-    .unwrap();
-    let process_memory_bytes = Gauge::with_opts(Opts::new(
-        "coordinator_process_memory_bytes",
-        "Coordinator process memory usage in bytes.",
-    ))
-    .unwrap();
-
-    prometheus_registry
-        .register(Box::new(request_counter.clone()))
-        .unwrap();
-    prometheus_registry
-        .register(Box::new(request_errors.clone()))
-        .unwrap();
-    prometheus_registry
-        .register(Box::new(request_latency.clone()))
-        .unwrap();
-    prometheus_registry
-        .register(Box::new(process_cpu_percent.clone()))
-        .unwrap();
-    prometheus_registry
-        .register(Box::new(process_memory_bytes.clone()))
-        .unwrap();
-
     let metrics = MetricsState {
         boot_time: Instant::now(),
         active_mpc_sessions: Arc::new(AtomicUsize::new(0)),
         route_metrics: Arc::new(Mutex::new(HashMap::new())),
         node_healths: Arc::new(Mutex::new(initial_node_healths)),
-        prometheus: PrometheusMetrics {
-            registry: prometheus_registry,
-            request_counter,
-            request_errors,
-            request_latency,
-            process_cpu_percent: process_cpu_percent.clone(),
-            process_memory_bytes: process_memory_bytes.clone(),
-        },
+        prometheus: PrometheusMetrics::new(),
     };
 
     let system_state = Arc::new(Mutex::new(System::new_all()));
@@ -814,6 +842,10 @@ async fn main() {
         partition_store,
         committee_registry,
         mpc_nonce_tracker: mpc_identity::SessionNonceTracker::new(),
+        tournaments: tournament::new_store(),
+        archive_store: archive_store.clone(),
+        archive_config: archive_config.clone(),
+        csp_reports: api::csp::CspReportStore::new(),
     };
     idempotency::spawn_gc_task(state.idempotency_store.clone());
     rate_limit::spawn_rate_alert_task(state.rejection_counter.clone());
@@ -1027,6 +1059,9 @@ async fn main() {
         .route("/api/mpc/identity/register", post(register_node_identity))
         .route("/api/mpc/identity/nodes", get(list_node_identities))
         .route("/api/mpc/identity/verify", post(verify_node_identity))
+        // CSP violation report ingestion (Issue #136)
+        .route("/api/csp/report", post(api::csp::report_csp))
+        .route("/api/csp/reports", get(api::csp::list_csp_reports))
         .route("/api/flags", get(api::flags::list_flags))
         .route("/api/flags/:key", post(api::flags::set_flag))
         // Plugin management endpoints
@@ -1638,7 +1673,7 @@ async fn handle_spectator_socket(socket: WebSocket, table_id: u32, state: AppSta
     let guard = state.spectators.join(table_id);
     broadcast_spectator_count(&state, table_id).await;
 
-    handle_game_state_socket(socket, table_id, state.clone()).await;
+    handle_game_state_socket(socket, table_id, state.clone(), None, None).await;
 
     drop(guard);
     broadcast_spectator_count(&state, table_id).await;

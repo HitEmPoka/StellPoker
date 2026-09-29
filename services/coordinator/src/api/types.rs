@@ -13,7 +13,7 @@ pub struct PaginatedQuery {
 
 /// Per-node MPC phase progress for a specific table, returned by
 /// `GET /api/table/:table_id/mpc-status` and included in WebSocket pushes.
-#[derive(Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct MpcNodeProgress {
     pub endpoint: String,
     pub phase: String,

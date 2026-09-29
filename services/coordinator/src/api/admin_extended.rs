@@ -681,3 +681,47 @@ pub async fn admin_committee_key_rotation_status(
         overlap_secs: rotation.config.overlap.as_secs(),
     }))
 }
+
+// ============================================================================
+// Maintenance (drain) mode toggle
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ToggleMaintenanceRequest {
+    pub enabled: bool,
+}
+
+/// POST /api/admin/maintenance
+///
+/// Enables or disables maintenance (drain) mode. While enabled, every
+/// non-admin route answers `503` (see `maintenance_middleware`), letting
+/// operators take an instance out of rotation without dropping admin access.
+pub async fn admin_toggle_maintenance(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ToggleMaintenanceRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let auth = validate_admin_request(
+        &state,
+        &headers,
+        "admin_toggle_maintenance",
+        &state.admin_state,
+    )
+    .await?;
+    require_role(&auth, AdminRole::Operator)?;
+
+    state
+        .maintenance_mode
+        .store(req.enabled, std::sync::atomic::Ordering::Relaxed);
+    tracing::info!(
+        "Maintenance mode {} by {}",
+        if req.enabled { "enabled" } else { "disabled" },
+        auth.address
+    );
+
+    Ok(Json(serde_json::json!({
+        "maintenance_mode": req.enabled,
+        "action_by": auth.address,
+        "role": auth.role.as_str(),
+    })))
+}

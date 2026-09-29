@@ -21,6 +21,8 @@ opentelemetry-semantic-conventions = "0.15"
 tonic = { version = "0.11", default-features = false, features = ["transport"] }
 tower = { version = "0.4", features = ["util"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa-swagger-ui = { version = "7.1.1-rc.0", features = ["axum"] }
 tempfile = "3"
 base64 = "0.22"
 prometheus = "0.14"
