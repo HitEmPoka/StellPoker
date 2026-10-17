@@ -149,6 +149,9 @@ pub struct SessionGuard {
     node_endpoints: Vec<String>,
     started_at: std::time::Instant,
     successful: bool,
+    /// Issue #604: which handler opened this session (deal/reveal/showdown),
+    /// so phase duration can be broken out in Grafana.
+    phase: String,
 }
 
 impl SessionGuard {
@@ -156,6 +159,7 @@ impl SessionGuard {
         counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         metrics: &PrometheusMetrics,
         node_endpoints: &[String],
+        phase: impl Into<String>,
     ) -> Self {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Self {
@@ -164,6 +168,7 @@ impl SessionGuard {
             node_endpoints: node_endpoints.to_vec(),
             started_at: std::time::Instant::now(),
             successful: false,
+            phase: phase.into(),
         }
     }
 
@@ -183,6 +188,10 @@ impl Drop for SessionGuard {
                 .with_label_values(&[&index.to_string()])
                 .observe(duration);
         }
+        self.metrics
+            .mpc_phase_duration_seconds
+            .with_label_values(&[&self.phase])
+            .observe(duration);
         if self.successful {
             self.metrics.mpc_session_success_total.inc();
         } else {
@@ -697,6 +706,7 @@ pub async fn request_deal(
         state.metrics.active_mpc_sessions.clone(),
         &state.metrics.prometheus,
         &node_endpoints,
+        "deal",
     );
     let deal_circuit = parameterised_circuit_name(&req.circuit_name, players.len());
     deal_span.record("circuit", deal_circuit.as_str());
@@ -991,6 +1001,7 @@ pub async fn request_reveal(
         state.metrics.active_mpc_sessions.clone(),
         &state.metrics.prometheus,
         &node_endpoints,
+        "reveal",
     );
     let reveal_proof = match mpc::generate_proof_from_share_sets(
         &state.mpc_client,
@@ -1238,6 +1249,7 @@ pub async fn request_showdown(
         state.metrics.active_mpc_sessions.clone(),
         &state.metrics.prometheus,
         &node_endpoints,
+        "showdown",
     );
     let showdown_proof = match mpc::generate_proof_from_share_sets(
         &state.mpc_client,

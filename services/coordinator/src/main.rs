@@ -277,6 +277,8 @@ pub struct PrometheusMetrics {
     pub mpc_session_errors_total: IntCounter,
     pub mpc_session_refusals_total: IntCounter,
     pub mpc_prove_duration_seconds: HistogramVec,
+    /// MPC session duration by phase handler (Issue #604): deal, reveal, showdown.
+    pub mpc_phase_duration_seconds: HistogramVec,
     pub memory_watermark_bytes: Gauge,
 }
 
@@ -377,6 +379,15 @@ impl PrometheusMetrics {
             "Configured process memory watermark for new MPC sessions.",
         ))
         .unwrap();
+        let mpc_phase_duration_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "coordinator_mpc_phase_duration_seconds",
+                "MPC session duration by phase handler (deal, reveal, showdown).",
+            )
+            .buckets(vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0]),
+            &["phase"],
+        )
+        .unwrap();
 
         registry
             .register(Box::new(request_counter.clone()))
@@ -420,6 +431,9 @@ impl PrometheusMetrics {
         registry
             .register(Box::new(memory_watermark_bytes.clone()))
             .unwrap();
+        registry
+            .register(Box::new(mpc_phase_duration_seconds.clone()))
+            .unwrap();
 
         Self {
             registry,
@@ -436,6 +450,7 @@ impl PrometheusMetrics {
             mpc_session_errors_total,
             mpc_session_refusals_total,
             mpc_prove_duration_seconds,
+            mpc_phase_duration_seconds,
             memory_watermark_bytes,
         }
     }
