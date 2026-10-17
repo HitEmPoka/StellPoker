@@ -308,6 +308,33 @@ async function readApiError(res: Response, fallback: string): Promise<string> {
   }
 }
 
+/** Thrown for non-OK coordinator responses (Issue #601). Carries the HTTP
+ *  status and, for 429s, the server's Retry-After so callers can back off
+ *  for exactly as long as the coordinator asked rather than guessing. */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly retryAfterSeconds: number | null;
+
+  constructor(message: string, status: number, retryAfterSeconds: number | null) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+function parseRetryAfterSeconds(res: Response): number | null {
+  const header = res.headers.get("Retry-After");
+  if (!header) return null;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+async function apiError(res: Response, fallback: string): Promise<ApiRequestError> {
+  const message = await readApiError(res, fallback);
+  return new ApiRequestError(message, res.status, parseRetryAfterSeconds(res));
+}
+
 function nextNonce(): string {
   const now = Date.now() * 1000;
   if (now > lastNonce) {
@@ -410,7 +437,7 @@ export async function requestDeal(
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Deal failed: ${res.status}`));
+    throw await apiError(res, `Deal failed: ${res.status}`);
   }
   return res.json();
 }
@@ -460,7 +487,7 @@ export async function createTable(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Create table failed: ${res.status}`));
+    throw await apiError(res, `Create table failed: ${res.status}`);
   }
   return res.json();
 }
@@ -485,7 +512,7 @@ export async function joinTable(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Join table failed: ${res.status}`));
+    throw await apiError(res, `Join table failed: ${res.status}`);
   }
   return res.json();
 }
@@ -497,7 +524,7 @@ export async function joinTable(
 export async function listOpenTables(): Promise<OpenTablesResponse> {
   const res = await fetch(`${API_BASE}/api/tables/open`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Open tables failed: ${res.status}`));
+    throw await apiError(res, `Open tables failed: ${res.status}`);
   }
   return res.json();
 }
@@ -506,7 +533,7 @@ export async function listOpenTables(): Promise<OpenTablesResponse> {
 export async function listTableOverview(): Promise<TableOverviewResponse> {
   const res = await fetch(`${API_BASE}/api/tables/overview`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Table overview failed: ${res.status}`));
+    throw await apiError(res, `Table overview failed: ${res.status}`);
   }
   return res.json();
 }
@@ -519,7 +546,7 @@ export async function getPlayerHudStats(
     `${API_BASE}/api/stats/player/${encodeURIComponent(address)}`
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Player stats failed: ${res.status}`));
+    throw await apiError(res, `Player stats failed: ${res.status}`);
   }
   return res.json();
 }
@@ -533,9 +560,7 @@ export async function getRatingLeaderboard(
     `${API_BASE}/api/ratings/leaderboard?offset=${offset}&limit=${limit}`
   );
   if (!res.ok) {
-    throw new Error(
-      await readApiError(res, `Rating leaderboard failed: ${res.status}`)
-    );
+    throw await apiError(res, `Rating leaderboard failed: ${res.status}`);
   }
   return res.json();
 }
@@ -547,7 +572,7 @@ export async function getRatingLeaderboard(
 export async function getChainConfig(): Promise<ChainConfigResponse> {
   const res = await fetch(`${API_BASE}/api/chain-config`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Chain config failed: ${res.status}`));
+    throw await apiError(res, `Chain config failed: ${res.status}`);
   }
   return res.json();
 }
@@ -562,7 +587,7 @@ export async function getTableLobby(
 ): Promise<TableLobbyResponse> {
   const res = await fetch(`${API_BASE}/api/table/${tableId}/lobby`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Lobby lookup failed: ${res.status}`));
+    throw await apiError(res, `Lobby lookup failed: ${res.status}`);
   }
   return res.json();
 }
@@ -586,7 +611,7 @@ export async function requestReveal(
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Reveal failed: ${res.status}`));
+    throw await apiError(res, `Reveal failed: ${res.status}`);
   }
   return res.json();
 }
@@ -608,7 +633,7 @@ export async function requestShowdown(
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Showdown failed: ${res.status}`));
+    throw await apiError(res, `Showdown failed: ${res.status}`);
   }
   return res.json();
 }
@@ -639,7 +664,7 @@ export async function requestRunItTwice(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `RIT opt-in failed: ${res.status}`));
+    throw await apiError(res, `RIT opt-in failed: ${res.status}`);
   }
   return res.json();
 }
@@ -672,7 +697,7 @@ export async function playerAction(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Player action failed: ${res.status}`));
+    throw await apiError(res, `Player action failed: ${res.status}`);
   }
   return res.json();
 }
@@ -697,7 +722,7 @@ export async function getPlayerCards(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get cards: ${res.status}`));
+    throw await apiError(res, `Failed to get cards: ${res.status}`);
   }
   return res.json();
 }
@@ -712,7 +737,7 @@ export async function getTableState(
 ): Promise<TableStateResponse> {
   const res = await fetch(`${API_BASE}/api/table/${tableId}/state`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get table state: ${res.status}`));
+    throw await apiError(res, `Failed to get table state: ${res.status}`);
   }
   return res.json();
 }
@@ -729,7 +754,7 @@ export async function getSpectatorCount(
 ): Promise<SpectatorCountResponse> {
   const res = await fetch(`${API_BASE}/api/table/${tableId}/spectators`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get spectators: ${res.status}`));
+    throw await apiError(res, `Failed to get spectators: ${res.status}`);
   }
   return res.json();
 }
@@ -824,7 +849,7 @@ export async function getMpcStatus(
 ): Promise<TableMpcStatusResponse> {
   const res = await fetch(`${API_BASE}/api/table/${tableId}/mpc-status`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `MPC status failed: ${res.status}`));
+    throw await apiError(res, `MPC status failed: ${res.status}`);
   }
   return res.json();
 }
@@ -853,7 +878,7 @@ export async function getWalletChallenge(address: string): Promise<WalletChallen
     body: JSON.stringify({ address }),
   });
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get wallet challenge`));
+    throw await apiError(res, `Failed to get wallet challenge`);
   }
   return res.json();
 }
@@ -878,7 +903,7 @@ export async function verifyWalletChallenge(
     body: JSON.stringify({ address, challenge, signature }),
   });
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Wallet verification failed`));
+    throw await apiError(res, `Wallet verification failed`);
   }
   return res.json();
 }

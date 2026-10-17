@@ -206,6 +206,7 @@ export default function Home() {
       if (!solo && buyIn) {
         setPendingTableId(created.table_id);
         joinTableSim.joinTable(created.table_id, buyIn);
+        setBusy(false);
         return; // Simulation will handle navigation
       }
 
@@ -215,9 +216,18 @@ export default function Home() {
           ? "?mode=multi"
           : "?mode=headsup";
       router.push(`/table/${created.table_id}${query}`);
+      setBusy(false);
     } catch (e) {
+      if (e instanceof api.ApiRequestError && e.retryAfterSeconds !== null) {
+        // Issue #601: respect the server's Retry-After by keeping table
+        // creation disabled for the full back-off window instead of
+        // re-enabling immediately, so the client can't hammer the
+        // coordinator again right away.
+        setError(`${e.message} Retry in ${e.retryAfterSeconds}s.`);
+        setTimeout(() => setBusy(false), e.retryAfterSeconds * 1000);
+        return;
+      }
       setError(e instanceof Error ? e.message : "Create table failed");
-    } finally {
       setBusy(false);
     }
   };
