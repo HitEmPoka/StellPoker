@@ -90,6 +90,11 @@ impl SubmissionLedger {
                  tx_hash       TEXT NOT NULL DEFAULT '',
                  submitted_at  INTEGER NOT NULL
              );
+             -- Issue #602: purge_before (WHERE submitted_at < ?) and
+             -- load_all (ORDER BY submitted_at DESC) both full-scanned
+             -- without this index.
+             CREATE INDEX IF NOT EXISTS idx_submission_ledger_submitted_at
+                 ON submission_ledger (submitted_at);
              COMMIT;",
         )?;
         Ok(Self { conn })
