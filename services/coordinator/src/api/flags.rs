@@ -63,10 +63,35 @@ pub async fn set_flag(
     Json(body): Json<super::types::SetFlagBody>,
 ) -> StatusCode {
     let key = key.trim().to_string();
-    if key.is_empty() {
+    // Reject empty/oversized/control-character keys before they ever reach
+    // the flag store or the audit log (this endpoint takes untrusted input
+    // from an unauthenticated route — see the PR note on that).
+    if key.is_empty() || key.len() > 128 || key.chars().any(|c| c.is_control()) {
         return StatusCode::BAD_REQUEST;
     }
     state.feature_flags.set_flag(&key, body.enabled).await;
+
+    // Issue #603: runtime flag changes had no audit trail — reuse the
+    // existing compliance audit log rather than inventing a new store.
+    // `action` records the resulting value since log_audit_entry has no
+    // free-form details column to put it in.
+    if let Some(pool) = &state.db_pool {
+        let _ = crate::audit_log::log_audit_entry(
+            pool,
+            uuid::Uuid::new_v4(),
+            None,
+            &format!("feature_flag_changed:enabled={}", body.enabled),
+            &format!("/api/flags/{key}"),
+            &axum::http::Method::POST,
+            None,
+            Some(200),
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+
     StatusCode::OK
 }
 
