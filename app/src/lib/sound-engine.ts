@@ -22,6 +22,7 @@
  */
 
 export type SoundName = "shuffle" | "chip" | "flip" | "winner" | "deal" | "bet" | "fold" | "win";
+export type SoundGroup = "cards" | "chips" | "alerts";
 
 // ── Module-level singleton ───────────────────────────────────────────────────
 
@@ -31,6 +32,17 @@ let _muted = false;
 let _volume = 0.55; // default SFX level — quieter than music
 const SFX_MUTE_KEY = "stellpoker-sfx-muted";
 const SFX_VOL_KEY = "stellpoker-sfx-volume";
+const GROUP_KEYS: Record<SoundGroup, string> = {
+  cards: "stellpoker-sfx-group-cards",
+  chips: "stellpoker-sfx-group-chips",
+  alerts: "stellpoker-sfx-group-alerts",
+};
+const SOUND_GROUPS: Record<SoundName, SoundGroup> = {
+  shuffle: "cards", flip: "cards", deal: "cards",
+  chip: "chips", bet: "chips", fold: "chips",
+  winner: "alerts", win: "alerts",
+};
+const _groupMuted: Record<SoundGroup, boolean> = { cards: false, chips: false, alerts: false };
 
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -124,6 +136,19 @@ export function setSfxVolume(v: number): void {
       _masterGain.gain.setTargetAtTime(_volume, _masterGain.context.currentTime, 0.02);
     } catch {}
   }
+}
+
+export function getSoundGroupMuted(group: SoundGroup): boolean {
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem(GROUP_KEYS[group]);
+    if (stored !== null) _groupMuted[group] = stored === "true";
+  }
+  return _groupMuted[group];
+}
+
+export function setSoundGroupMuted(group: SoundGroup, muted: boolean): void {
+  _groupMuted[group] = muted;
+  if (typeof window !== "undefined") localStorage.setItem(GROUP_KEYS[group], String(muted));
 }
 
 // ── Sound synthesis helpers ──────────────────────────────────────────────────
@@ -323,6 +348,7 @@ const SYNTHS: Record<SoundName, (ctx: AudioContext, out: GainNode) => void> = {
  */
 export async function playSound(name: SoundName): Promise<void> {
   if (_muted) return;
+  if (getSoundGroupMuted(SOUND_GROUPS[name])) return;
   // Also respect the persisted mute preference on first call
   if (typeof window !== "undefined") {
     const stored = localStorage.getItem(SFX_MUTE_KEY);

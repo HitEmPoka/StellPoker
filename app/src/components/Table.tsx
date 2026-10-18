@@ -85,6 +85,8 @@ import { useAutoRebuy } from "@/lib/use-auto-rebuy";
 import { AutoRebuySettings } from "./AutoRebuySettings";
 import { TurnTimerSettings } from "./TurnTimerSettings";
 import { useTurnTimer } from "@/lib/use-turn-timer";
+import { getSeatPrivacyMode, setSeatPrivacyMode, type SeatPrivacyMode } from "@/lib/seat-privacy";
+import { DEFAULT_SHORTCUTS, loadShortcuts, saveShortcuts, type ShortcutMap } from "@/lib/shortcut-store";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -186,6 +188,8 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [, bumpAliasTick] = useState(0);
   const [betAmount, setBetAmount] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState<ShortcutMap>(() => loadShortcuts());
+  const [privacyMode, setPrivacyMode] = useState<SeatPrivacyMode>(() => getSeatPrivacyMode());
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ alias: string; text: string; senderColor: string }>>([]);
@@ -198,6 +202,10 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const autoStreetRef = useRef<string>("");
   const inferredModeRef = useRef(false);
   const seatPreferenceRef = useRef<string | null>(null);
+  useEffect(() => {
+    setShortcuts(loadShortcuts());
+    setPrivacyMode(getSeatPrivacyMode());
+  }, []);
   const streetLogRef = useRef<{ handNumber: number; streets: { street: Street; pot: number; boardCards: number[] }[] }>({
     handNumber: 0,
     streets: [],
@@ -892,17 +900,17 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
       const minBet = Math.max(displayCurrentBet * 2, 1);
 
       switch (e.key.toLowerCase()) {
-        case "f":
+        case shortcuts.fold:
           e.preventDefault();
           handleAction("fold");
           break;
-        case "c":
+        case shortcuts.check:
           if (callAmount === 0) {
             e.preventDefault();
             handleAction("check");
           }
           break;
-        case "b":
+        case shortcuts.bet:
           e.preventDefault();
           if (callAmount > 0) {
             handleAction("call", callAmount);
@@ -910,13 +918,13 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             handleAction("bet", betAmount || minBet);
           }
           break;
-        case "r":
+        case shortcuts.raise:
           if (displayCurrentBet > 0 && displayMyStack > callAmount) {
             e.preventDefault();
             handleAction("raise", betAmount || minBet);
           }
           break;
-        case "a":
+        case shortcuts.allin:
           if (displayMyStack > 0) {
             e.preventDefault();
             handleAction("allin", displayMyStack);
@@ -957,6 +965,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     displayMyStack,
     displayPot,
     betAmount,
+    shortcuts,
     handleAction,
   ]);
 
@@ -1035,7 +1044,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
     }
-    if (!chatRateLimiterRef.current.tryConsume()) {
+    if (!chatRateLimiterRef.current.tryConsume(text)) {
       setChatNotice("Slow down — too many messages.");
       return;
     }
@@ -1056,7 +1065,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
 
   const sendEmote = (emote: string) => {
     if (!isChatEmote(emote)) return;
-    if (!chatRateLimiterRef.current.tryConsume()) {
+    if (!chatRateLimiterRef.current.tryConsume(emote)) {
       setChatNotice("Slow down — too many messages.");
       return;
     }
@@ -1372,6 +1381,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                     isWinner={!!winnerAddress && player.address === winnerAddress}
                     isBot={playMode === "single"}
                     alias={getAlias(player.address) ?? undefined}
+                    privacyMode={privacyMode}
                     hideChipStats={false}
                     activeEmote={seatEmotes[player.seat]}
                     boardCards={game.boardCards}
@@ -1463,6 +1473,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   isUser={true}
                   isWinner={!!winnerAddress && userPlayer.address === winnerAddress}
                   alias={getAlias(userPlayer.address) ?? undefined}
+                  privacyMode={privacyMode}
                   onEditAlias={() => {
                     const next = window.prompt(
                       "Set your table alias (max 16 chars):",
@@ -1622,6 +1633,52 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               ✕
             </button>
             <h2 className="text-[11px] mb-4 text-[#f1c40f] text-center" style={{ fontFamily: "'Press Start 2P', monospace" }}>KEYBOARD SHORTCUTS</h2>
+            <div className="mb-4 flex flex-col gap-2 text-[8px]" style={{ fontFamily: "'Press Start 2P', monospace" }}>
+              <label className="flex items-center justify-between gap-2">
+                <span>NAMEPLATES</span>
+                <select
+                  value={privacyMode}
+                  onChange={(e) => {
+                    const next = e.target.value as SeatPrivacyMode;
+                    setPrivacyMode(next);
+                    setSeatPrivacyMode(next);
+                  }}
+                  className="bg-[#2a1b12] text-[#f5e6c8] border border-[#6b4f12] px-1 py-1 text-[8px]"
+                  aria-label="Seat nameplate privacy mode"
+                >
+                  <option value="alias">Alias</option>
+                  <option value="address">Address</option>
+                  <option value="anonymous">Anonymous</option>
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-1">
+                {(["fold", "check", "bet", "raise", "allin"] as const).map((action) => (
+                  <label key={action} className="flex items-center justify-between gap-1 text-[#bdc3c7]">
+                    {action.toUpperCase()}
+                    <input
+                      value={shortcuts[action].toUpperCase()}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const key = e.target.value.slice(-1).toLowerCase();
+                        if (!key) return;
+                        const next = { ...shortcuts, [action]: key };
+                        setShortcuts(next);
+                        saveShortcuts(next);
+                      }}
+                      className="w-7 bg-[#2a1b12] text-center text-[#f1c40f] border border-[#6b4f12]"
+                      aria-label={`${action} shortcut`}
+                    />
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShortcuts({ ...DEFAULT_SHORTCUTS }); saveShortcuts(DEFAULT_SHORTCUTS); }}
+                className="self-end text-[7px] text-[#bdc3c7] underline"
+              >
+                RESET SHORTCUTS
+              </button>
+            </div>
             <div className="flex flex-col gap-3 text-[8px] leading-relaxed" style={{ fontFamily: "'Press Start 2P', monospace" }}>
               <div className="flex justify-between border-b border-gray-800 pb-1">
                 <span>[F]</span> <span style={{ color: "#bdc3c7" }}>Fold</span>

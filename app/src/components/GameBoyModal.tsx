@@ -7,7 +7,7 @@ import { clearSavedWallet } from "@/lib/freighter";
 import { ProofExplorer } from "./ProofExplorer";
 import { LanguageSelector } from "./LanguageSelector";
 import { useT } from "@/lib/i18n/context";
-import { getSfxMuted, setSfxMuted, getSfxVolume, setSfxVolume, playSound } from "@/lib/sound-engine";
+import { getSfxMuted, setSfxMuted, getSfxVolume, setSfxVolume, playSound, getSoundGroupMuted, setSoundGroupMuted, type SoundGroup } from "@/lib/sound-engine";
 
 type Tab = "settings" | "flappy" | "proofs";
 
@@ -283,6 +283,9 @@ export function GameBoyModal({ open, onClose, onLogout }: GameBoyModalProps) {
   const [volume, setVolume] = useState(() => Math.round(getMasterVolume() * 100));
   const [sfxMuted, setSfxMutedState] = useState(() => getSfxMuted());
   const [sfxVolume, setSfxVolumeState] = useState(() => Math.round(getSfxVolume() * 100));
+  const [mutedGroups, setMutedGroups] = useState<Record<SoundGroup, boolean>>(() => ({
+    cards: getSoundGroupMuted("cards"), chips: getSoundGroupMuted("chips"), alerts: getSoundGroupMuted("alerts"),
+  }));
   const [flappy, setFlappy] = useState<FlappyState>(initFlappy);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loopRef = useRef<number>(0);
@@ -663,6 +666,23 @@ export function GameBoyModal({ open, onClose, onLogout }: GameBoyModalProps) {
 
                 {/* Divider */}
                 <div style={{ borderTop: "1px dashed #6b7a60" }} />
+
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", fontSize: "6px", fontFamily: "'Press Start 2P', monospace", color: "#3a4438" }}>
+                  {(["cards", "chips", "alerts"] as const).map((group) => (
+                    <label key={group} style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+                      <input
+                        type="checkbox"
+                        checked={!mutedGroups[group]}
+                        onChange={() => {
+                          const muted = !mutedGroups[group];
+                          setMutedGroups((current) => ({ ...current, [group]: muted }));
+                          setSoundGroupMuted(group, muted);
+                        }}
+                      />
+                      {group}
+                    </label>
+                  ))}
+                </div>
 
                 {/* Language (Issue #60) */}
                 <LanguageSelector variant="settings" />

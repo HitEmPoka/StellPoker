@@ -1863,7 +1863,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
             let Ok(text) = msg.to_text() else {
                 continue;
             };
-            if !limiter.allow(Instant::now()) {
+            if !limiter.allow_payload(Instant::now(), text) {
                 tracing::warn!(table_id, "chat frame dropped: rate limit exceeded");
                 continue;
             }
