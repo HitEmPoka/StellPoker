@@ -241,13 +241,14 @@ mod test {
 
     #[test]
     fn test_export_table_state_versioned_snapshot() {
+        use soroban_sdk::testutils::Address as _;
         use soroban_sdk::Vec as SdkVec;
         let s = setup();
         let table_id = create_default_table(&s);
         let p1 = Address::generate(&s.env);
         let p2 = Address::generate(&s.env);
-        join_player(&s, table_id, &p1, &500);
-        join_player(&s, table_id, &p2, &700);
+        join_player(&s, table_id, &p1, 500);
+        join_player(&s, table_id, &p2, 700);
         s.client.start_hand(&table_id);
 
         let export = s.client.export_table_state(&table_id);

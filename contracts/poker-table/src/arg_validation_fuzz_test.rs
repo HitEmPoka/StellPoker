@@ -28,6 +28,7 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, Vec,
 };
 use std::format;
+use std::vec;
 use std::vec::Vec as StdVec;
 
 #[contract]
@@ -117,7 +118,7 @@ fn fuzz_config(f: &F) -> TableConfig {
 /// for typed errors in some SDK shapes) and `Err(Ok(e))` for typed contract
 /// errors vs `Err(Err(host))` for traps — so any `Err` whose debug starts
 /// with `Err(` is an unexpected trap.
-fn expect_typed_only<T: std::fmt::Debug, E: std::fmt::Debug>(res: Result<T, E>, ctx: &str) {
+fn expect_typed_only<T: std::fmt::Debug, E: std::fmt::Debug>(res: &Result<T, E>, ctx: &str) {
     if let Err(e) = res {
         let s = format!("{:?}", e);
         assert!(
@@ -250,7 +251,7 @@ proptest! {
         // Ensure at least one table exists so table 0 is sometimes valid.
         let _ = f.client.try_create_table(&f.admin, &fuzz_config(&f));
         let res = f.client.try_join_table(&table_id, &player, &buy_in);
-        expect_typed_only(res, "join_table");
+        expect_typed_only(&res, "join_table");
     }
 
     /// create_table with arbitrary rake/player counts/blinds never traps.
@@ -274,7 +275,7 @@ proptest! {
         let bb = big_blind.clamp(-1_000_000, 1_000_000);
         cfg.blinds_schedule = BlindsSchedule::fixed(&f.env, sb, bb);
         let res = f.client.try_create_table(&f.admin, &cfg);
-        expect_typed_only(res, "create_table");
+        expect_typed_only(&res, "create_table");
         // Invalid configs must be rejected (not silently accepted).
         if rake_bps > 500 || min_players < 2 || max_players < min_players || max_players > 6 {
             prop_assert!(res.is_err(), "invalid config should be rejected: rake={rake_bps} min={min_players} max={max_players}");
@@ -302,7 +303,7 @@ proptest! {
         };
         let action = action_from_parts(disc, amount);
         let res = f.client.try_player_action(&table_id, &victim, &seq, &action);
-        expect_typed_only(res, &format!("player_action({action:?}, seq={seq})"));
+        expect_typed_only(&res, &format!("player_action({action:?}, seq={seq})"));
     }
 
     /// commit_deal with arbitrary counts/indices never traps.
@@ -339,7 +340,7 @@ proptest! {
             &Bytes::new(&f.env),
             &Bytes::new(&f.env),
         );
-        expect_typed_only(res, "commit_deal");
+        expect_typed_only(&res, "commit_deal");
     }
 
     /// reveal_board with arbitrary card/index vectors never traps.
@@ -378,7 +379,7 @@ proptest! {
             &Bytes::new(&f.env),
             &Bytes::new(&f.env),
         );
-        expect_typed_only(res, "reveal_board");
+        expect_typed_only(&res, "reveal_board");
     }
 
     /// submit_showdown / claim_timeout / leave_table / rebuy with arbitrary
@@ -410,24 +411,24 @@ proptest! {
         let empty: Vec<(u32, u32)> = Vec::new(&f.env);
 
         let r1 = f.client.try_submit_showdown(&table_id, &f.committee, &hole, &salts, &Bytes::new(&f.env), &pi, &empty);
-        expect_typed_only(r1, "submit_showdown");
+        expect_typed_only(&r1, "submit_showdown");
 
         let claimer = Address::generate(&f.env);
         let r2 = f.client.try_claim_timeout(&table_id, &claimer);
-        expect_typed_only(r2, "claim_timeout");
+        expect_typed_only(&r2, "claim_timeout");
 
         let leaver = Address::generate(&f.env);
         let r3 = f.client.try_leave_table(&table_id, &leaver);
-        expect_typed_only(r3, "leave_table");
+        expect_typed_only(&r3, "leave_table");
 
         // Rebuy with a funded player; amount itself is arbitrary.
         let rb = Address::generate(&f.env);
         f.token_admin.mint(&rb, &1_000_000);
         let r4 = f.client.try_rebuy(&table_id, &rb, &amount);
-        expect_typed_only(r4, "rebuy");
+        expect_typed_only(&r4, "rebuy");
 
         let r5 = f.client.try_withdraw_rake(&table_id);
-        expect_typed_only(r5, "withdraw_rake");
+        expect_typed_only(&r5, "withdraw_rake");
     }
 
     /// Straddle / queue / misc entrypoints with arbitrary args never trap.
@@ -444,26 +445,26 @@ proptest! {
         let target = if table_id % 3 == 0 { real_id } else { table_id };
 
         let r1 = f.client.try_configure_straddle(&target, &multiplier, &StraddlePosition::Mississippi);
-        expect_typed_only(r1, "configure_straddle");
+        expect_typed_only(&r1, "configure_straddle");
 
         let r2 = f.client.try_configure_straddle_extended(&target, &multiplier, &StraddlePosition::Any, &false, &amount_cap.clamp(-1_000_000, 1_000_000), &true);
-        expect_typed_only(r2, "configure_straddle_extended");
+        expect_typed_only(&r2, "configure_straddle_extended");
 
         let player = Address::generate(&f.env);
         f.token_admin.mint(&player, &1_000_000);
         let r3 = f.client.try_post_mississippi_straddle(&target, &player);
-        expect_typed_only(r3, "post_mississippi_straddle");
+        expect_typed_only(&r3, "post_mississippi_straddle");
 
         let r4 = f.client.try_get_queue(&target);
         // get_queue is infallible (returns empty vec for unknown tables);
         // try_ success still proves no trap on arbitrary ids.
-        expect_typed_only(r4, "get_queue");
+        expect_typed_only(&r4, "get_queue");
 
         let r5 = f.client.try_leave_queue(&target, &player);
-        expect_typed_only(r5, "leave_queue");
+        expect_typed_only(&r5, "leave_queue");
 
         let r6 = f.client.try_start_hand(&target);
-        expect_typed_only(r6, "start_hand");
+        expect_typed_only(&r6, "start_hand");
 
         let _ = seq;
     }
@@ -490,7 +491,7 @@ fn arg_validation_rejects_garbage_bet_amounts_with_typed_errors() {
         // seq is always 999 (never previously used) -> any failure must be
         // amount validation (typed), not StaleActionSequence confusion.
         let res = f.client.try_player_action(&table_id, &actor.address, &999u32, &Action::Bet(amount));
-        expect_typed_only(res, "Bet(garbage)");
+        expect_typed_only(&res, "Bet(garbage)");
         // 0 / negative bets must never succeed.
         if amount <= 0 {
             assert!(res.is_err(), "Bet({amount}) should be rejected");
@@ -506,13 +507,13 @@ fn arg_validation_rejects_unknown_table_ids_with_typed_errors() {
     f.token_admin.mint(&player, &1000);
 
     let r = f.client.try_join_table(&bogus, &player, &500);
-    expect_typed_only(r, "join_table(bogus id)");
+    expect_typed_only(&r, "join_table(bogus id)");
     assert!(r.is_err(), "unknown table must be TableNotFound, not success");
 
     let claimer = Address::generate(&f.env);
     let r = f.client.try_claim_timeout(&bogus, &claimer);
-    expect_typed_only(r, "claim_timeout(bogus id)");
+    expect_typed_only(&r, "claim_timeout(bogus id)");
 
     let r = f.client.try_leave_table(&bogus, &player);
-    expect_typed_only(r, "leave_table(bogus id)");
+    expect_typed_only(&r, "leave_table(bogus id)");
 }

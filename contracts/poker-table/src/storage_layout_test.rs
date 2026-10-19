@@ -22,7 +22,7 @@
 extern crate std;
 
 use crate::types::*;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 /// (variant name, payload arity, is_persistent).
 /// `is_persistent == true` means `env.storage().persistent()`,
@@ -260,7 +260,7 @@ fn storage_layout_domains_are_stable() {
         // the spec. If you move a key, update BOTH this table and
         // storage-layout-snapshot.json with a migration note.
         assert!(
-            *domain == "persistent" || *domain == "instance",
+            domain == "persistent" || domain == "instance",
             "invalid domain for {name}"
         );
     }

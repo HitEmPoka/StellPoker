@@ -19,6 +19,7 @@ pub use ops::{
     admin_rollout_status, admin_start_drain, admin_toggle_maintenance, readiness,
 };
 pub use types::*;
+use crate::submission_ledger;
 
 use axum::{
     extract::{Path, Query, State},
@@ -1137,7 +1138,6 @@ pub async fn request_reveal(
     broadcast_table_state(&state, table_id).await;
 
     // Invalidate cache after state change
-    drop(tables);
     state.chain_cache.invalidate(table_id).await;
 
     Ok(Json(RevealResponse {

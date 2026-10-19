@@ -519,6 +519,9 @@ mod tests {
             proof_nonce: 0,
             mpc_node_progress: Vec::new(),
             mpc_operation_started: None,
+            pinned_artifact_hashes: std::collections::HashMap::new(),
+            rit_phase: String::new(),
+            rit_shared_board_count: 0,
         }
     }
 

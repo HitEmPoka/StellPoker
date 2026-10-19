@@ -195,6 +195,12 @@ struct RuntimeConfig {
     canary_percent_override: Option<u8>,
 }
 
+impl RuntimeConfig {
+    fn is_rolled_back(&self, kind: &str) -> bool {
+        self.global_rollback || self.rolled_back.contains(kind)
+    }
+}
+
 /// Shared rollout state.
 #[derive(Clone)]
 pub struct RolloutState {
