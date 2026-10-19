@@ -51,6 +51,8 @@ mod rake_history;
 #[cfg(test)]
 mod rake_history_test;
 #[cfg(test)]
+mod rake_proptest;
+#[cfg(test)]
 mod queue_test;
 #[cfg(test)]
 mod state_machine_test;

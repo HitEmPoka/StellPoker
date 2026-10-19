@@ -5634,6 +5634,7 @@ dependencies = [
 name = "stellar-zk-cards"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "soroban-sdk",
 ]
