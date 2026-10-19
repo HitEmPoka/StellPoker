@@ -38,6 +38,10 @@ Run every item against the RC URL before promoting. All must pass.
       the RC coordinator without CORS/network errors
 - [ ] **Wallet flow** — connect a test wallet, view open tables, open a table
       detail page
+- [ ] **Real Freighter smoke** — run the optional extension tier from
+      [docs/wallet-integration-testing.md](wallet-integration-testing.md#real-extension-smoke-runbook)
+      with a pre-approved profile, or confirm the latest nightly
+      `Wallet Real Extension Smoke` run is green
 - [ ] **Game page loads** — navigate to a table page; board/seats render
 - [ ] **No console errors** — zero uncaught exceptions on load and navigation
 - [ ] **Environment vars** — `NEXT_PUBLIC_*` values point at RC services, not prod
