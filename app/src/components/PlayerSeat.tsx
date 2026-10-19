@@ -14,6 +14,8 @@ import { classifyHandStrength } from "@/lib/hand-strength";
 import type { HandStrength } from "@/lib/hand-strength";
 import { getPlayerHudStats, type PlayerHudStats } from "@/lib/api";
 import { useT } from "@/lib/i18n/context";
+import type { SeatPrivacyMode } from "@/lib/seat-privacy";
+import { displaySeatName } from "@/lib/seat-privacy";
 
 interface PlayerSeatProps {
   player: Player;
@@ -25,6 +27,7 @@ interface PlayerSeatProps {
   labelOverride?: string;
   /** Client-side display alias for this seat's address, if one has been set. */
   alias?: string;
+  privacyMode?: SeatPrivacyMode;
   /** Renders a small edit affordance next to the label (own seat only). */
   onEditAlias?: () => void;
   /** Fired when the user clicks their own avatar to open the customizer (Issue #153). */
@@ -69,6 +72,7 @@ export function PlayerSeat({
   isBot = false,
   labelOverride,
   alias,
+  privacyMode = "alias",
   onEditAlias,
   onEditAvatar,
   hideChipStats = false,
@@ -107,13 +111,14 @@ export function PlayerSeat({
 
   const sprite = isUser ? 18 : opponentSprite(player.seat);
   const cardSize = isUser ? "md" : "sm";
-  const fallbackLabel = isUser
-    ? t("seat.you")
-    : isBot
-      ? t("seat.aiBot")
-      : `${player.address.slice(0, 4)}...${player.address.slice(-4)}`;
-  const displayLabel =
-    labelOverride ?? (alias ? (isUser ? `${alias} (YOU)` : alias) : fallbackLabel);
+  const fallbackLabel = isBot ? t("seat.aiBot") : displaySeatName({
+    address: player.address,
+    alias,
+    seat: player.seat,
+    isUser,
+    mode: privacyMode,
+  });
+  const displayLabel = labelOverride ?? fallbackLabel;
 
   const showStrength = isUser && player.cards && boardCards.length >= 3 && ["flop", "turn", "river"].includes(gamePhase);
   const handStrength: HandStrength | null = showStrength
