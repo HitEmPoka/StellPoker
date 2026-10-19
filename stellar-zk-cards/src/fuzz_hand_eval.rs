@@ -8,9 +8,9 @@
 //! Any divergence here would mean the on-chain settlement contract could pick
 //! a different winner than what the ZK proof attests.
 
-use std::format;
 use crate::evaluate_hand;
 use proptest::prelude::*;
+use std::format;
 
 // ---------------------------------------------------------------------------
 // Faithful Rust re-implementation of the Noir circuit's `score_five` and
@@ -280,5 +280,37 @@ proptest! {
                 cards_b,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod exhaustive_small_sets {
+    use super::{circuit_category, circuit_evaluate_hand_rank};
+    use crate::evaluate_hand;
+
+    fn compare_combinations(deck: &[u32], start: usize, hand: &mut [u32; 7], depth: usize) {
+        if depth == hand.len() {
+            let contract_category = evaluate_hand(hand).category();
+            let circuit_category = circuit_category(circuit_evaluate_hand_rank(*hand));
+            assert_eq!(
+                contract_category, circuit_category,
+                "category mismatch for exhaustive hand {hand:?}"
+            );
+            return;
+        }
+
+        let remaining = hand.len() - depth;
+        for index in start..=deck.len() - remaining {
+            hand[depth] = deck[index];
+            compare_combinations(deck, index + 1, hand, depth + 1);
+        }
+    }
+
+    #[test]
+    fn contract_and_circuit_agree_for_every_hand_in_reduced_deck() {
+        // 12 cards produce 792 unique seven-card hands. This is small enough
+        // for every CI run while still exercising duplicate ranks and suits.
+        let deck: Vec<u32> = [0, 1, 2, 3, 13, 14, 15, 16, 26, 27, 28, 29].to_vec();
+        compare_combinations(&deck, 0, &mut [0; 7], 0);
     }
 }

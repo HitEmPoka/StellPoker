@@ -52,7 +52,9 @@ See `scripts/test-flow.py` for the full implementation.
 
 ## Soak / endurance test
 
-`scripts/soak-test.py` runs a 24-hour continuous load against the coordinator
+`scripts/soak-test.py` runs a 24-hour continuous load against the coordinator,
+mixing solo and two-to-six-player tables. Fixture generation is reproducible
+with `--seed` and the run prints the seed in its startup line for replay.
 and detects memory leaks, connection leaks, and latency degradation.
 
 ### Quick start
@@ -63,6 +65,9 @@ pip install requests psutil
 
 # 5-minute smoke run
 python3 scripts/soak-test.py --duration 300
+
+# Reproduce a workload after a failure
+python3 scripts/soak-test.py --duration 300 --seed 42
 
 # Full 24-hour soak (requires docker-compose up)
 python3 scripts/soak-test.py
