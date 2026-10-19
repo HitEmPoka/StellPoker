@@ -1,5 +1,46 @@
 {
   "schema_version": 1,
   "metric": "median_ns",
-  "benchmarks": {}
+  "benchmarks": {
+    "hand_eval/flush": {
+      "median_ns": 699.926,
+      "mean_ns": 701.136
+    },
+    "hand_eval/four_of_a_kind": {
+      "median_ns": 805.872,
+      "mean_ns": 805.75
+    },
+    "hand_eval/full_house": {
+      "median_ns": 823.497,
+      "mean_ns": 824.094
+    },
+    "hand_eval/high_card": {
+      "median_ns": 677.358,
+      "mean_ns": 678.681
+    },
+    "hand_eval/one_pair": {
+      "median_ns": 756.683,
+      "mean_ns": 757.217
+    },
+    "hand_eval/royal_flush": {
+      "median_ns": 779.059,
+      "mean_ns": 780.666
+    },
+    "hand_eval/straight": {
+      "median_ns": 782.155,
+      "mean_ns": 783.14
+    },
+    "hand_eval/straight_flush": {
+      "median_ns": 784.847,
+      "mean_ns": 785.633
+    },
+    "hand_eval/three_of_a_kind": {
+      "median_ns": 797.371,
+      "mean_ns": 800.656
+    },
+    "hand_eval/two_pair": {
+      "median_ns": 811.09,
+      "mean_ns": 812.628
+    }
+  }
 }
