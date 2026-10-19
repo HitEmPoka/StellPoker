@@ -1,0 +1,138 @@
+{
+  "version": "1.0.0",
+  "network": "stellar-testnet",
+  "exported_at": "2026-10-19T14:30:00Z",
+  "table": {
+    "id": 42,
+    "name": "Stellar High Stakes #1",
+    "variant": "texas_holdem",
+    "betting_structure": "no_limit",
+    "stakes": {
+      "small_blind": 5,
+      "big_blind": 10,
+      "ante": 0,
+      "min_buy_in": 200,
+      "max_buy_in": 1000,
+      "currency": "USDC"
+    }
+  },
+  "hand": {
+    "number": 108,
+    "session_id": 98234,
+    "timestamp": "2026-10-19T14:28:10Z",
+    "duration_seconds": 45,
+    "dealer_seat": 0
+  },
+  "players": [
+    {
+      "seat": 0,
+      "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "alias": "Alice",
+      "starting_stack": 500,
+      "final_stack": 570,
+      "net_payout": 70,
+      "hole_cards": ["Ah", "Kh"],
+      "folded": false,
+      "all_in": false,
+      "is_hero": true
+    },
+    {
+      "seat": 1,
+      "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "alias": "Bob",
+      "starting_stack": 500,
+      "final_stack": 430,
+      "net_payout": -70,
+      "hole_cards": ["Qc", "Qd"],
+      "folded": false,
+      "all_in": false,
+      "is_hero": false
+    }
+  ],
+  "board": ["As", "7h", "2c", "Kd", "9s"],
+  "streets": [
+    {
+      "street": "preflop",
+      "pot_start": 0,
+      "actions": [
+        { "sequence": 1, "seat": 0, "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_sb", "amount": 5, "pot_after": 5 },
+        { "sequence": 2, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_bb", "amount": 10, "pot_after": 15 },
+        { "sequence": 3, "seat": 0, "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "raise", "amount": 25, "pot_after": 40 },
+        { "sequence": 4, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 15, "pot_after": 55 }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards_dealt": ["As", "7h", "2c"],
+      "pot_start": 55,
+      "actions": [
+        { "sequence": 5, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 55 },
+        { "sequence": 6, "seat": 0, "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "bet", "amount": 20, "pot_after": 75 },
+        { "sequence": 7, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 20, "pot_after": 95 }
+      ]
+    },
+    {
+      "street": "turn",
+      "cards_dealt": ["Kd"],
+      "pot_start": 95,
+      "actions": [
+        { "sequence": 8, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 95 },
+        { "sequence": 9, "seat": 0, "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "bet", "amount": 25, "pot_after": 120 },
+        { "sequence": 10, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 25, "pot_after": 145 }
+      ]
+    },
+    {
+      "street": "river",
+      "cards_dealt": ["9s"],
+      "pot_start": 145,
+      "actions": [
+        { "sequence": 11, "seat": 1, "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 145 },
+        { "sequence": 12, "seat": 0, "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 145 }
+      ]
+    }
+  ],
+  "showdown": {
+    "occurred": true,
+    "revealed_hands": [
+      {
+        "seat": 0,
+        "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "hole_cards": ["Ah", "Kh"],
+        "hand_rank_name": "Two Pair, Aces and Kings",
+        "hand_category": 3,
+        "best_five_cards": ["Ah", "As", "Kh", "Kd", "9s"]
+      },
+      {
+        "seat": 1,
+        "address": "GBEXAMPLEPLAYER2ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "hole_cards": ["Qc", "Qd"],
+        "hand_rank_name": "One Pair, Queens",
+        "hand_category": 2,
+        "best_five_cards": ["Qc", "Qd", "As", "Kd", "9s"]
+      }
+    ]
+  },
+  "pots": [
+    {
+      "pot_index": 0,
+      "is_side_pot": false,
+      "total": 145,
+      "rake": 5,
+      "winners": [
+        {
+          "seat": 0,
+          "address": "GAEXAMPLEPLAYER1ADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "amount": 140
+        }
+      ]
+    }
+  ],
+  "verifiability": {
+    "deck_root": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "zk_proof_verified": true,
+    "showdown_proof_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "deal_tx_hash": "0xaaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999",
+    "showdown_tx_hash": "0x9999888877776666555544443333222211110000ffffeeeeddddccccbbbbaaaa",
+    "settled_ledger": 1284560
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stellpoker.xyz/schemas/hand-history/v1.json",
+  "title": "StellPoker Standard Hand History",
+  "description": "Standardized, portable hand history format for StellPoker ecosystem tools and third-party trackers.",
+  "type": "object",
+  "required": [
+    "version",
+    "network",
+    "table",
+    "hand",
+    "players",
+    "streets",
+    "pots",
+    "verifiability"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Semantic schema version."
+    },
+    "network": {
+      "type": "string",
+      "enum": ["stellar-mainnet", "stellar-testnet", "stellar-futurenet", "standalone", "local"],
+      "description": "Stellar network identifier where the hand took place."
+    },
+    "exported_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the export was generated."
+    },
+    "table": {
+      "type": "object",
+      "required": ["id", "variant", "betting_structure", "stakes"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unique on-chain table identifier."
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional human-readable table name."
+        },
+        "variant": {
+          "type": "string",
+          "enum": ["texas_holdem", "omaha", "short_deck"],
+          "default": "texas_holdem"
+        },
+        "betting_structure": {
+          "type": "string",
+          "enum": ["no_limit", "pot_limit", "fixed_limit"]
+        },
+        "stakes": {
+          "type": "object",
+          "required": ["small_blind", "big_blind", "currency"],
+          "properties": {
+            "small_blind": { "type": "number", "minimum": 0 },
+            "big_blind": { "type": "number", "minimum": 0 },
+            "ante": { "type": "number", "minimum": 0, "default": 0 },
+            "min_buy_in": { "type": "number", "minimum": 0 },
+            "max_buy_in": { "type": "number", "minimum": 0 },
+            "currency": { "type": "string", "description": "Token contract address or symbol (e.g. USDC, XLM)" }
+          }
+        }
+      }
+    },
+    "hand": {
+      "type": "object",
+      "required": ["number", "session_id", "timestamp", "dealer_seat"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sequential hand number on this table."
+        },
+        "session_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Session ID linked to Game Studio or on-chain state."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of hand start."
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dealer_seat": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        }
+      }
+    },
+    "players": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "required": ["seat", "address", "starting_stack", "final_stack", "folded", "all_in"],
+        "properties": {
+          "seat": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "address": { "type": "string", "description": "Player's Stellar G-address" },
+          "alias": { "type": "string" },
+          "starting_stack": { "type": "number", "minimum": 0 },
+          "final_stack": { "type": "number", "minimum": 0 },
+          "net_payout": { "type": "number", "default": 0 },
+          "hole_cards": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^([2-9TJQKA][cdhs]|\\?\\?)$"
+            },
+            "description": "Standard card notation (e.g. Ah, Kd) or '??' when masked."
+          },
+          "folded": { "type": "boolean" },
+          "all_in": { "type": "boolean" },
+          "is_hero": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    "board": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[2-9TJQKA][cdhs]$"
+      },
+      "maxItems": 5,
+      "description": "Community board cards (flop, turn, river)."
+    },
+    "streets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["street", "pot_start", "actions"],
+        "properties": {
+          "street": {
+            "type": "string",
+            "enum": ["preflop", "flop", "turn", "river"]
+          },
+          "cards_dealt": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[2-9TJQKA][cdhs]$" }
+          },
+          "pot_start": { "type": "number", "minimum": 0 },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["sequence", "seat", "address", "action_type", "amount", "pot_after"],
+              "properties": {
+                "sequence": { "type": "integer", "minimum": 0 },
+                "seat": { "type": "integer", "minimum": 0 },
+                "address": { "type": "string" },
+                "action_type": {
+                  "type": "string",
+                  "enum": ["post_sb", "post_bb", "post_ante", "fold", "check", "call", "bet", "raise", "all_in", "timeout"]
+                },
+                "amount": { "type": "number", "minimum": 0 },
+                "pot_after": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "showdown": {
+      "type": "object",
+      "properties": {
+        "occurred": { "type": "boolean" },
+        "revealed_hands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["seat", "address", "hole_cards", "hand_rank_name"],
+            "properties": {
+              "seat": { "type": "integer" },
+              "address": { "type": "string" },
+              "hole_cards": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[2-9TJQKA][cdhs]$" }
+              },
+              "hand_rank_name": { "type": "string" },
+              "hand_category": { "type": "integer", "minimum": 1, "maximum": 10 },
+              "best_five_cards": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[2-9TJQKA][cdhs]$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "pots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pot_index", "total", "rake", "winners"],
+        "properties": {
+          "pot_index": { "type": "integer", "minimum": 0 },
+          "is_side_pot": { "type": "boolean", "default": false },
+          "total": { "type": "number", "minimum": 0 },
+          "rake": { "type": "number", "minimum": 0 },
+          "winners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["seat", "address", "amount"],
+              "properties": {
+                "seat": { "type": "integer" },
+                "address": { "type": "string" },
+                "amount": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "verifiability": {
+      "type": "object",
+      "required": ["deck_root", "zk_proof_verified"],
+      "properties": {
+        "deck_root": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "BN254 poseidon hash of shuffled deck root."
+        },
+        "zk_proof_verified": { "type": "boolean" },
+        "showdown_proof_hash": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$"
+        },
+        "deal_tx_hash": { "type": "string" },
+        "showdown_tx_hash": { "type": "string" },
+        "settled_ledger": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
