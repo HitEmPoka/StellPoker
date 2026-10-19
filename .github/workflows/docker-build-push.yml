@@ -95,3 +95,14 @@ jobs:
           fi
           cosign sign --yes "${{ steps.meta.outputs.repo }}@${DIGEST}"
 
+      # Publish the frontend RC channel from the same build digest so the RC
+      # URL runs an identical image. Promote via scripts/promote-rc.sh after
+      # the RC smoke checklist passes.
+      - name: Tag frontend RC channel
+        if: matrix.image == 'frontend'
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ steps.meta.outputs.repo }}:rc" \
+            "${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}"
+

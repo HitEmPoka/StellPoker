@@ -15,6 +15,7 @@ An ADR captures a significant architectural decision: the context that led to it
 | [ADR-005](ADR-005-committee-node-topology.md) | 3-Node REP3 Committee Topology | Accepted |
 | [ADR-006](ADR-006-upgrade-governance-timelock-multisig.md) | Timelock + Multi-Sig Gated Contract Upgrades | Accepted |
 | [ADR-007](ADR-007-event-sourcing-vs-storage-reads.md) | Event sourcing vs storage reads in indexer path | Accepted |
+| [ADR-008](ADR-008-committee-parameter-governance.md) | Committee Parameter Governance (Propose → Vote → Timelock → Execute) | Accepted |
 
 ## Format
 

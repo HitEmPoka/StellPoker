@@ -15,6 +15,8 @@ members = [
     "contracts/rakeback-rewards",
     "contracts/hand-verifier",
     "contracts/token-gated-table",
+    "contracts/protocol-treasury",
+    "contracts/governance",
     "stellar-zk-cards",
     "services/coordinator",
     "services/node",
@@ -38,10 +40,3 @@ lto = true
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true
-
-[dev-dependencies]
-regex = "1.10"
-lazy_static = "1.4"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-glob = "0.3"
