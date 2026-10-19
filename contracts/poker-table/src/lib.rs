@@ -28,7 +28,7 @@ mod event_schema;
 #[cfg(test)]
 mod event_schema_test;
 mod game;
-mod game_hub;
+pub mod game_hub;
 #[cfg(test)]
 mod gas_regression_test;
 mod governance;
@@ -67,7 +67,7 @@ mod tournament_lifecycle_test;
 mod ttl;
 #[cfg(test)]
 mod ttl_test;
-mod types;
+pub mod types;
 mod dispute_window;
 #[cfg(test)]
 mod dispute_window_test;
