@@ -82,6 +82,19 @@ jobs:
             -max_total_time=600 \
             || true
 
+      - name: Run signed_payload fuzz (10 min)
+        working-directory: services/coordinator
+        run: |
+          timeout 600 cargo fuzz run fuzz_signed_payload \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=2048 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=10 \
+            -max_total_time=600 \
+            || true
+
       - name: Check for crashes
         if: always()
         working-directory: services/coordinator
@@ -108,7 +121,7 @@ jobs:
         run: |
           echo "## Coordinator Fuzzing Results (Nightly)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Targets**: fuzz_table_lifecycle, fuzz_game_actions, fuzz_state_queries, fuzz_node_discovery" >> $GITHUB_STEP_SUMMARY
+          echo "- **Targets**: fuzz_table_lifecycle, fuzz_game_actions, fuzz_state_queries, fuzz_node_discovery, fuzz_signed_payload" >> $GITHUB_STEP_SUMMARY
           echo "- **Duration**: 10 minutes per target (40 minutes total)" >> $GITHUB_STEP_SUMMARY
           echo "- **Input Sizes**: 512-1024 bytes max" >> $GITHUB_STEP_SUMMARY
           echo "- **Coverage**: 20+ endpoints across 4 families" >> $GITHUB_STEP_SUMMARY

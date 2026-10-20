@@ -85,6 +85,19 @@ jobs:
             -max_total_time=30 \
             || true
 
+      - name: Run signed_payload fuzz (30s)
+        working-directory: services/coordinator
+        run: |
+          timeout 30 cargo fuzz run fuzz_signed_payload \
+            --release \
+            --fuzz-dir . \
+            -- \
+            -max_len=2048 \
+            -artifact_prefix=./crash-artifacts/ \
+            -timeout=5 \
+            -max_total_time=30 \
+            || true
+
       - name: Check for crashes
         if: always()
         working-directory: services/coordinator
@@ -111,7 +124,7 @@ jobs:
         run: |
           echo "## Coordinator Fuzzing Results (PR)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Targets**: fuzz_table_lifecycle, fuzz_game_actions, fuzz_state_queries, fuzz_node_discovery" >> $GITHUB_STEP_SUMMARY
+          echo "- **Targets**: fuzz_table_lifecycle, fuzz_game_actions, fuzz_state_queries, fuzz_node_discovery, fuzz_signed_payload" >> $GITHUB_STEP_SUMMARY
           echo "- **Duration**: 30 seconds per target (smoke test)" >> $GITHUB_STEP_SUMMARY
           echo "- **Input Sizes**: 512-1024 bytes max" >> $GITHUB_STEP_SUMMARY
           if [ -d crash-artifacts ] && [ -n "$(ls -A crash-artifacts)" ]; then

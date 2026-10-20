@@ -36,6 +36,12 @@ path = "fuzz_targets/fuzz_node_discovery.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_signed_payload"
+path = "fuzz_targets/fuzz_signed_payload.rs"
+test = false
+doc = false
+
 [profile.release]
 opt-level = 3
 lto = true
