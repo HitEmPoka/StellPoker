@@ -343,6 +343,41 @@ jobs:
           name: playwright-report-visual
           path: app/playwright-report/
 
+  browser-e2e:
+    name: Critical path e2e (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: cd app && npm ci
+
+      - name: Install browser
+        run: cd app && npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run critical path
+        run: cd app && npx playwright test --config=e2e/playwright.config.ts --project=${{ matrix.browser }} tests/critical-path.spec.ts
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: app/playwright-report/
+
   frontend-lint:
     name: Frontend lint
     runs-on: ubuntu-latest
