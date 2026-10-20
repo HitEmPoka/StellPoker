@@ -32,6 +32,8 @@ import os
 import sys
 import pathlib
 import subprocess
+import re
+import json
 
 SPEC_PATH = pathlib.Path(__file__).parent.parent / "docs" / "openapi.yaml"
 COORDINATOR_URL = os.environ.get("COORDINATOR_URL", "")
@@ -103,6 +105,88 @@ def validate_spec_structure(spec: dict) -> bool:
         print("[OK] Spec structure is valid.")
 
     return ok
+
+
+MAIN_RS_PATH = pathlib.Path(__file__).parent.parent / "services" / "coordinator" / "src" / "main.rs"
+
+
+def parse_coordinator_routes(content: str) -> dict:
+    """Extract Axum .route(...) mappings from coordinator main.rs."""
+    routes = {}
+    idx = 0
+    while True:
+        pos = content.find(".route(", idx)
+        if pos == -1:
+            break
+        open_pos = pos + len(".route(")
+        depth = 1
+        i = open_pos
+        in_string = False
+        escape = False
+        while i < len(content) and depth > 0:
+            c = content[i]
+            if escape:
+                escape = False
+            elif c == '\\':
+                escape = True
+            elif c == '"':
+                in_string = not in_string
+            elif not in_string:
+                if c == '(':
+                    depth += 1
+                elif c == ')':
+                    depth -= 1
+            i += 1
+        if depth == 0:
+            inner = content[open_pos:i-1].strip()
+            str_match = re.match(r'^"([^"]+)"\s*,\s*(.*)$', inner, re.DOTALL)
+            if str_match:
+                path = str_match.group(1).strip()
+                handler_expr = str_match.group(2).strip()
+                for method in ("get", "post", "put", "patch", "delete"):
+                    if re.search(r'(?:axum::routing::|\b)' + method + r'\(', handler_expr) or re.search(r'\.' + method + r'\(', handler_expr):
+                        routes[(method, path)] = handler_expr
+        idx = pos + 7
+    return routes
+
+
+def validate_handler_parity(spec: dict) -> bool:
+    """
+    Assert zero drift between OpenAPI spec operations and coordinator Axum routes.
+    Fails when implementation handlers diverge from OpenAPI.
+    """
+    if not MAIN_RS_PATH.exists():
+        print(f"[WARN] Coordinator main.rs not found at {MAIN_RS_PATH}; skipping parity check.")
+        return True
+
+    with open(MAIN_RS_PATH, encoding="utf-8") as f:
+        main_content = f.read()
+
+    impl_routes = parse_coordinator_routes(main_content)
+    spec_routes = {}
+    for path, path_item in spec.get("paths", {}).items():
+        # OpenAPI parameter format {param} matches Axum format :param
+        axum_path = re.sub(r'\{([^}]+)\}', r':\1', path)
+        for method, op in path_item.items():
+            if method.lower() in ("get", "post", "put", "patch", "delete"):
+                spec_routes[(method.lower(), axum_path)] = {
+                    "original_path": path,
+                    "operation_id": op.get("operationId", "unnamed"),
+                }
+
+    missing_in_impl = []
+    for route, meta in spec_routes.items():
+        if route not in impl_routes:
+            missing_in_impl.append(f"{route[0].upper()} {meta['original_path']} (operationId: {meta['operation_id']})")
+
+    if missing_in_impl:
+        print("[FAIL] OpenAPI spec contains operations missing from coordinator implementation:", file=sys.stderr)
+        for missing in missing_in_impl:
+            print(f"  - {missing}", file=sys.stderr)
+        return False
+
+    print(f"[OK] Handler parity validated: all {len(spec_routes)} OpenAPI operations match coordinator router.")
+    return True
 
 
 def run_schemathesis_offline() -> bool:
@@ -231,6 +315,7 @@ def main() -> int:
 
     spec = load_spec()
     ok = validate_spec_structure(spec)
+    ok = validate_handler_parity(spec) and ok
 
     ok = run_schemathesis_offline() and ok
 

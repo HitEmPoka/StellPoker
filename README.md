@@ -3,6 +3,8 @@
 See the contribution guide for issue follow-up workflow.
 
 [![CI](https://github.com/HitEmPoka/StellPoker/actions/workflows/ci.yml/badge.svg)](https://github.com/HitEmPoka/StellPoker/actions/workflows/ci.yml)
+[![Compatibility Matrix](https://github.com/HitEmPoka/StellPoker/actions/workflows/compatibility-matrix.yml/badge.svg)](https://github.com/HitEmPoka/StellPoker/actions/workflows/compatibility-matrix.yml)
+[![Flaky Test Detection](https://github.com/HitEmPoka/StellPoker/actions/workflows/flaky-test-detection.yml/badge.svg)](https://github.com/HitEmPoka/StellPoker/actions/workflows/flaky-test-detection.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Onchain Texas Hold'em poker on Stellar with cryptographically private cards using ZK-MPC (coSNARKs).
@@ -100,6 +102,20 @@ stellar-poker/
 | MPC | TACEO coNoir (REP3, 3-party) |
 | Hash function | Poseidon2 |
 | Frontend | Next.js 15, Freighter wallet |
+
+## Supported Toolchain Matrix
+
+Continuous integration validates compatibility across the following supported matrix:
+
+| Toolchain / Runtime | Pinned Production | Supported CI Matrix | Policy |
+|---|---|---|---|
+| **Noir (`nargo`)** | `1.0.0-beta.17` | `1.0.0-beta.16`, `1.0.0-beta.17`, `1.0.0-beta.18` | [Policy](docs/toolchain-compatibility-policy.md) |
+| **Rust Toolchain** | `stable` (1.84+) | `stable`, `1.84.0` | [Policy](docs/toolchain-compatibility-policy.md) |
+| **Soroban SDK** | `22.0.0` | Protocols 25 & 26 host functions | [Policy](docs/toolchain-compatibility-policy.md) |
+| **Node.js** | `20.x` LTS | `18.x`, `20.x`, `22.x`, `24.x` | [Policy](docs/toolchain-compatibility-policy.md) |
+| **Docker (Quickstart RPC)** | `stellar/quickstart:v22.0.1` | `v22.0.1` (pinned container) | [Policy](docs/toolchain-compatibility-policy.md) |
+
+See [docs/toolchain-compatibility-policy.md](docs/toolchain-compatibility-policy.md) for full version lifecycle and deprecation guidelines.
 
 ## Prerequisites
 

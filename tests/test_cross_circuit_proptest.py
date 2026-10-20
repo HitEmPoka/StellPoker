@@ -371,8 +371,10 @@ class CrossCircuitPipelineSimulator:
             for i in range(DECK_SIZE)
         ]
         expected_deck_root = compute_merkle_root_64(leaves)
+        deal_root = execution.deck_root
+        if expected_deck_root != deal_root:
+            raise ValueError(f"Deck root mismatch: expected {deal_root}, got {expected_deck_root}")
 
-        deal_root = expected_deck_root
         active_deck_root = tampered_deck_root if tampered_deck_root is not None else deal_root
 
         # INVARIANT 1: Deck Root Consistency across Reveal and Showdown

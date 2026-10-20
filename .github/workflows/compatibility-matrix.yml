@@ -1,0 +1,111 @@
+name: Cross-Version Compatibility Matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly matrix verification run
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  # ── Matrix 1: Node.js Compatibility ─────────────────────────────────────────
+  node-matrix:
+    name: Node.js ${{ matrix.node-version }} Compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: cd app && npm ci
+
+      - name: Run unit & component tests
+        run: cd app && npm test
+
+      - name: Build frontend application
+        run: cd app && npm run build
+        env:
+          NEXT_PUBLIC_COORDINATOR_URL: http://localhost:8080
+
+  # ── Matrix 2: Nargo (Noir) Circuit Compiler Matrix ──────────────────────────
+  nargo-matrix:
+    name: Nargo ${{ matrix.nargo-version }} Compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        nargo-version: ["1.0.0-beta.16", "1.0.0-beta.17", "1.0.0-beta.18"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Noir toolchain (nargo ${{ matrix.nargo-version }})
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          export PATH="$HOME/.nargo/bin:$PATH"
+          noirup -v ${{ matrix.nargo-version }}
+          echo "$HOME/.nargo/bin" >> $GITHUB_PATH
+
+      - name: Verify nargo version
+        run: nargo --version
+
+      - name: Check circuits compilation with nargo ${{ matrix.nargo-version }}
+        run: |
+          for circuit in circuits/deal_valid circuits/reveal_board_valid circuits/showdown_valid circuits/muck_valid; do
+            if [ -d "$circuit" ]; then
+              echo "Checking $circuit..."
+              nargo check --program-dir "$circuit" || exit 1
+            fi
+          done
+
+      - name: Run circuit unit tests
+        run: |
+          if [ -d "circuits/lib" ]; then
+            cd circuits/lib && nargo test
+          fi
+
+  # ── Matrix 3: Rust & Soroban Target Matrix ──────────────────────────────────
+  rust-soroban-matrix:
+    name: Rust ${{ matrix.rust-version }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust-version: [stable, "1.84.0"]
+        target: [wasm32-unknown-unknown]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ matrix.rust-version }} (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-version }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-compat-${{ matrix.rust-version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-compat-${{ matrix.rust-version }}-
+
+      - name: Check Soroban contracts on target
+        run: cargo check --target ${{ matrix.target }} -p poker-table -p zk-verifier -p committee-registry -p game-hub
+
+      - name: Run core contract tests
+        run: cargo test -p poker-table -p zk-verifier -p stellar-zk-cards
