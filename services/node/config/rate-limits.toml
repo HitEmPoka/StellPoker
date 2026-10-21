@@ -1,0 +1,34 @@
+# MPC Node Rate Limiting Configuration
+#
+# Add these settings to your party config TOML file to enable
+# per-peer rate limiting on MPC nodes.
+
+[rate_limits]
+# Maximum connections per peer
+max_connections_per_peer = 5
+
+# Maximum messages per second from a single peer
+max_messages_per_second = 100
+
+# Maximum bytes per second from a single peer
+max_bytes_per_second = 1048576  # 1 MB
+
+# Burst allowance (messages)
+burst_capacity = 200
+
+# Window size for rate calculation (milliseconds)
+window_ms = 1000
+
+# Action when limit exceeded: "disconnect" or "throttle"
+on_exceeded = "disconnect"
+
+# Cooldown period after disconnect (seconds)
+cooldown_seconds = 60
+
+# Metrics export port (0 = disabled)
+metrics_port = 9090
+
+[rate_limits.per_peer]
+# Per-peer overrides can be added here
+# Example:
+# "peer_1" = { max_messages_per_second = 50 }

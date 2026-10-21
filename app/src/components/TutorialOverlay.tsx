@@ -341,6 +341,7 @@ export interface TutorialOverlayProps {
   onGoTo: (step: TutorialStep) => void;
 }
 
+/** Renders Tutorial Overlay */
 export function TutorialOverlay({
   isOpen,
   currentStep,

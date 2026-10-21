@@ -27,10 +27,10 @@ pub struct EncryptionKey {
 impl EncryptionKey {
     /// Load from `ENCRYPTION_KEY` env var (64 hex chars → 32 bytes, version 1).
     pub fn from_env() -> Result<Self, String> {
-        let raw = std::env::var("ENCRYPTION_KEY")
-            .map_err(|_| "ENCRYPTION_KEY not set".to_string())?;
-        let bytes = hex::decode(raw.trim())
-            .map_err(|e| format!("ENCRYPTION_KEY is not valid hex: {e}"))?;
+        let raw =
+            std::env::var("ENCRYPTION_KEY").map_err(|_| "ENCRYPTION_KEY not set".to_string())?;
+        let bytes =
+            hex::decode(raw.trim()).map_err(|e| format!("ENCRYPTION_KEY is not valid hex: {e}"))?;
         let key_bytes: [u8; 32] = bytes
             .try_into()
             .map_err(|_| "ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars)".to_string())?;
@@ -105,7 +105,8 @@ impl EncryptionKey {
     /// Add a new key (becomes active). Old key is kept for decrypting existing data.
     pub fn rotate(&mut self, new_key_bytes: [u8; 32]) {
         let next_version = self.keys.iter().map(|(v, _)| *v).max().unwrap_or(0) + 1;
-        self.keys.insert(0, (next_version, Zeroizing::new(new_key_bytes)));
+        self.keys
+            .insert(0, (next_version, Zeroizing::new(new_key_bytes)));
         tracing::info!(version = next_version, "encryption key rotated");
     }
 }

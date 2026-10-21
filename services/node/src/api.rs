@@ -10,9 +10,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::cost::SessionCost;
 use crate::private_table::{self, DealPreparation, RevealPreparation, ShowdownPreparation};
 use crate::session::{self, MpcSessionState, SessionStatus};
-use crate::NodeState;
+use crate::{is_draining, NodeState};
 
 #[derive(Deserialize)]
 pub struct PrepareDealRequest {
@@ -43,12 +44,14 @@ pub struct DispatchSharesRequest {
     pub circuit_name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct SharesRequest {
     pub circuit_name: String,
     pub share_data: String, // base64-encoded share file
     pub source_party_id: u32,
     pub total_parties: u32,
+    #[serde(default)]
+    pub nonce: u64,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +63,64 @@ pub struct PermLookupRequest {
 pub struct PermLookupResponse {
     pub mapped_indices: Vec<u32>,
     pub salts: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub draining: bool,
+    pub node_id: u32,
+}
+
+#[derive(Deserialize)]
+pub struct DrainRequest {
+    #[serde(default)]
+    pub draining: bool,
+}
+
+#[derive(Serialize)]
+pub struct DrainResponse {
+    pub draining: bool,
+}
+
+/// GET /health — includes drain state for coordinator heartbeats (#571).
+pub async fn get_health(State(state): State<NodeState>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        draining: is_draining(&state),
+        node_id: state.node_id,
+    })
+}
+
+/// POST /admin/drain — toggle graceful drain mode for planned maintenance.
+///
+/// Body: `{"draining": true|false}`. While draining, the node finishes
+/// in-flight sessions (status/proof/generate keep working) but refuses new
+/// ones (prepare-*, new session shares) with 503.
+pub async fn post_admin_drain(
+    State(state): State<NodeState>,
+    Json(req): Json<DrainRequest>,
+) -> Json<DrainResponse> {
+    use std::sync::atomic::Ordering;
+    state.draining.store(req.draining, Ordering::SeqCst);
+    if req.draining {
+        tracing::warn!("MPC Node {} entered DRAIN mode", state.node_id);
+    } else {
+        tracing::info!("MPC Node {} left DRAIN mode", state.node_id);
+    }
+    Json(DrainResponse {
+        draining: req.draining,
+    })
+}
+
+fn reject_if_draining(state: &NodeState) -> Result<(), (StatusCode, String)> {
+    if is_draining(state) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "node is draining, refusing new sessions".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -82,6 +143,7 @@ pub async fn post_prepare_deal(
     Path(table_id): Path<u32>,
     Json(req): Json<PrepareDealRequest>,
 ) -> Result<Json<DealPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut seen = HashSet::new();
     for player in &req.players {
         if player.trim().is_empty() {
@@ -117,6 +179,7 @@ pub async fn post_prepare_reveal(
     Path((table_id, phase)): Path<(u32, String)>,
     Json(req): Json<PrepareRevealRequest>,
 ) -> Result<Json<RevealPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut tables = state.tables.write().await;
     let prepared = private_table::prepare_reveal(
         table_id,
@@ -141,6 +204,7 @@ pub async fn post_prepare_showdown(
     Path(table_id): Path<u32>,
     Json(req): Json<PrepareShowdownRequest>,
 ) -> Result<Json<ShowdownPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut tables = state.tables.write().await;
     let prepared = private_table::prepare_showdown(
         table_id,
@@ -247,11 +311,57 @@ pub async fn post_shares(
         ));
     }
 
+    // Issue #500: Replay protection for MPC phase messages.
+    // Verify that the per-message nonce from this peer has not been seen before.
+    if req.nonce > 0 {
+        let mut seen = state.seen_share_nonces.write().await;
+        let nonces = seen
+            .entry((session_id.clone(), req.source_party_id))
+            .or_default();
+        if !nonces.insert(req.nonce) {
+            tracing::warn!(
+                peer = req.source_party_id,
+                session_id = %session_id,
+                nonce = req.nonce,
+                "rejected replayed MPC share message"
+            );
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "duplicate/replayed share message from peer {} (nonce {})",
+                    req.source_party_id, req.nonce
+                ),
+            ));
+        }
+    }
+
+    // Reject a replayed/duplicate initiation of a session that already
+    // finished proof generation. Without this, a coordinator (or an
+    // attacker replaying a captured request) could resubmit shares under a
+    // completed session_id, silently reopening it and letting a later
+    // /generate call overwrite the already-delivered proof (issue #241).
+    if state.finalized_sessions.read().await.contains(&session_id) {
+        tracing::warn!(
+            session_id = %session_id,
+            "rejecting share submission for already-finalized session (replay)"
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "session {} has already completed and cannot be reopened",
+                session_id
+            ),
+        ));
+    }
+
     let session_lock = {
         let mut sessions = state.sessions.write().await;
         if let Some(existing) = sessions.get(&session_id) {
             existing.clone()
         } else {
+            // New session while draining: refuse so the node can drain for
+            // planned maintenance. In-flight sessions (existing IDs) continue.
+            reject_if_draining(&state)?;
             // Reject new sessions once the node is saturated, to prevent DoS via
             // session flooding (issue #315). Existing sessions are never rejected.
             let max = state.limits.max_concurrent_sessions;
@@ -291,6 +401,27 @@ pub async fn post_shares(
             format!(
                 "session circuit mismatch: existing={}, got={}",
                 session.circuit_name, req.circuit_name
+            ),
+        ));
+    }
+
+    // Once a session has moved past share collection, reject any further
+    // share submissions outright rather than letting them silently reset
+    // the session back to SharesReceived — closes the same replay hole as
+    // the finalized_sessions check above, but also covers a session that's
+    // still mid-flight (WitnessGenerating/ProofGenerating) rather than only
+    // ones that have already reached Complete.
+    if session.status != SessionStatus::SharesReceived {
+        tracing::warn!(
+            session_id = %session_id,
+            status = ?session.status,
+            "rejecting share submission for session past the sharing phase (replay)"
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "session {} is past the share-collection phase ({:?}) and cannot accept new shares",
+                session_id, session.status
             ),
         ));
     }
@@ -348,8 +479,21 @@ pub async fn post_generate(
     let metrics = state.metrics.clone();
     metrics.active_sessions.inc();
     let circuit_label = circuit_name.clone();
+    let finalized_sessions = state.finalized_sessions.clone();
 
-    tokio::spawn(async move {
+    // Profiling is strictly opt-in per session (issue #244): only pass the
+    // registry through when this session_id was explicitly enabled via
+    // POST /session/:id/profile before generation started. A session
+    // nobody asked to profile pays no sampling overhead.
+    let profiling_enabled = state.profiling.is_enabled(&sid).await;
+    let profile = profiling_enabled.then(|| state.profiling.clone());
+
+    // tokio::spawn drops task-locals, so carry the request's trace context
+    // into the background proof task explicitly (Issue #672).
+    let trace = crate::trace_context::current()
+        .unwrap_or_else(crate::trace_context::TraceContext::new_root);
+
+    let task = async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
         let proof_future = session::run_proof_generation(
             sid.clone(),
@@ -363,6 +507,7 @@ pub async fn post_generate(
             crs_path,
             limits,
             phase_timeouts,
+            profile,
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
@@ -405,17 +550,25 @@ pub async fn post_generate(
                 }
                 session.proof_path = Some(proof_path);
                 session.public_inputs = Some(public_inputs);
+                session.bytes_out = proof_bytes.len() as u64;
                 session.status = SessionStatus::Complete;
+                finalized_sessions.write().await.insert(sid.clone());
                 metrics
                     .proofs_generated
                     .with_label_values(&[&circuit_label])
                     .inc();
+                let cost = session.cost_snapshot();
                 tracing::info!(
                     session_id = %sid,
                     phase = "complete",
                     node_id,
                     circuit = %circuit_label,
-                    "proof generation complete"
+                    status = %cost.status,
+                    cpu_seconds = cost.cpu_seconds,
+                    bytes_in = cost.bytes_in,
+                    bytes_out = cost.bytes_out,
+                    fragments = cost.fragments,
+                    "MPC session cost attribution"
                 );
             }
             Err(e) => {
@@ -424,16 +577,27 @@ pub async fn post_generate(
                     .with_label_values(&["proof_generation"])
                     .inc();
                 session.status = SessionStatus::Failed(e.clone());
+                let cost = session.cost_snapshot();
                 tracing::error!(
                     session_id = %sid,
                     phase = "proof_generation",
                     node_id,
                     error = %e,
-                    "proof generation failed"
+                    circuit = %cost.circuit_name,
+                    cpu_seconds = cost.cpu_seconds,
+                    bytes_in = cost.bytes_in,
+                    bytes_out = cost.bytes_out,
+                    "MPC session failed: {}",
+                    e
                 );
             }
         }
-    });
+    };
+    tokio::spawn(crate::trace_context::scope(
+        trace,
+        "mpc.proof_generation",
+        task,
+    ));
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -497,4 +661,188 @@ pub struct ProofResponse {
     pub session_id: String,
     pub proof: String, // base64-encoded proof bytes
     pub public_inputs: Vec<String>,
+}
+
+/// POST /session/:id/profile
+///
+/// Enable on-demand CPU/memory profiling for a session (issue #244). Must be
+/// called before the session's proof generation starts.
+pub async fn post_enable_profiling(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> StatusCode {
+    state.profiling.enable(&session_id).await;
+    StatusCode::ACCEPTED
+}
+
+/// GET /session/:id/profile
+///
+/// Retrieve the resource profile collected for a session (issue #244).
+/// Returns `404` until the session has been enabled and has produced at
+/// least one profiled phase.
+pub async fn get_profile(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<crate::profiling::SessionProfile>, StatusCode> {
+    state
+        .profiling
+        .get(&session_id)
+        .await
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Tests for #241 — coordinator replay protection on session initiation.
+#[cfg(test)]
+mod replay_protection_tests {
+    use super::*;
+    use crate::limits::ResourceLimits;
+    use crate::metrics::NodeMetrics;
+    use std::collections::{HashMap, HashSet};
+
+    fn test_state() -> NodeState {
+        NodeState {
+            node_id: 0,
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            tables: Arc::new(RwLock::new(HashMap::new())),
+            party_config_path: "unused".to_string(),
+            peer_http_endpoints: vec![],
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            limits: ResourceLimits::default(),
+            metrics: NodeMetrics::new(),
+            finalized_sessions: Arc::new(RwLock::new(HashSet::new())),
+            seen_share_nonces: Arc::new(RwLock::new(HashMap::new())),
+            profiling: crate::profiling::ProfileRegistry::new(),
+        }
+    }
+
+    fn shares_req() -> SharesRequest {
+        SharesRequest {
+            circuit_name: "deal_valid".to_string(),
+            share_data: "dGVzdA==".to_string(), // base64("test")
+            source_party_id: 0,
+            total_parties: 3,
+            nonce: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_first_time_shares_for_a_fresh_session() {
+        let state = test_state();
+        let result = post_shares(
+            State(state),
+            Path("session-fresh".to_string()),
+            Json(shares_req()),
+        )
+        .await;
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rejects_shares_for_a_session_already_marked_finalized() {
+        let state = test_state();
+        let session_id = "session-finalized".to_string();
+        state
+            .finalized_sessions
+            .write()
+            .await
+            .insert(session_id.clone());
+
+        let result = post_shares(State(state), Path(session_id), Json(shares_req())).await;
+
+        let err = result.expect_err("expected replay rejection");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert!(
+            err.1.contains("already completed"),
+            "unexpected message: {}",
+            err.1
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_shares_once_session_has_moved_past_the_sharing_phase() {
+        let state = test_state();
+        let session_id = "session-inflight".to_string();
+
+        // First submission creates and stores the session normally.
+        post_shares(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(shares_req()),
+        )
+        .await
+        .expect("initial submission should succeed");
+
+        // Simulate the coordinator having moved the session on to generation,
+        // the same way post_generate does.
+        {
+            let sessions = state.sessions.read().await;
+            let lock = sessions.get(&session_id).unwrap().clone();
+            let mut session = lock.write().await;
+            session.status = SessionStatus::WitnessGenerating;
+        }
+
+        // A replayed/duplicate share submission for the same session_id must
+        // now be rejected instead of resetting the session back to
+        // SharesReceived.
+        let result = post_shares(State(state), Path(session_id), Json(shares_req())).await;
+
+        let err = result.expect_err("expected replay rejection");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert!(
+            err.1.contains("share-collection phase"),
+            "unexpected message: {}",
+            err.1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_different_session_id_is_unaffected_by_another_sessions_finalization() {
+        let state = test_state();
+        state
+            .finalized_sessions
+            .write()
+            .await
+            .insert("session-other-finalized".to_string());
+
+        let result = post_shares(
+            State(state),
+            Path("session-brand-new".to_string()),
+            Json(shares_req()),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_replayed_share_nonce_from_peer() {
+        let state = test_state();
+        let session_id = "session-nonce-replay".to_string();
+
+        let mut req = shares_req();
+        req.nonce = 12345;
+
+        // First attempt succeeds
+        let res1 = post_shares(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(req.clone()),
+        )
+        .await;
+        assert_eq!(res1.unwrap(), StatusCode::OK);
+
+        // Immediate replay with same nonce from same peer is rejected
+        let res2 = post_shares(
+            State(state),
+            Path(session_id),
+            Json(req),
+        )
+        .await;
+
+        let err = res2.expect_err("expected duplicate nonce replay rejection");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert!(err.1.contains("duplicate/replayed share message"));
+        assert!(err.1.contains("peer 0"));
+    }
 }

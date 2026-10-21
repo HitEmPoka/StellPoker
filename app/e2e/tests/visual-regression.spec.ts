@@ -121,3 +121,41 @@ test.describe("visual regression: mobile viewport", () => {
     });
   });
 });
+
+test.describe("visual regression: right-to-left (RTL) layout", () => {
+  async function setupRtl(page: any) {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("stellpoker.locale", "ar");
+      document.documentElement.setAttribute("dir", "rtl");
+      document.documentElement.setAttribute("lang", "ar");
+    });
+  }
+
+  test("RTL lobby connect screen screenshot", async ({ page }) => {
+    await setupRtl(page);
+    await page.goto("/");
+    await page.getByText(/CLICK ANYWHERE TO START|ابدأ/i).click();
+    await page.waitForTimeout(1000);
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page).toHaveScreenshot("rtl-lobby-connect-screen.png", {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+
+  test("RTL table screenshot with fixture locale", async ({ page }) => {
+    await setupFreighter(page);
+    await setupRtl(page);
+    await page.goto("/");
+    await page.getByText(/CLICK ANYWHERE TO START|ابدأ/i).click();
+    await page.waitForTimeout(500);
+    await page.getByText(/CONNECT FREIGHTER|ربط/i).click();
+    await page.waitForTimeout(1000);
+    await page.getByText(/CREATE TABLE|إنشاء طاولة/i).click();
+    await page.waitForTimeout(500);
+    await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    await expect(page).toHaveScreenshot("rtl-table.png", {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
+

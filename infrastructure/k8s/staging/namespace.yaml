@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stellpoker-staging
+  labels:
+    app.kubernetes.io/part-of: stellpoker
+    stellpoker.io/environment: staging

@@ -43,10 +43,80 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "big_blind"
+                        "symbol": "betting_structure"
                       },
                       "val": {
-                        "i128": "10"
+                        "vec": [
+                          {
+                            "symbol": "NoLimit"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "blinds_schedule"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "levels"
+                            },
+                            "val": {
+                              "vec": [
+                                {
+                                  "map": [
+                                    {
+                                      "key": {
+                                        "symbol": "ante"
+                                      },
+                                      "val": {
+                                        "vec": [
+                                          {
+                                            "symbol": "None"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "big_blind"
+                                      },
+                                      "val": {
+                                        "i128": "10"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "break_seconds"
+                                      },
+                                      "val": {
+                                        "u64": "0"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "duration_seconds"
+                                      },
+                                      "val": {
+                                        "u64": "0"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "small_blind"
+                                      },
+                                      "val": {
+                                        "i128": "5"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -55,6 +125,14 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "dead_chip_timeout_ledgers"
+                      },
+                      "val": {
+                        "u32": 0
                       }
                     },
                     {
@@ -139,10 +217,22 @@
                     },
                     {
                       "key": {
-                        "symbol": "small_blind"
+                        "symbol": "reclaim_period_ledgers"
                       },
                       "val": {
-                        "i128": "5"
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "street_time_limit"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "None"
+                          }
+                        ]
                       }
                     },
                     {
@@ -160,6 +250,12 @@
                       "val": {
                         "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "treasury"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -390,6 +486,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
                 },
                 {
+                  "u32": 1
+                },
+                {
                   "vec": [
                     {
                       "symbol": "Fold"
@@ -479,6 +578,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
                 },
                 {
+                  "u32": 1
+                },
+                {
                   "vec": [
                     {
                       "symbol": "Fold"
@@ -551,39 +653,6 @@
         }
       ]
     ],
-    [],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "player_action",
-              "args": [
-                {
-                  "u32": 0
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
-                },
-                {
-                  "vec": [
-                    {
-                      "symbol": "Fold"
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [],
-    [],
-    [],
     [],
     []
   ],
@@ -663,7 +732,7 @@
                       "symbol": "next_slot"
                     },
                     "val": {
-                      "u32": 3
+                      "u32": 2
                     }
                   },
                   {
@@ -671,7 +740,7 @@
                       "symbol": "stored"
                     },
                     "val": {
-                      "u32": 3
+                      "u32": 2
                     }
                   },
                   {
@@ -679,7 +748,7 @@
                       "symbol": "total_archived"
                     },
                     "val": {
-                      "u32": 3
+                      "u32": 2
                     }
                   }
                 ]
@@ -1068,173 +1137,49 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "HandRecord"
+                    "symbol": "PlayerActionCounter"
                   },
                   {
                     "u32": 0
                   },
                   {
-                    "u32": 2
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "map": [
+                "u32": 1
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518400
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
                   {
-                    "key": {
-                      "symbol": "actions"
-                    },
-                    "val": {
-                      "vec": [
-                        {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "amount"
-                              },
-                              "val": {
-                                "i128": "0"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "kind"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Fold"
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "phase"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Preflop"
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "seat"
-                              },
-                              "val": {
-                                "u32": 0
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    }
+                    "symbol": "PlayerActionCounter"
                   },
                   {
-                    "key": {
-                      "symbol": "board"
-                    },
-                    "val": {
-                      "vec": []
-                    }
+                    "u32": 0
                   },
                   {
-                    "key": {
-                      "symbol": "hand_number"
-                    },
-                    "val": {
-                      "u32": 3
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "payouts"
-                    },
-                    "val": {
-                      "vec": [
-                        {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "address"
-                              },
-                              "val": {
-                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "amount"
-                              },
-                              "val": {
-                                "i128": "15"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "seat"
-                              },
-                              "val": {
-                                "u32": 1
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "players"
-                    },
-                    "val": {
-                      "vec": [
-                        {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
-                        },
-                        {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "rake"
-                    },
-                    "val": {
-                      "i128": "0"
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "settled_ledger"
-                    },
-                    "val": {
-                      "u32": 0
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "showdown"
-                    },
-                    "val": {
-                      "bool": false
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "total_pot"
-                    },
-                    "val": {
-                      "i128": "15"
-                    }
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
                   }
                 ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 1
               }
             }
           },
@@ -1350,6 +1295,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "break_ends_at"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "committee"
                     },
                     "val": {
@@ -1364,10 +1317,80 @@
                       "map": [
                         {
                           "key": {
-                            "symbol": "big_blind"
+                            "symbol": "betting_structure"
                           },
                           "val": {
-                            "i128": "10"
+                            "vec": [
+                              {
+                                "symbol": "NoLimit"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blinds_schedule"
+                          },
+                          "val": {
+                            "map": [
+                              {
+                                "key": {
+                                  "symbol": "levels"
+                                },
+                                "val": {
+                                  "vec": [
+                                    {
+                                      "map": [
+                                        {
+                                          "key": {
+                                            "symbol": "ante"
+                                          },
+                                          "val": {
+                                            "vec": [
+                                              {
+                                                "symbol": "None"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "big_blind"
+                                          },
+                                          "val": {
+                                            "i128": "10"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "break_seconds"
+                                          },
+                                          "val": {
+                                            "u64": "0"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "duration_seconds"
+                                          },
+                                          "val": {
+                                            "u64": "0"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "small_blind"
+                                          },
+                                          "val": {
+                                            "i128": "5"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
                           }
                         },
                         {
@@ -1376,6 +1399,14 @@
                           },
                           "val": {
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "dead_chip_timeout_ledgers"
+                          },
+                          "val": {
+                            "u32": 0
                           }
                         },
                         {
@@ -1460,10 +1491,22 @@
                         },
                         {
                           "key": {
-                            "symbol": "small_blind"
+                            "symbol": "reclaim_period_ledgers"
                           },
                           "val": {
-                            "i128": "5"
+                            "u32": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "street_time_limit"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "None"
+                              }
+                            ]
                           }
                         },
                         {
@@ -1484,6 +1527,12 @@
                         },
                         {
                           "key": {
+                            "symbol": "treasury"
+                          },
+                          "val": "void"
+                        },
+                        {
+                          "key": {
                             "symbol": "verifier"
                           },
                           "val": {
@@ -1491,6 +1540,14 @@
                           }
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "current_blind_level"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {
@@ -1543,52 +1600,7 @@
                       "symbol": "hand_actions"
                     },
                     "val": {
-                      "vec": [
-                        {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "amount"
-                              },
-                              "val": {
-                                "i128": "0"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "kind"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Fold"
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "phase"
-                              },
-                              "val": {
-                                "vec": [
-                                  {
-                                    "symbol": "Preflop"
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "seat"
-                              },
-                              "val": {
-                                "u32": 0
-                              }
-                            }
-                          ]
-                        }
-                      ]
+                      "vec": []
                     }
                   },
                   {
@@ -1648,12 +1660,20 @@
                   },
                   {
                     "key": {
+                      "symbol": "level_started_at"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "phase"
                     },
                     "val": {
                       "vec": [
                         {
-                          "symbol": "Settlement"
+                          "symbol": "Preflop"
                         }
                       ]
                     }
@@ -1687,7 +1707,7 @@
                                 "symbol": "bet_this_round"
                               },
                               "val": {
-                                "i128": "5"
+                                "i128": "10"
                               }
                             },
                             {
@@ -1695,7 +1715,7 @@
                                 "symbol": "committed"
                               },
                               "val": {
-                                "i128": "5"
+                                "i128": "10"
                               }
                             },
                             {
@@ -1703,7 +1723,7 @@
                                 "symbol": "folded"
                               },
                               "val": {
-                                "bool": true
+                                "bool": false
                               }
                             },
                             {
@@ -1735,7 +1755,7 @@
                                 "symbol": "stack"
                               },
                               "val": {
-                                "i128": "495"
+                                "i128": "490"
                               }
                             },
                             {
@@ -1771,7 +1791,7 @@
                                 "symbol": "bet_this_round"
                               },
                               "val": {
-                                "i128": "10"
+                                "i128": "5"
                               }
                             },
                             {
@@ -1779,7 +1799,7 @@
                                 "symbol": "committed"
                               },
                               "val": {
-                                "i128": "10"
+                                "i128": "5"
                               }
                             },
                             {
@@ -1819,7 +1839,7 @@
                                 "symbol": "stack"
                               },
                               "val": {
-                                "i128": "505"
+                                "i128": "495"
                               }
                             },
                             {
@@ -1840,7 +1860,7 @@
                       "symbol": "pot"
                     },
                     "val": {
-                      "i128": "0"
+                      "i128": "15"
                     }
                   },
                   {
@@ -1853,10 +1873,30 @@
                   },
                   {
                     "key": {
+                      "symbol": "rit_state"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "None"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "session_id"
                     },
                     "val": {
                       "u32": 3936862709
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "settlement_entered_ledger"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {
@@ -2072,26 +2112,6 @@
           "ext": "v0"
         },
         "live_until": 4095
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
-              "key": {
-                "ledger_key_nonce": {
-                  "nonce": "3126073502131104533"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6311999
       },
       {
         "entry": {

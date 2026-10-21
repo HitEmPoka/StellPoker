@@ -52,6 +52,9 @@ function isMpcPhase(phase: string): boolean {
   );
 }
 
+/** Renders Mpc Node Indicator.
+ * @param props(object) - props(object).
+ */
 export function MpcNodeIndicator({
   tableId,
   phase,

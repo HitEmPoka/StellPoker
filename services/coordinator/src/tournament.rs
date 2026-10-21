@@ -46,15 +46,51 @@ pub struct BlindLevel {
 /// Returns the default 9-level blind schedule for a micro sit-and-go.
 pub fn default_blind_schedule() -> Vec<BlindLevel> {
     vec![
-        BlindLevel { small_blind: 500_000,   big_blind: 1_000_000,   hands: 6  },
-        BlindLevel { small_blind: 1_000_000,  big_blind: 2_000_000,   hands: 6  },
-        BlindLevel { small_blind: 1_500_000,  big_blind: 3_000_000,   hands: 5  },
-        BlindLevel { small_blind: 2_500_000,  big_blind: 5_000_000,   hands: 5  },
-        BlindLevel { small_blind: 5_000_000,  big_blind: 10_000_000,  hands: 4  },
-        BlindLevel { small_blind: 10_000_000, big_blind: 20_000_000,  hands: 4  },
-        BlindLevel { small_blind: 20_000_000, big_blind: 40_000_000,  hands: 3  },
-        BlindLevel { small_blind: 40_000_000, big_blind: 80_000_000,  hands: 3  },
-        BlindLevel { small_blind: 80_000_000, big_blind: 160_000_000, hands: 99 }, // final level
+        BlindLevel {
+            small_blind: 500_000,
+            big_blind: 1_000_000,
+            hands: 6,
+        },
+        BlindLevel {
+            small_blind: 1_000_000,
+            big_blind: 2_000_000,
+            hands: 6,
+        },
+        BlindLevel {
+            small_blind: 1_500_000,
+            big_blind: 3_000_000,
+            hands: 5,
+        },
+        BlindLevel {
+            small_blind: 2_500_000,
+            big_blind: 5_000_000,
+            hands: 5,
+        },
+        BlindLevel {
+            small_blind: 5_000_000,
+            big_blind: 10_000_000,
+            hands: 4,
+        },
+        BlindLevel {
+            small_blind: 10_000_000,
+            big_blind: 20_000_000,
+            hands: 4,
+        },
+        BlindLevel {
+            small_blind: 20_000_000,
+            big_blind: 40_000_000,
+            hands: 3,
+        },
+        BlindLevel {
+            small_blind: 40_000_000,
+            big_blind: 80_000_000,
+            hands: 3,
+        },
+        BlindLevel {
+            small_blind: 80_000_000,
+            big_blind: 160_000_000,
+            hands: 99,
+        }, // final level
     ]
 }
 
@@ -71,7 +107,9 @@ pub struct PayoutSchedule {
 impl PayoutSchedule {
     /// Standard top-3 payout: 50 / 30 / 20.
     pub fn top_three() -> Self {
-        Self { shares: vec![50, 30, 20] }
+        Self {
+            shares: vec![50, 30, 20],
+        }
     }
 
     /// Winner-takes-all.
@@ -139,7 +177,10 @@ pub struct BlindState {
 
 impl BlindState {
     fn new() -> Self {
-        Self { level_index: 0, hands_at_level: 0 }
+        Self {
+            level_index: 0,
+            hands_at_level: 0,
+        }
     }
 
     /// Record a completed hand and advance the level if due.
@@ -147,9 +188,7 @@ impl BlindState {
     pub fn record_hand(&mut self, schedule: &[BlindLevel]) -> bool {
         self.hands_at_level += 1;
         let current = &schedule[self.level_index];
-        if self.hands_at_level >= current.hands
-            && self.level_index + 1 < schedule.len()
-        {
+        if self.hands_at_level >= current.hands && self.level_index + 1 < schedule.len() {
             self.level_index += 1;
             self.hands_at_level = 0;
             return true;
@@ -197,7 +236,9 @@ impl Tournament {
     pub fn new(req: CreateTournamentRequest) -> Self {
         let id = Uuid::new_v4().to_string();
         let blind_schedule = req.blind_schedule.unwrap_or_else(default_blind_schedule);
-        let payout_schedule = req.payout_schedule.unwrap_or_else(PayoutSchedule::top_three);
+        let payout_schedule = req
+            .payout_schedule
+            .unwrap_or_else(PayoutSchedule::top_three);
         Tournament {
             id,
             name: req.name,
@@ -220,7 +261,11 @@ impl Tournament {
     }
 
     /// Register a player. Returns Err if registration is closed or full.
-    pub fn register(&mut self, address: String, table_contract: String) -> Result<(), TournamentError> {
+    pub fn register(
+        &mut self,
+        address: String,
+        table_contract: String,
+    ) -> Result<(), TournamentError> {
         if self.status != TournamentStatus::Registration {
             return Err(TournamentError::RegistrationClosed);
         }
@@ -230,13 +275,16 @@ impl Tournament {
         if self.players.contains_key(&address) {
             return Err(TournamentError::AlreadyRegistered);
         }
-        self.players.insert(address.clone(), TournamentPlayer {
-            address,
-            table_contract,
-            stack: self.buy_in,
-            finish_position: None,
-            payout: None,
-        });
+        self.players.insert(
+            address.clone(),
+            TournamentPlayer {
+                address,
+                table_contract,
+                stack: self.buy_in,
+                finish_position: None,
+                payout: None,
+            },
+        );
         self.prize_pool += self.buy_in;
         Ok(())
     }
@@ -258,10 +306,7 @@ impl Tournament {
     ///
     /// `stack_updates` maps player address → new stack after settlement.
     /// Returns the list of newly eliminated player addresses.
-    pub fn record_hand_result(
-        &mut self,
-        stack_updates: HashMap<String, i128>,
-    ) -> Vec<String> {
+    pub fn record_hand_result(&mut self, stack_updates: HashMap<String, i128>) -> Vec<String> {
         let mut newly_eliminated = Vec::new();
 
         for (addr, new_stack) in &stack_updates {
@@ -366,7 +411,11 @@ impl Tournament {
                     // Move the last player from the largest table to the smallest.
                     let player = counts.get_mut(&from).unwrap().pop().unwrap();
                     counts.get_mut(&to).unwrap().push(player.clone());
-                    moves.push(TableMove { player, from_table: from, to_table: to });
+                    moves.push(TableMove {
+                        player,
+                        from_table: from,
+                        to_table: to,
+                    });
                 }
                 _ => break,
             }
@@ -382,7 +431,9 @@ impl Tournament {
         }
         for p in self.players.values() {
             if p.stack > 0 && p.finish_position.is_none() {
-                *active_per_table.entry(p.table_contract.clone()).or_default() += 1;
+                *active_per_table
+                    .entry(p.table_contract.clone())
+                    .or_default() += 1;
             }
         }
         active_per_table
@@ -577,7 +628,8 @@ mod tests {
     #[test]
     fn test_register_and_prize_pool() {
         let mut t = make_tournament(6);
-        t.register("ALICE".to_string(), "TABLE1".to_string()).unwrap();
+        t.register("ALICE".to_string(), "TABLE1".to_string())
+            .unwrap();
         t.register("BOB".to_string(), "TABLE1".to_string()).unwrap();
         assert_eq!(t.prize_pool, 20_000_000);
         assert_eq!(t.players.len(), 2);
@@ -641,10 +693,7 @@ mod tests {
         t.record_hand_result(updates);
 
         assert_eq!(t.status, TournamentStatus::Finalizing);
-        assert_eq!(
-            t.players["A"].finish_position,
-            Some(1)
-        );
+        assert_eq!(t.players["A"].finish_position, Some(1));
     }
 
     #[test]
@@ -680,21 +729,27 @@ mod tests {
         t.table_contracts = vec!["T1".to_string(), "T2".to_string()];
         // 4 players on T1, 1 on T2
         for i in 0..4u32 {
-            t.players.insert(format!("P{}", i), TournamentPlayer {
-                address: format!("P{}", i),
-                table_contract: "T1".to_string(),
+            t.players.insert(
+                format!("P{}", i),
+                TournamentPlayer {
+                    address: format!("P{}", i),
+                    table_contract: "T1".to_string(),
+                    stack: 10_000_000,
+                    finish_position: None,
+                    payout: None,
+                },
+            );
+        }
+        t.players.insert(
+            "P4".to_string(),
+            TournamentPlayer {
+                address: "P4".to_string(),
+                table_contract: "T2".to_string(),
                 stack: 10_000_000,
                 finish_position: None,
                 payout: None,
-            });
-        }
-        t.players.insert("P4".to_string(), TournamentPlayer {
-            address: "P4".to_string(),
-            table_contract: "T2".to_string(),
-            stack: 10_000_000,
-            finish_position: None,
-            payout: None,
-        });
+            },
+        );
 
         let moves = t.balancing_moves();
         // Needs at least one move to equalize 4 vs 1 → 3 vs 2 → 2 vs 3... stop at diff<=1

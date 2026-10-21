@@ -7,15 +7,34 @@
  */
 
 import { bestHandRank } from "./hand-rank";
+import type { TimelineEvent } from "./hand-timeline";
 
+/** Street shape. */
 export type Street = "preflop" | "flop" | "turn" | "river";
 
+/** Street Snapshot shape. */
 export interface StreetSnapshot {
   street: Street;
   pot: number;
   boardCards: number[];
 }
 
+/** A player dealt into the hand. */
+export interface HandPlayer {
+  address: string;
+  seat: number;
+}
+
+/** Chips going into the pot during a street, as the table observed it. */
+export interface HandAction {
+  street: Street;
+  /** Chips added to the pot. */
+  amount: number;
+  /** Pot after the chips went in. */
+  pot: number;
+}
+
+/** Hand History Entry shape. */
 export interface HandHistoryEntry {
   tableId: number;
   handNumber: number;
@@ -27,6 +46,12 @@ export interface HandHistoryEntry {
   handRankName?: string;
   winnerAddress?: string | null;
   txHash?: string;
+  /** Address of the viewing player, whose hole cards `holeCards` are (#158). */
+  heroAddress?: string;
+  /** Everyone seated for the hand (#158). */
+  players?: HandPlayer[];
+  /** Betting actions in the order they were seen (#158). */
+  actions?: HandAction[];
 }
 
 // ── Replayer frames ───────────────────────────────────────────────────────────
@@ -108,6 +133,11 @@ function storageKey(tableId: number): string {
   return `${STORAGE_PREFIX}${tableId}`;
 }
 
+/** Loads Hand History.
+ * @param tableId - table Id.
+ * @returns HandHistoryEntry[].
+ * @remarks Reads/writes browser storage.
+ */
 export function loadHandHistory(tableId: number): HandHistoryEntry[] {
   if (typeof window === "undefined") return [];
   try {
@@ -120,6 +150,10 @@ export function loadHandHistory(tableId: number): HandHistoryEntry[] {
   }
 }
 
+/** Persists Hand History Entry.
+ * @param entry - entry.
+ * @remarks Reads/writes browser storage.
+ */
 export function saveHandHistoryEntry(entry: HandHistoryEntry): void {
   if (typeof window === "undefined") return;
   try {
@@ -131,10 +165,38 @@ export function saveHandHistoryEntry(entry: HandHistoryEntry): void {
   }
 }
 
+/** Computes Hand Rank Name.
+ * @param holeCards - hole Cards.
+ * @param boardCards - board Cards.
+ * @returns string | undefined.
+ */
 export function buildHandRankName(
   holeCards: [number, number] | undefined,
   boardCards: number[]
 ): string | undefined {
   if (!holeCards) return undefined;
   return bestHandRank([...holeCards, ...boardCards])?.name;
+}
+
+/**
+ * The betting actions of one hand, taken from its live timeline (#176): each
+ * time more chips went into the pot on a street. The timeline's `actor` is
+ * whoever's turn it was when the pot change was seen — by then the turn has
+ * usually passed to the next player — so it is deliberately not carried over.
+ */
+export function actionsFromTimeline(
+  handNumber: number,
+  events: readonly TimelineEvent[]
+): HandAction[] {
+  const prefix = `${handNumber}:`;
+  const actions: HandAction[] = [];
+  for (const event of events) {
+    if (event.kind !== "action" || !event.id.startsWith(prefix)) continue;
+    const street = event.street;
+    if (street !== "preflop" && street !== "flop" && street !== "turn" && street !== "river") {
+      continue;
+    }
+    actions.push({ street, amount: event.amount ?? 0, pot: event.pot });
+  }
+  return actions;
 }

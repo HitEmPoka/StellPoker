@@ -1,0 +1,15 @@
+{
+  "npmName": "@stellpoker/coordinator-sdk",
+  "npmRepository": "https://registry.npmjs.org",
+  "supportsES6": true,
+  "typescriptVersion": "~5.3.0",
+  "modelPackage": "models",
+  "apiPackage": "api",
+  "packageName": "@stellpoker/coordinator-sdk",
+  "description": "Auto-generated TypeScript client SDK for StellPoker Coordinator API",
+  "gitUserId": "HitEmPoka",
+  "gitRepoId": "StellPoker",
+  "npmAuthor": "StellPoker Team",
+  "npmAuthorEmail": "dev@stellpoker.com",
+  "license": "MIT"
+}

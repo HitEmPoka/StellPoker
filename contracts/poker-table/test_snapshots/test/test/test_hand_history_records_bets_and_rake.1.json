@@ -43,10 +43,80 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "big_blind"
+                        "symbol": "betting_structure"
                       },
                       "val": {
-                        "i128": "200"
+                        "vec": [
+                          {
+                            "symbol": "NoLimit"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "blinds_schedule"
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "levels"
+                            },
+                            "val": {
+                              "vec": [
+                                {
+                                  "map": [
+                                    {
+                                      "key": {
+                                        "symbol": "ante"
+                                      },
+                                      "val": {
+                                        "vec": [
+                                          {
+                                            "symbol": "None"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "big_blind"
+                                      },
+                                      "val": {
+                                        "i128": "200"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "break_seconds"
+                                      },
+                                      "val": {
+                                        "u64": "0"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "duration_seconds"
+                                      },
+                                      "val": {
+                                        "u64": "0"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "small_blind"
+                                      },
+                                      "val": {
+                                        "i128": "100"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -55,6 +125,14 @@
                       },
                       "val": {
                         "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "dead_chip_timeout_ledgers"
+                      },
+                      "val": {
+                        "u32": 0
                       }
                     },
                     {
@@ -139,10 +217,22 @@
                     },
                     {
                       "key": {
-                        "symbol": "small_blind"
+                        "symbol": "reclaim_period_ledgers"
                       },
                       "val": {
-                        "i128": "100"
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "street_time_limit"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "None"
+                          }
+                        ]
                       }
                     },
                     {
@@ -160,6 +250,12 @@
                       "val": {
                         "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "treasury"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
@@ -389,6 +485,9 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
                 },
                 {
+                  "u32": 1
+                },
+                {
                   "vec": [
                     {
                       "symbol": "Raise"
@@ -420,6 +519,9 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
+                },
+                {
+                  "u32": 1
                 },
                 {
                   "vec": [
@@ -576,7 +678,7 @@
                                 "symbol": "amount"
                               },
                               "val": {
-                                "i128": "300"
+                                "i128": "200"
                               }
                             },
                             {
@@ -697,7 +799,7 @@
                                 "symbol": "amount"
                               },
                               "val": {
-                                "i128": "570"
+                                "i128": "475"
                               }
                             },
                             {
@@ -733,7 +835,7 @@
                       "symbol": "rake"
                     },
                     "val": {
-                      "i128": "30"
+                      "i128": "25"
                     }
                   },
                   {
@@ -757,10 +859,70 @@
                       "symbol": "total_pot"
                     },
                     "val": {
-                      "i128": "600"
+                      "i128": "500"
                     }
                   }
                 ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518400
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "PlayerActionCounter"
+                  },
+                  {
+                    "u32": 0
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 1
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 518400
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "PlayerActionCounter"
+                  },
+                  {
+                    "u32": 0
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 1
               }
             }
           },
@@ -876,6 +1038,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "break_ends_at"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "committee"
                     },
                     "val": {
@@ -890,10 +1060,80 @@
                       "map": [
                         {
                           "key": {
-                            "symbol": "big_blind"
+                            "symbol": "betting_structure"
                           },
                           "val": {
-                            "i128": "200"
+                            "vec": [
+                              {
+                                "symbol": "NoLimit"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "blinds_schedule"
+                          },
+                          "val": {
+                            "map": [
+                              {
+                                "key": {
+                                  "symbol": "levels"
+                                },
+                                "val": {
+                                  "vec": [
+                                    {
+                                      "map": [
+                                        {
+                                          "key": {
+                                            "symbol": "ante"
+                                          },
+                                          "val": {
+                                            "vec": [
+                                              {
+                                                "symbol": "None"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "big_blind"
+                                          },
+                                          "val": {
+                                            "i128": "200"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "break_seconds"
+                                          },
+                                          "val": {
+                                            "u64": "0"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "duration_seconds"
+                                          },
+                                          "val": {
+                                            "u64": "0"
+                                          }
+                                        },
+                                        {
+                                          "key": {
+                                            "symbol": "small_blind"
+                                          },
+                                          "val": {
+                                            "i128": "100"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
                           }
                         },
                         {
@@ -902,6 +1142,14 @@
                           },
                           "val": {
                             "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "dead_chip_timeout_ledgers"
+                          },
+                          "val": {
+                            "u32": 0
                           }
                         },
                         {
@@ -986,10 +1234,22 @@
                         },
                         {
                           "key": {
-                            "symbol": "small_blind"
+                            "symbol": "reclaim_period_ledgers"
                           },
                           "val": {
-                            "i128": "100"
+                            "u32": 0
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "street_time_limit"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "symbol": "None"
+                              }
+                            ]
                           }
                         },
                         {
@@ -1010,6 +1270,12 @@
                         },
                         {
                           "key": {
+                            "symbol": "treasury"
+                          },
+                          "val": "void"
+                        },
+                        {
+                          "key": {
                             "symbol": "verifier"
                           },
                           "val": {
@@ -1017,6 +1283,14 @@
                           }
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "current_blind_level"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {
@@ -1077,7 +1351,7 @@
                                 "symbol": "amount"
                               },
                               "val": {
-                                "i128": "300"
+                                "i128": "200"
                               }
                             },
                             {
@@ -1218,6 +1492,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "level_started_at"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "phase"
                     },
                     "val": {
@@ -1305,7 +1587,7 @@
                                 "symbol": "stack"
                               },
                               "val": {
-                                "i128": "5170"
+                                "i128": "5075"
                               }
                             },
                             {
@@ -1341,7 +1623,7 @@
                                 "symbol": "bet_this_round"
                               },
                               "val": {
-                                "i128": "200"
+                                "i128": "100"
                               }
                             },
                             {
@@ -1349,7 +1631,7 @@
                                 "symbol": "committed"
                               },
                               "val": {
-                                "i128": "200"
+                                "i128": "100"
                               }
                             },
                             {
@@ -1389,7 +1671,7 @@
                                 "symbol": "stack"
                               },
                               "val": {
-                                "i128": "4800"
+                                "i128": "4900"
                               }
                             },
                             {
@@ -1418,7 +1700,19 @@
                       "symbol": "rake_balance"
                     },
                     "val": {
-                      "i128": "30"
+                      "i128": "25"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "rit_state"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "None"
+                        }
+                      ]
                     }
                   },
                   {
@@ -1427,6 +1721,14 @@
                     },
                     "val": {
                       "u32": 2443840399
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "settlement_entered_ledger"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {

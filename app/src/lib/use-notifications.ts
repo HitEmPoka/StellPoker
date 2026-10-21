@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 
+/** Notification Prefs shape. */
 export type NotificationPrefs = {
   enabled: boolean;
   sound: boolean;
@@ -9,6 +10,10 @@ export type NotificationPrefs = {
 
 const PREFS_KEY = "stellpoker:notification_prefs";
 
+/** Loads Notification Prefs.
+ * @returns NotificationPrefs.
+ * @remarks Reads/writes browser storage.
+ */
 export function loadNotificationPrefs(): NotificationPrefs {
   if (typeof window === "undefined") return { enabled: true, sound: true };
   try {
@@ -20,6 +25,10 @@ export function loadNotificationPrefs(): NotificationPrefs {
   return { enabled: true, sound: true };
 }
 
+/** Persists Notification Prefs.
+ * @param prefs - prefs.
+ * @remarks Reads/writes browser storage.
+ */
 export function saveNotificationPrefs(prefs: NotificationPrefs): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));

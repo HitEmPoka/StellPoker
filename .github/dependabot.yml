@@ -1,0 +1,124 @@
+# Automated dependency updates (Issue #670).
+#
+# Updates are grouped so reviewers get a handful of PRs a week instead of one
+# per package:
+#   * minor + patch bumps for an ecosystem land in one PR per directory
+#   * security updates get their own grouped PR and are not held to the weekly
+#     schedule
+#   * major bumps stay ungrouped (one PR each) because they usually need code
+#     changes and a dedicated review
+#
+# Policy and review expectations: docs/dependency-updates.md
+
+version: 2
+
+updates:
+  # ── Rust workspace (contracts, services, stellar-zk-cards) ────────────────
+  # The workspace shares one Cargo.lock at the root, so a single entry covers
+  # every member. `soroban-sdk` is pinned to a git rev in [workspace.dependencies]
+  # and is bumped by hand alongside the contract budget checks.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, rust]
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      # Arkworks versions must match co-noir / the Noir backend; bump together
+      # with the circuits, never on their own.
+      - dependency-name: "ark-*"
+        update-types: [version-update:semver-major, version-update:semver-minor]
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      cargo-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # ── Frontend (Next.js app) ─────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      # React + Next.js move in lockstep; keep them in one PR even for majors.
+      react-next:
+        applies-to: version-updates
+        patterns: ["react", "react-dom", "@types/react*", "next", "eslint-config-next"]
+      npm-dev-minor-patch:
+        applies-to: version-updates
+        dependency-type: development
+        update-types: [minor, patch]
+      npm-prod-minor-patch:
+        applies-to: version-updates
+        dependency-type: production
+        update-types: [minor, patch]
+
+  # ── DB tooling scripts ─────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /scripts/db
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: [dependencies, tooling]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      db-scripts:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # ── Container base images ──────────────────────────────────────────────────
+  # One grouped PR across all Dockerfiles so the Rust toolchain image stays the
+  # same version in every service build.
+  - package-ecosystem: docker
+    directories:
+      - /app
+      - /services/coordinator
+      - /services/node
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "chore(docker)"
+    groups:
+      docker-base-images:
+        patterns: ["*"]

@@ -16,10 +16,31 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 
+/// Release channels are part of the MPC wire-compatibility contract.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseChannel {
+    #[default]
+    Stable,
+    Canary,
+}
+
+impl ReleaseChannel {
+    /// Stable never mixes canary nodes; canary supports rolling upgrades.
+    pub fn accepts(self, node_channel: Self) -> bool {
+        match self {
+            Self::Stable => node_channel == Self::Stable,
+            Self::Canary => true,
+        }
+    }
+}
+
 /// Capabilities reported by a single MPC node during the version handshake.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NodeCapabilities {
     pub node_id: String,
+    #[serde(default)]
+    pub channel: ReleaseChannel,
     /// Protocol (wire format / session orchestration) versions this node supports.
     pub protocol_versions: Vec<u32>,
     /// Circuit name -> list of ACIR/circuit versions this node has compiled.
@@ -46,6 +67,7 @@ pub async fn register_capabilities(registry: &VersionRegistry, mut caps: NodeCap
 /// of nodes.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SessionVersionPlan {
+    pub channel: ReleaseChannel,
     pub protocol_version: u32,
     pub circuit_versions: HashMap<String, u32>,
     pub participating_nodes: Vec<String>,
@@ -95,10 +117,12 @@ pub async fn negotiate_circuit_version(
         let caps = guard
             .get(id)
             .ok_or_else(|| format!("no version handshake on file for node {}", id))?;
-        let versions = caps
-            .circuit_versions
-            .get(circuit_name)
-            .ok_or_else(|| format!("node {} did not report versions for circuit {}", id, circuit_name))?;
+        let versions = caps.circuit_versions.get(circuit_name).ok_or_else(|| {
+            format!(
+                "node {} did not report versions for circuit {}",
+                id, circuit_name
+            )
+        })?;
         sets.push(versions.iter().copied().collect());
     }
     highest_common_version(&sets).ok_or_else(|| {
@@ -115,7 +139,22 @@ pub async fn negotiate_session(
     registry: &VersionRegistry,
     node_ids: &[String],
     circuit_names: &[&str],
+    channel: ReleaseChannel,
 ) -> Result<SessionVersionPlan, String> {
+    let guard = registry.read().await;
+    for id in node_ids {
+        let caps = guard
+            .get(id)
+            .ok_or_else(|| format!("no version handshake on file for node {}", id))?;
+        if !channel.accepts(caps.channel) {
+            return Err(format!(
+                "node {} is on {:?}, incompatible with {:?} coordinator",
+                id, caps.channel, channel
+            ));
+        }
+    }
+    drop(guard);
+
     let protocol_version = negotiate_protocol_version(registry, node_ids).await?;
 
     let mut circuit_versions = HashMap::new();
@@ -125,6 +164,7 @@ pub async fn negotiate_session(
     }
 
     Ok(SessionVersionPlan {
+        channel,
         protocol_version,
         circuit_versions,
         participating_nodes: node_ids.to_vec(),
@@ -152,10 +192,7 @@ mod tests {
 
     #[test]
     fn no_common_version_returns_none() {
-        let sets = vec![
-            [1u32].into_iter().collect(),
-            [2u32].into_iter().collect(),
-        ];
+        let sets = vec![[1u32].into_iter().collect(), [2u32].into_iter().collect()];
         assert_eq!(highest_common_version(&sets), None);
     }
 
@@ -166,6 +203,7 @@ mod tests {
             &registry,
             NodeCapabilities {
                 node_id: "0".into(),
+                channel: ReleaseChannel::Stable,
                 protocol_versions: vec![1, 2],
                 circuit_versions: HashMap::from([("deal".to_string(), vec![1, 2, 3])]),
                 reported_at: None,
@@ -176,6 +214,7 @@ mod tests {
             &registry,
             NodeCapabilities {
                 node_id: "1".into(),
+                channel: ReleaseChannel::Stable,
                 protocol_versions: vec![2, 3],
                 circuit_versions: HashMap::from([("deal".to_string(), vec![2, 3])]),
                 reported_at: None,
@@ -184,17 +223,43 @@ mod tests {
         .await;
 
         let node_ids = vec!["0".to_string(), "1".to_string()];
-        let plan = negotiate_session(&registry, &node_ids, &["deal"])
+        let plan = negotiate_session(&registry, &node_ids, &["deal"], ReleaseChannel::Stable)
             .await
             .expect("negotiation succeeds");
         assert_eq!(plan.protocol_version, 2);
+        assert_eq!(plan.channel, ReleaseChannel::Stable);
         assert_eq!(plan.circuit_versions.get("deal"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn stable_rejects_canary_but_canary_allows_rolling_upgrade() {
+        let registry = new_registry();
+        register_capabilities(
+            &registry,
+            NodeCapabilities {
+                node_id: "canary".into(),
+                channel: ReleaseChannel::Canary,
+                protocol_versions: vec![1],
+                circuit_versions: HashMap::from([("deal".to_string(), vec![1])]),
+                reported_at: None,
+            },
+        )
+        .await;
+        let nodes = vec!["canary".to_string()];
+        assert!(negotiate_session(&registry, &nodes, &["deal"], ReleaseChannel::Stable)
+            .await
+            .is_err());
+        assert!(negotiate_session(&registry, &nodes, &["deal"], ReleaseChannel::Canary)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
     async fn missing_handshake_errors() {
         let registry = new_registry();
         let node_ids = vec!["ghost".to_string()];
-        assert!(negotiate_protocol_version(&registry, &node_ids).await.is_err());
+        assert!(negotiate_protocol_version(&registry, &node_ids)
+            .await
+            .is_err());
     }
 }

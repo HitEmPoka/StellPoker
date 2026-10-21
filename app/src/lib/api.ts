@@ -1,5 +1,13 @@
+import { REQUEST_ID_HEADER, createRequestId, withSupportRef } from "./request-id";
+import { assertOnline } from "./online";
+
 const API_BASE = process.env.NEXT_PUBLIC_COORDINATOR_URL || "http://localhost:8080";
 const INSECURE_AUTH_ENV = process.env.NEXT_PUBLIC_ALLOW_INSECURE_DEV_AUTH;
+/** COORDINATOR API BASE.
+ * @param value - value.
+ * @returns boolean | null.
+ * @remarks Calls the coordinator REST API.
+ */
 export const COORDINATOR_API_BASE = API_BASE;
 
 function parseEnvBool(value: string | undefined): boolean | null {
@@ -12,6 +20,7 @@ function parseEnvBool(value: string | undefined): boolean | null {
 
 const USE_INSECURE_DEV_AUTH = parseEnvBool(INSECURE_AUTH_ENV) ?? false;
 
+/** Deal Response shape. */
 export interface DealResponse {
   status: string;
   deck_root: string;
@@ -21,6 +30,7 @@ export interface DealResponse {
   tx_hash: string | null;
 }
 
+/** Reveal Response shape. */
 export interface RevealResponse {
   status: string;
   cards: number[];
@@ -29,6 +39,7 @@ export interface RevealResponse {
   tx_hash: string | null;
 }
 
+/** Showdown Response shape. */
 export interface ShowdownResponse {
   status: string;
   winner: string;
@@ -38,6 +49,7 @@ export interface ShowdownResponse {
   tx_hash: string | null;
 }
 
+/** Player Action Response shape. */
 export interface PlayerActionResponse {
   status: string;
   action: string;
@@ -46,10 +58,12 @@ export interface PlayerActionResponse {
   tx_hash: string | null;
 }
 
+/** Table State Response shape. */
 export interface TableStateResponse {
   state: string;
 }
 
+/** Parsed Table State Response shape. */
 export interface ParsedTableStateResponse {
   raw: string;
   parsed: Record<string, unknown> | null;
@@ -66,6 +80,29 @@ export interface GameStateEvent {
   reveal_tx_hashes: Record<string, string>;
   showdown_tx_hash: string | null;
   onchain_state: string | null;
+  /** Live anonymous spectators on this table (Issue #171). */
+  spectator_count?: number;
+}
+
+/** Pushed on a table's game-state channel whenever its spectator count changes (Issue #171). */
+export interface SpectatorCountEvent {
+  type: "spectators";
+  table_id: number;
+  spectator_count: number;
+}
+
+/** Game State Socket Message shape. */
+export type GameStateSocketMessage = GameStateEvent | SpectatorCountEvent;
+
+/** Checks is Spectator Count Event.
+ * @param msg - msg.
+ * @returns msg is SpectatorCountEvent.
+ * @remarks Calls the coordinator REST API.
+ */
+export function isSpectatorCountEvent(
+  msg: GameStateSocketMessage
+): msg is SpectatorCountEvent {
+  return (msg as SpectatorCountEvent).type === "spectators";
 }
 
 /** Derives the coordinator's ws(s):// origin from its http(s):// base URL. */
@@ -73,6 +110,7 @@ export function coordinatorWsBase(): string {
   return COORDINATOR_API_BASE.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 }
 
+/** Game State Socket Handle shape. */
 export interface GameStateSocketHandle {
   stop: () => void;
 }
@@ -86,7 +124,8 @@ export interface GameStateSocketHandle {
  */
 export function subscribeGameState(
   tableId: number,
-  onUpdate: (event: GameStateEvent) => void
+  onUpdate: (event: GameStateSocketMessage) => void,
+  options: { spectate?: boolean } = {}
 ): GameStateSocketHandle | null {
   if (typeof WebSocket === "undefined") {
     return null;
@@ -98,12 +137,16 @@ export function subscribeGameState(
 
   const connect = () => {
     if (!active) return;
-    const wsUrl = `${coordinatorWsBase()}/api/table/${tableId}/state/ws`;
+    // Spectators connect to `/spectate/ws`, which carries the same public
+    // snapshots but counts the connection towards the table's spectator
+    // indicator (Issue #171). No wallet or auth is needed for either.
+    const path = options.spectate ? "spectate/ws" : "state/ws";
+    const wsUrl = `${coordinatorWsBase()}/api/table/${tableId}/${path}`;
     ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
       try {
-        onUpdate(JSON.parse(event.data) as GameStateEvent);
+        onUpdate(JSON.parse(event.data) as GameStateSocketMessage);
       } catch {
         // Ignore malformed frames.
       }
@@ -131,6 +174,7 @@ export function subscribeGameState(
   };
 }
 
+/** Player Cards Response shape. */
 export interface PlayerCardsResponse {
   card1: number;
   card2: number;
@@ -138,24 +182,31 @@ export interface PlayerCardsResponse {
   salt2: string;
 }
 
+/** Committee Status Response shape. */
 export interface CommitteeStatusResponse {
   nodes: number;
   healthy: boolean[];
   status: string;
 }
 
+/** Chain Config Response shape. */
 export interface ChainConfigResponse {
   rpc_url: string;
   network_passphrase: string;
   poker_table_contract: string;
+  /** Player avatar registry contract address (Issue #153). Optional — older
+   *  network deploys may not have it; frontend falls back to Identicon. */
+  player_avatar_contract?: string;
 }
 
+/** Create Table Response shape. */
 export interface CreateTableResponse {
   table_id: number;
   max_players: number;
   joined_wallets: number;
 }
 
+/** Join Table Response shape. */
 export interface JoinTableResponse {
   table_id: number;
   seat_index: number;
@@ -164,14 +215,18 @@ export interface JoinTableResponse {
   max_players: number;
 }
 
+/** Open Table Info shape. */
 export interface OpenTableInfo {
   table_id: number;
   phase: string;
   max_players: number;
   joined_wallets: number;
   open_wallet_slots: number;
+  /** Live anonymous spectators (Issue #171). Absent on older coordinators. */
+  spectators?: number;
 }
 
+/** Open Tables Response shape. */
 export interface OpenTablesResponse {
   tables: OpenTableInfo[];
 }
@@ -184,8 +239,11 @@ export interface TableOverviewInfo {
   seated: number;
   total_chips: number;
   stacks: number[];
+  /** Live anonymous spectators (Issue #171). Absent on older coordinators. */
+  spectators?: number;
 }
 
+/** Table Overview Response shape. */
 export interface TableOverviewResponse {
   tables: TableOverviewInfo[];
 }
@@ -207,18 +265,21 @@ export interface RatingEntry {
   hands_won: number;
 }
 
+/** Rating Leaderboard Response shape. */
 export interface RatingLeaderboardResponse {
   entries: RatingEntry[];
   min_hands: number;
   total: number;
 }
 
+/** Lobby Seat shape. */
 export interface LobbySeat {
   seat_index: number;
   chain_address: string;
   wallet_address: string | null;
 }
 
+/** Table Lobby Response shape. */
 export interface TableLobbyResponse {
   table_id: number;
   phase: string;
@@ -227,6 +288,7 @@ export interface TableLobbyResponse {
   joined_wallets: number;
 }
 
+/** Auth Signer shape. */
 export interface AuthSigner {
   address: string;
   signMessage: (message: string) => Promise<string>;
@@ -247,6 +309,66 @@ async function readApiError(res: Response, fallback: string): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+/** Thrown for non-OK coordinator responses (Issue #601). Carries the HTTP
+ *  status and, for 429s, the server's Retry-After so callers can back off
+ *  for exactly as long as the coordinator asked rather than guessing. */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly retryAfterSeconds: number | null;
+  /** Client-generated id sent as `X-Request-Id` on the failed call (#633). */
+  readonly requestId: string | null;
+
+  constructor(
+    message: string,
+    status: number,
+    retryAfterSeconds: number | null,
+    requestId: string | null = null
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+    this.requestId = requestId;
+  }
+}
+
+/** Remembers the correlation id each response was requested with (#633). */
+const requestIdByResponse = new WeakMap<Response, string>();
+
+/** `fetch` for coordinator calls: tags every request with a fresh `X-Request-Id` (#633). */
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // Game actions need the coordinator, so writes are refused while offline (#632).
+  if (init.method && init.method.toUpperCase() !== "GET") {
+    assertOnline();
+  }
+  const requestId = createRequestId();
+  const headers = new Headers(init.headers);
+  headers.set(REQUEST_ID_HEADER, requestId);
+  const res = await fetch(url, { ...init, headers });
+  if (res && typeof res === "object") {
+    requestIdByResponse.set(res, requestId);
+  }
+  return res;
+}
+
+function parseRetryAfterSeconds(res: Response): number | null {
+  const header = res.headers.get("Retry-After");
+  if (!header) return null;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+async function apiError(res: Response, fallback: string): Promise<ApiRequestError> {
+  const requestId = requestIdByResponse.get(res) ?? null;
+  const message = await readApiError(res, fallback);
+  return new ApiRequestError(
+    requestId ? withSupportRef(message, requestId) : message,
+    res.status,
+    parseRetryAfterSeconds(res),
+    requestId
+  );
 }
 
 function nextNonce(): string {
@@ -314,8 +436,13 @@ async function authedFetch(
   action: string,
   auth: AuthSigner
 ): Promise<Response> {
+  // Refuse before the wallet is asked to sign, so offline clicks never open a
+  // signature prompt (#632).
+  if (init.method && init.method.toUpperCase() !== "GET") {
+    assertOnline();
+  }
   if (USE_INSECURE_DEV_AUTH) {
-    const insecureAttempt = await fetch(
+    const insecureAttempt = await apiFetch(
       url,
       withMergedHeaders(init, buildInsecureHeaders(auth))
     );
@@ -325,15 +452,22 @@ async function authedFetch(
   }
 
   const signedHeaders = await buildAuthHeaders(tableId, action, auth);
-  return fetch(url, withMergedHeaders(init, signedHeaders));
+  return apiFetch(url, withMergedHeaders(init, signedHeaders));
 }
 
+/** Runs Deal.
+ * @param tableId - table Id.
+ * @param players - players.
+ * @param _auth - auth.
+ * @returns Promise<DealResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function requestDeal(
   tableId: number,
   players: string[] = [],
   _auth: AuthSigner
 ): Promise<DealResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE}/api/table/${tableId}/request-deal`,
     {
       method: "POST",
@@ -344,11 +478,19 @@ export async function requestDeal(
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Deal failed: ${res.status}`));
+    throw await apiError(res, `Deal failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Creates Table.
+ * @param auth - auth.
+ * @param maxPlayers - max Players.
+ * @param solo - solo.
+ * @param buyIn - buy In.
+ * @param token - token.
+ * @returns Promise<CreateTableResponse>.
+ */
 export async function createTable(
   auth: AuthSigner,
   maxPlayers: number,
@@ -386,11 +528,17 @@ export async function createTable(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Create table failed: ${res.status}`));
+    throw await apiError(res, `Create table failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Runs Table.
+ * @param tableId - table Id.
+ * @param auth - auth.
+ * @returns Promise<JoinTableResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function joinTable(
   tableId: number,
   auth: AuthSigner
@@ -405,24 +553,28 @@ export async function joinTable(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Join table failed: ${res.status}`));
+    throw await apiError(res, `Join table failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** List Open Tables.
+ * @returns Promise<OpenTablesResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function listOpenTables(): Promise<OpenTablesResponse> {
-  const res = await fetch(`${API_BASE}/api/tables/open`);
+  const res = await apiFetch(`${API_BASE}/api/tables/open`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Open tables failed: ${res.status}`));
+    throw await apiError(res, `Open tables failed: ${res.status}`);
   }
   return res.json();
 }
 
 /** Issue #53 — all known tables with seat counts and chip stacks. */
 export async function listTableOverview(): Promise<TableOverviewResponse> {
-  const res = await fetch(`${API_BASE}/api/tables/overview`);
+  const res = await apiFetch(`${API_BASE}/api/tables/overview`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Table overview failed: ${res.status}`));
+    throw await apiError(res, `Table overview failed: ${res.status}`);
   }
   return res.json();
 }
@@ -431,11 +583,11 @@ export async function listTableOverview(): Promise<TableOverviewResponse> {
 export async function getPlayerHudStats(
   address: string
 ): Promise<PlayerHudStats> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE}/api/stats/player/${encodeURIComponent(address)}`
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Player stats failed: ${res.status}`));
+    throw await apiError(res, `Player stats failed: ${res.status}`);
   }
   return res.json();
 }
@@ -445,68 +597,95 @@ export async function getRatingLeaderboard(
   offset = 0,
   limit = 20
 ): Promise<RatingLeaderboardResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE}/api/ratings/leaderboard?offset=${offset}&limit=${limit}`
   );
   if (!res.ok) {
-    throw new Error(
-      await readApiError(res, `Rating leaderboard failed: ${res.status}`)
-    );
+    throw await apiError(res, `Rating leaderboard failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Loads Chain Config.
+ * @returns Promise<ChainConfigResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getChainConfig(): Promise<ChainConfigResponse> {
-  const res = await fetch(`${API_BASE}/api/chain-config`);
+  const res = await apiFetch(`${API_BASE}/api/chain-config`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Chain config failed: ${res.status}`));
+    throw await apiError(res, `Chain config failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Loads Table Lobby.
+ * @param tableId - table Id.
+ * @returns Promise<TableLobbyResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getTableLobby(
   tableId: number
 ): Promise<TableLobbyResponse> {
-  const res = await fetch(`${API_BASE}/api/table/${tableId}/lobby`);
+  const res = await apiFetch(`${API_BASE}/api/table/${tableId}/lobby`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Lobby lookup failed: ${res.status}`));
+    throw await apiError(res, `Lobby lookup failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Runs Reveal.
+ * @param tableId - table Id.
+ * @param phase - phase.
+ * @param _auth - auth.
+ * @returns Promise<RevealResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function requestReveal(
   tableId: number,
   phase: "flop" | "turn" | "river",
   _auth: AuthSigner
 ): Promise<RevealResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE}/api/table/${tableId}/request-reveal/${phase}`,
     {
       method: "POST",
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Reveal failed: ${res.status}`));
+    throw await apiError(res, `Reveal failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Runs Showdown.
+ * @param tableId - table Id.
+ * @param _auth - auth.
+ * @returns Promise<ShowdownResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function requestShowdown(
   tableId: number,
   _auth: AuthSigner
 ): Promise<ShowdownResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE}/api/table/${tableId}/request-showdown`,
     {
       method: "POST",
     }
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Showdown failed: ${res.status}`));
+    throw await apiError(res, `Showdown failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Runs Run It Twice.
+ * @param tableId - table Id.
+ * @param optIn - opt In.
+ * @param auth - auth.
+ * @returns Promise<.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function requestRunItTwice(
   tableId: number,
   optIn: boolean,
@@ -526,11 +705,19 @@ export async function requestRunItTwice(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `RIT opt-in failed: ${res.status}`));
+    throw await apiError(res, `RIT opt-in failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Runs player Action.
+ * @param tableId - table Id.
+ * @param action - action.
+ * @param amount - amount.
+ * @param auth - auth.
+ * @returns Promise<PlayerActionResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function playerAction(
   tableId: number,
   action: "fold" | "check" | "call" | "bet" | "raise" | "allin",
@@ -551,11 +738,18 @@ export async function playerAction(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Player action failed: ${res.status}`));
+    throw await apiError(res, `Player action failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Loads Player Cards.
+ * @param tableId - table Id.
+ * @param address - address.
+ * @param auth - auth.
+ * @returns Promise<PlayerCardsResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getPlayerCards(
   tableId: number,
   address: string,
@@ -569,21 +763,47 @@ export async function getPlayerCards(
     auth
   );
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get cards: ${res.status}`));
+    throw await apiError(res, `Failed to get cards: ${res.status}`);
   }
   return res.json();
 }
 
+/** Loads Table State.
+ * @param tableId - table Id.
+ * @returns Promise<TableStateResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getTableState(
   tableId: number
 ): Promise<TableStateResponse> {
-  const res = await fetch(`${API_BASE}/api/table/${tableId}/state`);
+  const res = await apiFetch(`${API_BASE}/api/table/${tableId}/state`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get table state: ${res.status}`));
+    throw await apiError(res, `Failed to get table state: ${res.status}`);
   }
   return res.json();
 }
 
+/** Spectator Count Response shape. */
+export interface SpectatorCountResponse {
+  table_id: number;
+  spectator_count: number;
+}
+
+/** Public, unauthenticated spectator count for a table (Issue #171). */
+export async function getSpectatorCount(
+  tableId: number
+): Promise<SpectatorCountResponse> {
+  const res = await apiFetch(`${API_BASE}/api/table/${tableId}/spectators`);
+  if (!res.ok) {
+    throw await apiError(res, `Failed to get spectators: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Loads Parsed Table State.
+ * @param tableId - table Id.
+ * @returns Promise<ParsedTableStateResponse>.
+ */
 export async function getParsedTableState(
   tableId: number
 ): Promise<ParsedTableStateResponse> {
@@ -598,20 +818,26 @@ export async function getParsedTableState(
   }
 }
 
+/** Loads Committee Status.
+ * @returns Promise<CommitteeStatusResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getCommitteeStatus(): Promise<CommitteeStatusResponse> {
-  const res = await fetch(`${API_BASE}/api/committee/status`);
+  const res = await apiFetch(`${API_BASE}/api/committee/status`);
   if (!res.ok) throw new Error(`Failed to get status: ${res.status}`);
   return res.json();
 }
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
+/** Global Stats shape. */
 export interface GlobalStats {
   hands_played: number;
   biggest_pot: number;
   total_players_joined: number;
 }
 
+/** Player Stats shape. */
 export interface PlayerStats {
   address: string;
   hands_played: number;
@@ -619,20 +845,26 @@ export interface PlayerStats {
   biggest_pot_won: number;
 }
 
+/** Stats Response shape. */
 export interface StatsResponse {
   global: GlobalStats;
   leaderboard: PlayerStats[];
   cached_at: number;
 }
 
+/** Loads Stats.
+ * @returns Promise<StatsResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getStats(): Promise<StatsResponse> {
-  const res = await fetch(`${API_BASE}/api/stats`);
+  const res = await apiFetch(`${API_BASE}/api/stats`);
   if (!res.ok) throw new Error(`Failed to get stats: ${res.status}`);
   return res.json();
 }
 
 // ── MPC Node Status ──────────────────────────────────────────────────────────
 
+/** Mpc Node Progress shape. */
 export interface MpcNodeProgress {
   endpoint: string;
   phase: string;
@@ -640,6 +872,7 @@ export interface MpcNodeProgress {
   elapsed_secs: number;
 }
 
+/** Table Mpc Status Response shape. */
 export interface TableMpcStatusResponse {
   table_id: number;
   phase: string;
@@ -647,26 +880,38 @@ export interface TableMpcStatusResponse {
   active_sessions: number;
 }
 
+/** Loads Mpc Status.
+ * @param tableId - table Id.
+ * @returns Promise<TableMpcStatusResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getMpcStatus(
   tableId: number
 ): Promise<TableMpcStatusResponse> {
-  const res = await fetch(`${API_BASE}/api/table/${tableId}/mpc-status`);
+  const res = await apiFetch(`${API_BASE}/api/table/${tableId}/mpc-status`);
   if (!res.ok) {
-    throw new Error(await readApiError(res, `MPC status failed: ${res.status}`));
+    throw await apiError(res, `MPC status failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Wallet Challenge Response shape. */
 export interface WalletChallengeResponse {
   challenge: string;
 }
 
+/** Wallet Verify Response shape. */
 export interface WalletVerifyResponse {
   verified: boolean;
 }
 
+/** Loads Wallet Challenge.
+ * @param address - address.
+ * @returns Promise<WalletChallengeResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function getWalletChallenge(address: string): Promise<WalletChallengeResponse> {
-  const res = await fetch(`${API_BASE}/api/wallet/challenge`, {
+  const res = await apiFetch(`${API_BASE}/api/wallet/challenge`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -674,17 +919,24 @@ export async function getWalletChallenge(address: string): Promise<WalletChallen
     body: JSON.stringify({ address }),
   });
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Failed to get wallet challenge`));
+    throw await apiError(res, `Failed to get wallet challenge`);
   }
   return res.json();
 }
 
+/** Verify Wallet Challenge.
+ * @param address - address.
+ * @param challenge - challenge.
+ * @param signature - signature.
+ * @returns Promise<WalletVerifyResponse>.
+ * @remarks Calls the coordinator REST API.
+ */
 export async function verifyWalletChallenge(
   address: string,
   challenge: string,
   signature: string
 ): Promise<WalletVerifyResponse> {
-  const res = await fetch(`${API_BASE}/api/wallet/verify`, {
+  const res = await apiFetch(`${API_BASE}/api/wallet/verify`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -692,7 +944,7 @@ export async function verifyWalletChallenge(
     body: JSON.stringify({ address, challenge, signature }),
   });
   if (!res.ok) {
-    throw new Error(await readApiError(res, `Wallet verification failed`));
+    throw await apiError(res, `Wallet verification failed`);
   }
   return res.json();
 }

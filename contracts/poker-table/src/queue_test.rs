@@ -28,6 +28,20 @@ mod queue_test {
             _p2_pts: i128,
         ) {
         }
+        /// End game.
+        ///
+        /// # Parameters
+        /// - `_session_id`: parameter
+        /// - `_p1_won`: parameter
+        ///
+        /// # Returns
+        /// - `()`
+        ///
+        /// # Errors
+        /// Returns an error if the operation fails.
+        ///
+        /// # Authorization
+        /// Requires appropriate authorization.
         pub fn end_game(_env: Env, _session_id: u32, _p1_won: bool) {}
     }
 
@@ -75,6 +89,7 @@ mod queue_test {
             token: s.token.address.clone(),
             min_buy_in: 100,
             max_buy_in: 1000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(&s.env, 5, 10),
             min_players: 2,
             max_players: 2,
@@ -87,6 +102,10 @@ mod queue_test {
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         };
         s.client.create_table(&s.admin, &config)
     }

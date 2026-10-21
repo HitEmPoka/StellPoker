@@ -2,21 +2,20 @@
   "recommendations": [
     "rust-lang.rust-analyzer",
     "vadimcn.vscode-lldb",
-    "ms-vscode.cpptools",
-    "ms-vscode-remote.remote-containers",
-    "ms-vscode-remote.remote-ssh",
-    "ms-mssql.mssql",
+    "serayuzgur.crates",
+    "tamasfe.even-better-toml",
+    "redhat.vscode-yaml",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
     "ms-vscode.makefile-tools",
-    "ms-dotnettools.csharp",
+    "ms-vscode-remote.remote-containers",
+    "ms-vscode-remote.remote-ssh",
+    "ms-vscode.remote-explorer",
+    "humao.rest-client",
     "mhutchie.git-graph",
     "eamodio.gitlens",
-    "ms-vscode.hexdump",
-    "chrisdias.vscode-opennewwindow",
     "usernamehw.errorlens",
-    "ms-vscode.makefile-tools",
-    "humao.rest-client",
-    "ms-vscode.remote-explorer"
+    "streetsidesoftware.code-spell-checker",
+    "ms-vscode.hexdump"
   ]
 }

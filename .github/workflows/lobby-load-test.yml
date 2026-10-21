@@ -1,0 +1,80 @@
+name: Lobby Load Test (5000 tables)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rate:
+        description: "Requests per second"
+        required: false
+        default: "50"
+      duration:
+        description: "Scenario duration"
+        required: false
+        default: "1m"
+      table_count:
+        description: "Number of listed tables"
+        required: false
+        default: "5000"
+  schedule:
+    # Weekly so capacity drift is visible without running a heavy job per PR.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lobby-load-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lobby-5000:
+    name: Lobby with 5000 listed tables
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start deterministic lobby fixture
+        env:
+          LOBBY_TABLE_COUNT: ${{ github.event.inputs.table_count || '5000' }}
+        run: docker compose -f load-testing/docker-compose.yml up -d lobby-fixture
+
+      - name: Wait for lobby fixture
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8090/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose -f load-testing/docker-compose.yml logs lobby-fixture
+          exit 1
+
+      - name: Run 5000-table lobby scenario
+        env:
+          TABLE_COUNT: ${{ github.event.inputs.table_count || '5000' }}
+          RATE: ${{ github.event.inputs.rate || '50' }}
+          DURATION: ${{ github.event.inputs.duration || '1m' }}
+        run: |
+          docker compose -f load-testing/docker-compose.yml run --rm --entrypoint k6 \
+            -e BASE_URL=http://lobby-fixture:8090 \
+            -e TABLE_COUNT="$TABLE_COUNT" \
+            -e RATE="$RATE" \
+            -e DURATION="$DURATION" \
+            -e RESULTS_DIR=/scripts/results \
+            k6 run /scripts/lobby-5000.js
+
+      - name: Upload recorded SLO summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lobby-5000-summary-${{ github.run_id }}
+          path: load-testing/k6/results/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Stop lobby fixture
+        if: always()
+        run: docker compose -f load-testing/docker-compose.yml down --remove-orphans

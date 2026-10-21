@@ -31,23 +31,30 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 mod api;
+mod attestation;
+mod gossip;
+mod heartbeat;
 mod limits;
 mod metrics;
 mod pool;
 mod private_table;
+mod proof_cache;
+mod redact;
+mod profiling;
 mod session;
 mod tls;
-mod heartbeat;
-mod gossip;
+mod trace_context;
 
 use limits::ResourceLimits;
 use metrics::NodeMetrics;
 use private_table::PrivateTableState;
+use profiling::ProfileRegistry;
 use session::MpcSessionState;
 
 #[derive(Clone)]
@@ -57,19 +64,51 @@ pub struct NodeState {
     pub tables: Arc<RwLock<HashMap<u32, PrivateTableState>>>,
     pub party_config_path: String,
     pub peer_http_endpoints: Vec<String>,
+    /// Graceful drain flag for planned maintenance (#571): when true the node
+    /// finishes in-flight sessions but refuses new ones. Advertised via
+    /// GET /health (`draining`) and set via DRAIN_MODE env or POST /admin/drain.
+    pub draining: Arc<AtomicBool>,
     /// Per-node resource ceilings guarding against exhaustion / session flooding.
     pub limits: ResourceLimits,
     /// Prometheus metrics: active sessions, proofs generated, error counts (Issue #101).
     pub metrics: NodeMetrics,
+    /// Session IDs that have already completed proof generation (issue #241).
+    ///
+    /// Kept independently of `sessions` (which is never pruned today, but is
+    /// not guaranteed to stay that way) so a replayed session_id is rejected
+    /// even if the corresponding entry in `sessions` were ever removed —
+    /// once a session has finished, the coordinator cannot reopen it by
+    /// resubmitting shares under the same session_id.
+    pub finalized_sessions: Arc<RwLock<HashSet<String>>>,
+    /// Replay protection: (session_id, source_party_id) -> seen nonces (Issue #500).
+    pub seen_share_nonces: Arc<RwLock<HashMap<(String, u32), HashSet<u64>>>>,
+    /// On-demand per-session CPU/memory profiling (Issue #244).
+    pub profiling: ProfileRegistry,
+}
+
+fn drain_mode_from_env() -> bool {
+    match std::env::var("DRAIN_MODE") {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"),
+        Err(_) => false,
+    }
+}
+
+pub fn is_draining(state: &NodeState) -> bool {
+    state.draining.load(Ordering::SeqCst)
 }
 
 #[tokio::main]
 async fn main() {
     let log_format = std::env::var("REQUEST_LOG_FORMAT").unwrap_or_default();
     if log_format.eq_ignore_ascii_case("json") {
-        tracing_subscriber::fmt().json().init();
+        tracing_subscriber::fmt()
+            .json()
+            .with_writer(redact::RedactingMakeWriter::new(std::io::stdout))
+            .init();
     } else {
-        tracing_subscriber::fmt().init();
+        tracing_subscriber::fmt()
+            .with_writer(redact::RedactingMakeWriter::new(std::io::stdout))
+            .init();
     }
 
     // ── Startup configuration validation (Issue #240) ───────────────────────
@@ -158,25 +197,44 @@ async fn main() {
         }
     };
 
+    let draining = Arc::new(AtomicBool::new(drain_mode_from_env()));
+    if draining.load(Ordering::SeqCst) {
+        tracing::warn!(
+            "MPC Node {} starting in DRAIN mode (DRAIN_MODE set)",
+            node_id
+        );
+    }
+
     let state = NodeState {
         node_id,
         sessions: Arc::new(RwLock::new(HashMap::new())),
         tables: Arc::new(RwLock::new(HashMap::new())),
         party_config_path,
         peer_http_endpoints: peer_http_endpoints.clone(),
+        draining,
         limits,
         metrics: NodeMetrics::new(),
+        finalized_sessions: Arc::new(RwLock::new(HashSet::new())),
+        seen_share_nonces: Arc::new(RwLock::new(HashMap::new())),
+        profiling: ProfileRegistry::new(),
     };
 
     // ── Peer connection pool health checks (Issue #246) ─────────────────────
     pool::spawn_health_checks(peer_http_endpoints.clone());
 
     // ── Proactive share refresh task (Issue #242) ───────────────────────────
-    private_table::spawn_share_refresh_task(
-        state.tables.clone(),
-        peer_http_endpoints,
-        node_id,
-    );
+    private_table::spawn_share_refresh_task(state.tables.clone(), peer_http_endpoints, node_id);
+
+    // ── Build provenance attestation reporter (Issue #587) ──────────────────
+    // Reports the hash of this node's own binary to the coordinator so it can
+    // refuse to hand committee work to unattested peers in strict mode.
+    if let Ok(coordinator_url) = std::env::var("COORDINATOR_URL") {
+        let interval = std::env::var("MPC_ATTESTATION_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(300);
+        attestation::spawn_attestation_reporter(node_id, coordinator_url, interval);
+    }
 
     // ── Background metric updaters ────────────────────────────────────────────
     {
@@ -217,14 +275,17 @@ async fn main() {
                         (ts - now) as f64 / 86400.0
                     })
                     .unwrap_or(365.0);
-                metrics.cert_expiry_days.with_label_values(&["server"]).set(expiry);
+                metrics
+                    .cert_expiry_days
+                    .with_label_values(&["server"])
+                    .set(expiry);
                 tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
             }
         });
     }
 
     let app = Router::new()
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(api::get_health))
         .route("/metrics", get(metrics::metrics_endpoint))
         .route(
             "/table/:table_id/prepare-deal",
@@ -247,6 +308,14 @@ async fn main() {
         .route("/session/:id/generate", post(api::post_generate))
         .route("/session/:id/status", get(api::get_status))
         .route("/session/:id/proof", get(api::get_proof))
+        .route("/session/:id/cost", get(api::get_cost))
+        .route("/admin/drain", post(api::post_admin_drain))
+        .route(
+            "/session/:id/profile",
+            post(api::post_enable_profiling).get(api::get_profile),
+        )
+        // Continue the coordinator's W3C trace on every handler (Issue #672).
+        .layer(axum::middleware::from_fn(trace_context::propagate))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
@@ -319,11 +388,7 @@ async fn serve_tls(
                 Err(e) => {
                     // TLS handshake failures are expected when misconfigured
                     // clients connect; log at debug level to avoid noise.
-                    tracing::debug!(
-                        "TLS handshake failed from {}: {}",
-                        remote_addr,
-                        e
-                    );
+                    tracing::debug!("TLS handshake failed from {}: {}", remote_addr, e);
                     return;
                 }
             };
@@ -338,11 +403,7 @@ async fn serve_tls(
                 .serve_connection(io, svc)
                 .await
             {
-                tracing::debug!(
-                    "HTTP/TLS connection error from {}: {}",
-                    remote_addr,
-                    e
-                );
+                tracing::debug!("HTTP/TLS connection error from {}: {}", remote_addr, e);
             }
         });
     }

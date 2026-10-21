@@ -16,6 +16,24 @@ stage. `nix develop` provides the toolchain if you use Nix (see
 
 See the [README](README.md) for full prerequisites.
 
+## Seed data
+
+`services/coordinator/seeds/001_dev_data.sql` provides a small fixed
+fixture. For larger or randomized data (frontend development against many
+tables, or load testing), generate it instead:
+
+```bash
+python3 scripts/generate-seed-data.py \
+  --tables 20 --players 100 --hands 50 --seed 42 \
+  --sql-out /tmp/seed.sql --hands-out /tmp/hand-history.json
+
+psql "$DATABASE_URL" -f /tmp/seed.sql
+```
+
+`--seed` makes the output reproducible; omit it for fresh random data each
+run. Run `python3 scripts/generate-seed-data.py --help` for every
+parameter (table/player/hand counts, seats per table).
+
 ## Project Structure
 
 | Directory | Description |
@@ -28,11 +46,62 @@ See the [README](README.md) for full prerequisites.
 | `app/` | Next.js frontend |
 | `scripts/` | Build, deploy, and test scripts |
 
+## Pre-commit Hooks
+
+This repository uses pre-commit hooks to automatically check code quality before committing. Install them with:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Hooks run automatically on every commit and check:
+- **Rust formatting** — `cargo fmt --all --check`
+- **Rust linting** — `cargo clippy --all-targets --all-features`
+- **Noir circuits** — `nargo check --all` (if `nargo` is installed)
+- **General** — trailing whitespace, merge conflicts, YAML syntax
+
+To run hooks manually before committing (e.g., after running `cargo fmt` fixes):
+```bash
+pre-commit run --all-files
+```
+
+To skip pre-commit temporarily (not recommended):
+```bash
+git commit --no-verify
+```
+
 ## Workflow
 
 1. Fork the repository and create a branch from `main`.
 2. Make your changes. Run the relevant tests before opening a PR.
-3. Open a pull request with a clear description of what changed and why.
+3. Pre-commit hooks will run automatically — fix any issues they report.
+4. Open a pull request with a clear description of what changed and why.
+
+How a PR is reviewed and merged — required status checks, the merge queue,
+label triage, and review SLAs — is documented for maintainers in
+[docs/MAINTAINERS.md](docs/MAINTAINERS.md).
+
+## Contract upgrades
+
+Deploy order, init args, and which contracts support an on-chain upgrade
+are declared in `scripts/migrations.json`. Only `poker-table` currently
+supports one, via a timelocked propose/execute flow with a fast rollback
+window (see `contracts/poker-table/src/lib.rs`'s `propose_upgrade` /
+`execute_upgrade` / `revert_last_upgrade`). Drive it with
+`scripts/upgrade.sh propose|execute|rollback` — see that script's header
+for full usage and an example. Other contracts have no on-chain upgrade
+path yet and require a redeploy.
+
+## Makefile shortcuts
+
+Common commands are wrapped in a top-level `Makefile` — run `make help` (or
+just `make`) to list them: `build`, `test`, `lint`, `deploy-local`,
+`start`/`stop` (the docker-compose dev stack), `clean`, and `ci` (runs
+`lint`, `test`, and `build` together, the same checks CI runs).
+`make pr-preview PR=<n>` starts an isolated per-PR stack and
+`make pr-preview-down PR=<n>` tears it down — see
+[docs/preview-environments.md](docs/preview-environments.md).
 
 ## Running Tests
 

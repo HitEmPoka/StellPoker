@@ -118,12 +118,10 @@ async fn run_election_loop(pool: &PgPool, flag: Arc<AtomicBool>) {
     };
 
     // Non-blocking attempt to get the advisory lock.
-    let acquired: bool = match sqlx::query_scalar(
-        "SELECT pg_try_advisory_lock($1)",
-    )
-    .bind(LEADER_LOCK_KEY)
-    .fetch_one(&mut *conn)
-    .await
+    let acquired: bool = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+        .bind(LEADER_LOCK_KEY)
+        .fetch_one(&mut *conn)
+        .await
     {
         Ok(b) => b,
         Err(e) => {
@@ -159,7 +157,10 @@ async fn run_election_loop(pool: &PgPool, flag: Arc<AtomicBool>) {
                 debug!("leader-election: keepalive OK");
             }
             Err(e) => {
-                warn!("leader-election: keepalive failed, releasing leader role: {}", e);
+                warn!(
+                    "leader-election: keepalive failed, releasing leader role: {}",
+                    e
+                );
                 flag.store(false, Ordering::SeqCst);
                 // Connection is broken; drop it so the advisory lock is released.
                 return;
@@ -206,6 +207,9 @@ mod tests {
         let s1 = LeaderState::new();
         let s2 = s1.clone();
         s1.is_leader.store(true, Ordering::SeqCst);
-        assert!(s2.is_leader(), "cloned state must share the same atomic flag");
+        assert!(
+            s2.is_leader(),
+            "cloned state must share the same atomic flag"
+        );
     }
 }

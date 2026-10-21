@@ -35,6 +35,7 @@ const PALETTES: ReadonlyArray<readonly [string, string]> = [
   ["#ff6fae", "#1f1320"],
 ];
 
+/** Identicon Grid shape. */
 export interface IdenticonGrid {
   size: number;
   cells: boolean[][];

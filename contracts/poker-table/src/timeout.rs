@@ -12,9 +12,19 @@ pub fn process_timeout(
     _claimer: &Address,
 ) -> Result<(), PokerTableError> {
     let current_ledger = env.ledger().sequence();
+    // Contract-level timeout check that respects time-bank extensions:
+    // if the current player has an active deadline extension, we check that instead.
+    if table.action_deadline != 0 && current_ledger < table.action_deadline {
+        return Err(PokerTableError::TimeoutNotReached);
+    }
+    // If time-bank could still rescue the player, allow a grace window of 1 ledger
+    // for them to call `use_time_bank` before we enforce the fold.
+    if !crate::time_bank::should_enforce_timeout(env, table) {
+        return Err(PokerTableError::TimeoutNotReached);
+    }
     let elapsed = current_ledger - table.last_action_ledger;
 
-    if elapsed < table.config.timeout_ledgers {
+    if elapsed < table.config.timeout_ledgers && table.action_deadline == 0 {
         return Err(PokerTableError::TimeoutNotReached);
     }
 
@@ -70,10 +80,8 @@ pub fn process_timeout(
             };
             table.last_action_ledger = current_ledger;
             table.action_deadline = 0;
-            env.events().publish(
-                (Symbol::new(env, "rit_timeout"), table.id),
-                (),
-            );
+            env.events()
+                .publish((Symbol::new(env, "rit_timeout"), table.id), ());
         }
 
         // Committee timeout during dealing/reveal — dispute, return funds
@@ -206,7 +214,7 @@ fn find_seat_by_address(
 
 /// Emergency refund: return all player stacks + pot split equally
 /// among non-folded players. Used when committee fails.
-fn emergency_refund(_env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+fn emergency_refund(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let active = game::active_player_count(table);
     if active == 0 {
         return Ok(());
@@ -245,5 +253,6 @@ fn emergency_refund(_env: &Env, table: &mut TableState) -> Result<(), PokerTable
 
     table.pot = 0;
     table.phase = GamePhase::Settlement;
+    table.settlement_entered_ledger = env.ledger().sequence();
     Ok(())
 }

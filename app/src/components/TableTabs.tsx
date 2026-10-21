@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   loadOpenTables,
   trackOpenTable,
+  untrackOpenTable,
   tableHref,
   type OpenTable,
   type PlayMode,
 } from "@/lib/open-tables";
+import { TableTilingView } from "./TableTilingView";
 
 interface TableTabsProps {
   /** Table currently on screen — highlighted, and not a link. */
@@ -23,11 +26,12 @@ interface TableTabsProps {
  * Strip of the player's other open tables, so someone playing several at once
  * can jump between them without going back to the lobby (#72).
  *
- * The strip only appears once there is somewhere else to go — a single-tabling
- * player never sees it.
+ * Includes multi-table tiling grid view modal (#178).
  */
 export function TableTabs({ activeTableId, activeMode, address }: TableTabsProps) {
+  const router = useRouter();
   const [tables, setTables] = useState<OpenTable[]>([]);
+  const [tilingOpen, setTilingOpen] = useState(false);
 
   useEffect(() => {
     if (!address) {
@@ -52,51 +56,82 @@ export function TableTabs({ activeTableId, activeMode, address }: TableTabsProps
   if (!address || tables.length < 2) return null;
 
   return (
-    <nav
-      aria-label="Open tables"
-      className="w-full max-w-3xl flex items-center gap-2 flex-wrap"
-    >
-      <span className="text-[8px]" style={{ color: "#95a5a6" }}>
-        TABLES
-      </span>
-      {tables.map((table) => {
-        const isActive = table.tableId === activeTableId;
-        const label = `#${table.tableId}`;
+    <>
+      <nav
+        aria-label="Open tables"
+        className="w-full max-w-3xl flex items-center gap-2 flex-wrap"
+      >
+        <span className="text-[8px]" style={{ color: "#95a5a6" }}>
+          TABLES
+        </span>
+        {tables.map((table) => {
+          const isActive = table.tableId === activeTableId;
+          const label = `#${table.tableId}`;
 
-        if (isActive) {
+          if (isActive) {
+            return (
+              <span
+                key={table.tableId}
+                aria-current="page"
+                className="pixel-border-thin px-2 py-1 text-[9px]"
+                style={{
+                  background: "rgba(20, 90, 50, 0.5)",
+                  borderColor: "#27ae60",
+                  color: "#eafaf1",
+                }}
+              >
+                {label}
+              </span>
+            );
+          }
+
           return (
-            <span
+            <Link
               key={table.tableId}
-              aria-current="page"
+              href={tableHref(table)}
               className="pixel-border-thin px-2 py-1 text-[9px]"
               style={{
-                background: "rgba(20, 90, 50, 0.5)",
-                borderColor: "#27ae60",
-                color: "#eafaf1",
+                background: "rgba(20, 20, 40, 0.5)",
+                borderColor: "#4a6a8a",
+                color: "#c8e6ff",
+                textDecoration: "none",
               }}
+              title={`Switch to table ${table.tableId}`}
             >
               {label}
-            </span>
+            </Link>
           );
-        }
+        })}
 
-        return (
-          <Link
-            key={table.tableId}
-            href={tableHref(table)}
-            className="pixel-border-thin px-2 py-1 text-[9px]"
-            style={{
-              background: "rgba(20, 20, 40, 0.5)",
-              borderColor: "#4a6a8a",
-              color: "#c8e6ff",
-              textDecoration: "none",
-            }}
-            title={`Switch to table ${table.tableId}`}
-          >
-            {label}
-          </Link>
-        );
-      })}
-    </nav>
+        <button
+          type="button"
+          onClick={() => setTilingOpen(true)}
+          className="pixel-btn pixel-btn-blue text-[8px] px-2 py-1 ml-auto"
+          title="Open multi-table grid view"
+        >
+          ⊞ TILING VIEW
+        </button>
+      </nav>
+
+      {/* Multi-table tiling grid view */}
+      <TableTilingView
+        isOpen={tilingOpen}
+        onClose={() => setTilingOpen(false)}
+        tables={tables}
+        activeTableId={activeTableId}
+        onFocusTable={(tableId) => {
+          const target = tables.find((t) => t.tableId === tableId);
+          if (target) {
+            router.push(tableHref(target));
+          }
+        }}
+        onCloseTable={(tableId) => {
+          if (address) {
+            const next = untrackOpenTable(address, tableId);
+            setTables(next);
+          }
+        }}
+      />
+    </>
   );
 }

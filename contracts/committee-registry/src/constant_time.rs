@@ -10,12 +10,40 @@ fn bytes32_eq(left: &BytesN<32>, right: &BytesN<32>) -> bool {
     diff == 0
 }
 
+/// Address eq.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn address_eq(env: &Env, left: &Address, right: &Address) -> bool {
     let left_hash: BytesN<32> = env.crypto().keccak256(&left.to_xdr(env)).into();
     let right_hash: BytesN<32> = env.crypto().keccak256(&right.to_xdr(env)).into();
     bytes32_eq(&left_hash, &right_hash)
 }
 
+/// Address ne.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn address_ne(env: &Env, left: &Address, right: &Address) -> bool {
     !address_eq(env, left, right)
 }

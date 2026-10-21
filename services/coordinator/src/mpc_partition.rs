@@ -120,8 +120,9 @@ impl PartitionDetector {
     /// *other* committee members report it unreachable.
     pub fn recompute(&mut self, all_node_ids: &[String]) {
         let now = SystemTime::now();
-        self.reports
-            .retain(|_, r| now.duration_since(r.reported_at).unwrap_or_default() <= self.config.report_ttl);
+        self.reports.retain(|_, r| {
+            now.duration_since(r.reported_at).unwrap_or_default() <= self.config.report_ttl
+        });
 
         for candidate in all_node_ids {
             let other_reporters: Vec<&ConnectivityReport> = self

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { THEMES, loadTheme, saveTheme, applyTheme } from "@/lib/themes";
 
+/** Renders Theme Selector */
 export function ThemeSelector() {
   const [currentThemeId, setCurrentThemeId] = useState<string>("classic-green");
   const [open, setOpen] = useState(false);

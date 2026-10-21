@@ -1,5 +1,6 @@
 import { bestHandRank } from "./hand-rank";
 
+/** Hand Strength shape. */
 export type HandStrength = "strong" | "marginal" | "weak" | "drawing-dead";
 
 const CATEGORY_STRENGTH: Record<number, HandStrength> = {
@@ -14,6 +15,11 @@ const CATEGORY_STRENGTH: Record<number, HandStrength> = {
   1: "weak",
 };
 
+/** Classify Hand Strength.
+ * @param holeCards - hole Cards.
+ * @param boardCards - board Cards.
+ * @returns HandStrength.
+ */
 export function classifyHandStrength(holeCards: [number, number], boardCards: number[]): HandStrength {
   if (boardCards.length === 0) {
     const r1 = (holeCards[0] % 13) + 2;
@@ -62,6 +68,10 @@ export function classifyHandStrength(holeCards: [number, number], boardCards: nu
   return strength;
 }
 
+/** Loads Hand Strength Color.
+ * @param strength - strength.
+ * @returns string.
+ */
 export function getHandStrengthColor(strength: HandStrength): string {
   switch (strength) {
     case "strong": return "#27ae60";
@@ -71,6 +81,10 @@ export function getHandStrengthColor(strength: HandStrength): string {
   }
 }
 
+/** Loads Hand Strength Label.
+ * @param strength - strength.
+ * @returns string.
+ */
 export function getHandStrengthLabel(strength: HandStrength): string {
   switch (strength) {
     case "strong": return "STRONG";

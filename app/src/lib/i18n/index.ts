@@ -1,20 +1,43 @@
 /**
- * Lightweight i18n (Issue #60).
- * English + Spanish dictionaries, browser language auto-detect, manual override.
+ * Lightweight i18n (Issues #60, #620, #621).
+ * English, Spanish, German, French, Japanese, Chinese, and Arabic dictionaries,
+ * browser language auto-detect, manual override, RTL support.
  * Avoids next-intl dependency to keep the frontend dep-light.
  */
 
 import en from "./messages/en.json";
 import es from "./messages/es.json";
+import de from "./messages/de.json";
+import fr from "./messages/fr.json";
+import ja from "./messages/ja.json";
+import zh from "./messages/zh.json";
+import ar from "./messages/ar.json";
 
-export type Locale = "en" | "es";
+/** Locale shape. */
+export type Locale = "en" | "es" | "de" | "fr" | "ja" | "zh" | "ar";
 
-export const LOCALES: Locale[] = ["en", "es"];
+/** LOCALES */
+export const LOCALES: Locale[] = ["en", "es", "de", "fr", "ja", "zh", "ar"];
+
+/** RTL Locales */
+export const RTL_LOCALES: Locale[] = ["ar"];
+
+/** Returns whether a locale is Right-To-Left (RTL). */
+export function isRtlLocale(locale: Locale): boolean {
+  return RTL_LOCALES.includes(locale);
+}
+
+/** Returns the text direction ('rtl' | 'ltr') for a locale. */
+export function getDirection(locale: Locale): "rtl" | "ltr" {
+  return isRtlLocale(locale) ? "rtl" : "ltr";
+}
+
+/** DEFAULT LOCALE */
 export const DEFAULT_LOCALE: Locale = "en";
 const STORAGE_KEY = "stellpoker.locale";
 
 type Dict = typeof en;
-const dictionaries: Record<Locale, Dict> = { en, es };
+const dictionaries: Record<Locale, Dict> = { en, es, de, fr, ja, zh, ar };
 
 type NestedKeyOf<T, Prefix extends string = ""> = T extends object
   ? {
@@ -24,6 +47,7 @@ type NestedKeyOf<T, Prefix extends string = ""> = T extends object
     }[keyof T & string]
   : never;
 
+/** Message Key shape. */
 export type MessageKey = NestedKeyOf<Dict>;
 
 function getByPath(obj: unknown, path: string): string | undefined {
@@ -65,23 +89,30 @@ export function detectBrowserLocale(): Locale {
     .filter(Boolean)
     .map((l) => l.toLowerCase().slice(0, 2));
   for (const c of candidates) {
-    if (c === "es") return "es";
-    if (c === "en") return "en";
+    if (LOCALES.includes(c as Locale)) return c as Locale;
   }
   return DEFAULT_LOCALE;
 }
 
+/** Loads Stored Locale.
+ * @returns Locale | null.
+ * @remarks Reads/writes browser storage.
+ */
 export function loadStoredLocale(): Locale | null {
   if (typeof window === "undefined") return null;
   try {
     const v = window.localStorage.getItem(STORAGE_KEY);
-    if (v === "en" || v === "es") return v;
+    if (v && LOCALES.includes(v as Locale)) return v as Locale;
   } catch {
     /* ignore */
   }
   return null;
 }
 
+/** Persists Locale.
+ * @param locale - locale.
+ * @remarks Reads/writes browser storage.
+ */
 export function storeLocale(locale: Locale): void {
   if (typeof window === "undefined") return;
   try {
@@ -93,8 +124,8 @@ export function storeLocale(locale: Locale): void {
 
 /** Resolved locale: manual override > stored > browser > default. */
 export function resolveLocale(override?: Locale | null): Locale {
-  if (override === "en" || override === "es") return override;
+  if (override && LOCALES.includes(override)) return override;
   return loadStoredLocale() ?? detectBrowserLocale();
 }
 
-export { en, es };
+export { en, es, de, fr, ja, zh, ar };

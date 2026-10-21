@@ -33,6 +33,20 @@ mod test {
         ) {
         }
 
+        /// End game.
+        ///
+        /// # Parameters
+        /// - `_session_id`: parameter
+        /// - `_player1_won`: parameter
+        ///
+        /// # Returns
+        /// - `()`
+        ///
+        /// # Errors
+        /// Returns an error if the operation fails.
+        ///
+        /// # Authorization
+        /// Requires appropriate authorization.
         pub fn end_game(_env: Env, _session_id: u32, _player1_won: bool) {}
     }
 
@@ -62,6 +76,7 @@ mod test {
             token: token.clone(),
             min_buy_in: 100,
             max_buy_in: 1000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 5, 10),
             min_players: 2,
             max_players: 6,
@@ -74,6 +89,10 @@ mod test {
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         }
     }
 
@@ -133,6 +152,7 @@ mod test {
             token: token.clone(),
             min_buy_in: 100,
             max_buy_in: 100_000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 100, 200),
             min_players: 2,
             max_players: 6,
@@ -145,6 +165,10 @@ mod test {
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         }
     }
 
@@ -213,6 +237,40 @@ mod test {
         assert_eq!(id0, 0);
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn test_export_table_state_versioned_snapshot() {
+        use soroban_sdk::Vec as SdkVec;
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join_player(&s, table_id, &p1, &500);
+        join_player(&s, table_id, &p2, &700);
+        s.client.start_hand(&table_id);
+
+        let export = s.client.export_table_state(&table_id);
+        // Stable versioned format.
+        assert_eq!(export.version, crate::types::TABLE_EXPORT_VERSION);
+        assert_eq!(export.version, 1);
+        assert_eq!(export.table_id, table_id);
+        // Seated stacks, seats, phase, button and config.
+        assert_eq!(export.phase, GamePhase::Dealing);
+        assert_eq!(export.dealer_seat, 1);
+        assert_eq!(export.hand_number, 1);
+        assert_eq!(export.seats.len(), 2);
+        assert_eq!(export.seats.get(0).unwrap().address, p1);
+        assert_eq!(export.seats.get(0).unwrap().seat_index, 0);
+        assert_eq!(export.seats.get(0).unwrap().stack, 495); // 500 - sb 5
+        assert_eq!(export.seats.get(1).unwrap().address, p2);
+        assert_eq!(export.seats.get(1).unwrap().stack, 690); // 700 - bb 10
+        assert_eq!(export.pot, 15);
+        assert_eq!(export.board_cards, SdkVec::new(&s.env));
+        assert_eq!(export.config.max_players, 6);
+        let level = export.config.blinds_schedule.levels.get(0).unwrap();
+        assert_eq!(level.small_blind, 5);
+        assert_eq!(level.big_blind, 10);
     }
 
     // ---------------------------------------------------------------------------
@@ -1518,13 +1576,7 @@ mod test {
         play_fold_hand(&s, table_id);
         assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
 
-        let stack_before = s
-            .client
-            .get_table(&table_id)
-            .players
-            .get(0)
-            .unwrap()
-            .stack;
+        let stack_before = s.client.get_table(&table_id).players.get(0).unwrap().stack;
         let new_stack = rebuy(&s, table_id, &p1, 100);
         assert_eq!(new_stack, stack_before + 100);
     }

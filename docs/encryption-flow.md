@@ -117,7 +117,34 @@ It covers external TLS, internal coordinator-to-node transport, Soroban transact
 - Keep wallet signing operations confined to the browser wallet.
 - Treat MPC share payloads and node orchestration traffic as confidential.
 
-## 7. Cross-Layer Summary
+## 7. Witness Buffer Zeroization
+
+After coNoir proof generation, witness inputs (permutations, salts, TOML share buffers) must be
+cleared from heap memory to prevent secret material from lingering in freed pages.
+
+### Policy
+
+- `PartyContribution` in `services/node/src/private_table.rs` derives `ZeroizeOnDrop`.  Its
+  `permutation` (`Vec<u32>`) and `salts` (`Vec<String>`) fields are zeroed automatically whenever
+  the struct is dropped — including when a new deal replaces the prior contribution or when the
+  table entry is removed from `PrivateTableState`.
+- All serialized TOML buffers (`input_toml`) produced by `build_*_partial_toml` are wrapped in
+  `zeroize::Zeroizing<String>` inside `prepare_deal`, `prepare_reveal`, and `prepare_showdown`.
+  This ensures the plaintext permutation/salt TOML string is zeroed when it goes out of scope
+  (immediately after the `split_partial_input` subprocess writes it to a temp file).
+- File-backed buffers (the `Prover.toml` share file written to disk by `co-noir
+  merge-input-shares`) are not addressed by in-process zeroization. The work directory should be
+  placed on a `tmpfs` or encrypted volume and cleaned up by the caller after proof generation.
+
+### What is covered
+
+| Buffer | Zeroization mechanism |
+|---|---|
+| `PartyContribution.permutation` | `ZeroizeOnDrop` via derive |
+| `PartyContribution.salts` | `ZeroizeOnDrop` via derive |
+| `input_toml` (deal/reveal/showdown) | `Zeroizing<String>` wrapper, dropped after subprocess |
+
+## 8. Cross-Layer Summary
 
 | Layer | Protection | Notes |
 |---|---|---|
@@ -127,3 +154,4 @@ It covers external TLS, internal coordinator-to-node transport, Soroban transact
 | Wallet auth | Message signature | Authenticates player actions to coordinator |
 | Wallet transaction sign | Signed XDR | Authorizes on-chain contract calls |
 | Proofs | Public ZK proofs over secret shares | Confidentiality via MPC secret sharing |
+| Witness buffers | `ZeroizeOnDrop` + `Zeroizing<String>` | Cleared from heap after proving |

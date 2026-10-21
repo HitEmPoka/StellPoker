@@ -1,0 +1,230 @@
+{
+  "circuits": {
+    "deal_valid": {
+      "acir_opcodes": 13120,
+      "backend_gates": 26240
+    },
+    "reveal_board_valid": {
+      "acir_opcodes": 12359,
+      "backend_gates": 24100
+    },
+    "showdown_valid": {
+      "acir_opcodes": 11133,
+      "backend_gates": 21709
+    },
+    "burn_card_valid": {
+      "acir_opcodes": 9493,
+      "backend_gates": 18511
+    },
+    "side_pot_valid": {
+      "acir_opcodes": 2795,
+      "backend_gates": 5450
+    },
+    "split_pot_valid": {
+      "acir_opcodes": 3207,
+      "backend_gates": 6253
+    },
+    "fold_valid": {
+      "acir_opcodes": 12300,
+      "backend_gates": 24600
+    },
+    "muck_valid": {
+      "acir_opcodes": 8977,
+      "backend_gates": 17505
+    },
+    "deck_complete": {
+      "acir_opcodes": 3953,
+      "backend_gates": 7708
+    },
+    "time_bank_valid": {
+      "acir_opcodes": 30,
+      "backend_gates": 58
+    },
+    "batched_hand_packing": {
+      "acir_opcodes": 201,
+      "backend_gates": 391
+    }
+  },
+  "hotspots": [
+    {
+      "stack": "deal_valid;shuffle;derive_shared_deck",
+      "gates": 6297
+    },
+    {
+      "stack": "deal_valid;shuffle;assert_valid_permutation",
+      "gates": 3148
+    },
+    {
+      "stack": "deal_valid;cards;assert_valid_deck",
+      "gates": 2099
+    },
+    {
+      "stack": "deal_valid;commitments;commit_card",
+      "gates": 7347
+    },
+    {
+      "stack": "deal_valid;merkle;compute_merkle_root",
+      "gates": 4198
+    },
+    {
+      "stack": "deal_valid;deal;injectivity_check",
+      "gates": 1836
+    },
+    {
+      "stack": "deal_valid;packing;leaf_reuse_optimization",
+      "gates": 1312
+    },
+    {
+      "stack": "reveal_board_valid;merkle;verify_merkle_proof",
+      "gates": 9158
+    },
+    {
+      "stack": "reveal_board_valid;commitments;commit_board",
+      "gates": 6507
+    },
+    {
+      "stack": "reveal_board_valid;cards;assert_valid_card",
+      "gates": 3615
+    },
+    {
+      "stack": "reveal_board_valid;deck;membership_check",
+      "gates": 2892
+    },
+    {
+      "stack": "reveal_board_valid;runtime;range_checks",
+      "gates": 1928
+    },
+    {
+      "stack": "showdown_valid;cards;evaluate_hand_rank;combinations",
+      "gates": 9117
+    },
+    {
+      "stack": "showdown_valid;cards;evaluate_hand_rank;sorting",
+      "gates": 4558
+    },
+    {
+      "stack": "showdown_valid;cards;evaluate_hand_rank;flush_straight",
+      "gates": 3039
+    },
+    {
+      "stack": "showdown_valid;cards;evaluate_hand_rank;kicker_tiebreak",
+      "gates": 1953
+    },
+    {
+      "stack": "showdown_valid;merkle;verify_hole_cards",
+      "gates": 1736
+    },
+    {
+      "stack": "showdown_valid;pot;award_winner",
+      "gates": 1302
+    },
+    {
+      "stack": "burn_card_valid;shuffle;derive_shared_deck",
+      "gates": 5183
+    },
+    {
+      "stack": "burn_card_valid;merkle;compute_merkle_root",
+      "gates": 4812
+    },
+    {
+      "stack": "burn_card_valid;commitments;commit_card",
+      "gates": 4072
+    },
+    {
+      "stack": "burn_card_valid;burn;distinctness_checks",
+      "gates": 2591
+    },
+    {
+      "stack": "burn_card_valid;burn;street_count_assertions",
+      "gates": 1851
+    },
+    {
+      "stack": "side_pot_valid;pot;sort_commitments",
+      "gates": 1907
+    },
+    {
+      "stack": "side_pot_valid;pot;compute_tier_capacities",
+      "gates": 1526
+    },
+    {
+      "stack": "side_pot_valid;pot;eligibility_bitmasks",
+      "gates": 1199
+    },
+    {
+      "stack": "side_pot_valid;pot;conservation_check",
+      "gates": 817
+    },
+    {
+      "stack": "split_pot_valid;pot;multi_way_all_in_split",
+      "gates": 2376
+    },
+    {
+      "stack": "split_pot_valid;pot;calculate_remainders",
+      "gates": 1625
+    },
+    {
+      "stack": "split_pot_valid;pot;eligibility_matrix",
+      "gates": 1313
+    },
+    {
+      "stack": "split_pot_valid;pot;conservation_check",
+      "gates": 937
+    },
+    {
+      "stack": "fold_valid;commitments;verify_hand_commitment",
+      "gates": 11070
+    },
+    {
+      "stack": "fold_valid;merkle;verify_merkle_proof",
+      "gates": 8610
+    },
+    {
+      "stack": "fold_valid;state;fold_flag_assertion",
+      "gates": 4920
+    },
+    {
+      "stack": "muck_valid;commitments;verify_hand_commitment",
+      "gates": 8752
+    },
+    {
+      "stack": "muck_valid;merkle;verify_merkle_proof",
+      "gates": 6126
+    },
+    {
+      "stack": "muck_valid;state;muck_flag_assertion",
+      "gates": 2625
+    },
+    {
+      "stack": "deck_complete;cards;assert_all_52_unique",
+      "gates": 4239
+    },
+    {
+      "stack": "deck_complete;merkle;compute_full_tree",
+      "gates": 3468
+    },
+    {
+      "stack": "time_bank_valid;time;monotonic_clock_delta",
+      "gates": 26
+    },
+    {
+      "stack": "time_bank_valid;time;signature_verification",
+      "gates": 20
+    },
+    {
+      "stack": "time_bank_valid;time;balance_deduction",
+      "gates": 11
+    },
+    {
+      "stack": "batched_hand_packing;packing;poseidon2_hash_2",
+      "gates": 203
+    },
+    {
+      "stack": "batched_hand_packing;packing;domain_separation",
+      "gates": 109
+    },
+    {
+      "stack": "batched_hand_packing;packing;header_accumulation",
+      "gates": 78
+    }
+  ]
+}

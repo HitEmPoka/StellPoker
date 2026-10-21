@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HitEmPoka/StellPoker/docs/events/table_created.schema.json",
+  "title": "table_created",
+  "description": "poker-table event. A table was created.",
+  "type": "object",
+  "required": [
+    "topics",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topics": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "symbol",
+          "type": "string",
+          "const": "table_created",
+          "description": "Event name"
+        },
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Table id"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "data": {
+      "x-soroban": "address",
+      "type": "string",
+      "pattern": "^[GC][A-Z2-7]{55}$",
+      "description": "Table admin"
+    }
+  }
+}

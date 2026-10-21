@@ -3,7 +3,7 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, Method},
+    http::{HeaderMap, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -32,12 +32,12 @@ pub async fn authenticate_mpc_request(
     }
 
     let ip_address = extract_ip_address(headers);
-    
+
     let pool = match state.db_pool.as_ref() {
         Some(pool) => pool,
         None => return Ok(next.run(request).await), // No database, skip auth for dev mode
     };
-    
+
     match api_keys::authenticate_mpc_node(pool, headers, path, ip_address.as_deref()).await {
         Ok(node_id) => {
             tracing::debug!("Authenticated MPC node: {} for endpoint: {}", node_id, path);
@@ -61,7 +61,8 @@ pub async fn authenticate_mpc_request(
                     path,
                     ip_address.as_deref(),
                     false,
-                ).await;
+                )
+                .await;
             }
 
             Err(status)
@@ -72,11 +73,11 @@ pub async fn authenticate_mpc_request(
 /// Check if the path is an MPC node endpoint that requires authentication
 fn is_mpc_endpoint(path: &str) -> bool {
     // These are internal endpoints used by MPC nodes
-    path.contains("/mpc/") || 
-    path.contains("/prepare/") ||
-    path.contains("/prove/") ||
-    path.contains("/shares/") ||
-    path.starts_with("/internal/")
+    path.contains("/mpc/")
+        || path.contains("/prepare/")
+        || path.contains("/prove/")
+        || path.contains("/shares/")
+        || path.starts_with("/internal/")
 }
 
 /// Extract IP address from request headers

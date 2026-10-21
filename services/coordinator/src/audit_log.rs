@@ -287,3 +287,53 @@ pub async fn verify_audit_chain(pool: &PgPool) -> Result<bool, sqlx::Error> {
 
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Reference vectors shared with scripts/export_audit_worm.py (--self-test).
+    // The exporter recomputes these hashes in Python; if either side drifts
+    // (timestamp rendering, field order), one of the two tests fails.
+    #[test]
+    fn record_hash_matches_reference_vectors() {
+        let request_id = Uuid::parse_str("0195e5a1-2b3c-4d5e-8f70-a1b2c3d4e5f6").unwrap();
+
+        let ts: chrono::DateTime<chrono::Utc> = "2026-03-04T05:06:07.123456+00:00".parse().unwrap();
+        let hash_a = compute_record_hash(
+            &request_id,
+            &ts,
+            Some("GADMIN"),
+            "session.create",
+            "/api/sessions",
+            "POST",
+            Some("203.0.113.7"),
+            Some(201),
+            None,
+        );
+        assert_eq!(
+            hash_a,
+            "2c5eb519c3546e3574718dd80208693ccc3882b8d700156fdacfa9f65bfb9204"
+        );
+
+        // Trailing-zero microseconds must render as milliseconds (.100000 ->
+        // .100) to stay in step with the exporter's Python formatter.
+        let ts_b: chrono::DateTime<chrono::Utc> =
+            "2026-03-04T05:06:07.100000+00:00".parse().unwrap();
+        let hash_b = compute_record_hash(
+            &request_id,
+            &ts_b,
+            Some("GADMIN"),
+            "session.denied",
+            "/api/sessions",
+            "POST",
+            Some("203.0.113.7"),
+            Some(401),
+            Some(&hash_a),
+        );
+        assert_eq!(
+            hash_b,
+            "1de99845fe8b3c18f658c3c6d4a49cff52d6e4503167d763be848c1150eb87b8"
+        );
+    }
+}

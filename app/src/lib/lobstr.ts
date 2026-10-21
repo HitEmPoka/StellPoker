@@ -97,6 +97,10 @@ function getApi(): LobstrApi | null {
   return null;
 }
 
+/** Checks is Lobstr Installed.
+ * @returns boolean.
+ * @remarks Reads/writes browser storage.
+ */
 export function isLobstrInstalled(): boolean {
   return getApi() !== null;
 }
@@ -117,6 +121,10 @@ function getSavedWalletAddress(): string | null {
   }
 }
 
+/** Clear Saved Wallet.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ * @remarks Reads/writes browser storage.
+ */
 export function clearSavedWallet(): void {
   try {
     localStorage.removeItem("stellar_poker_wallet_lobstr");
@@ -125,6 +133,10 @@ export function clearSavedWallet(): void {
   }
 }
 
+/** Connect Lobstr Wallet.
+ * @returns Promise<WalletSession>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function connectLobstrWallet(): Promise<WalletSession> {
   const api = getApi();
   if (!api) {
@@ -156,6 +168,10 @@ export async function connectLobstrWallet(): Promise<WalletSession> {
   };
 }
 
+/** Try Silent Reconnect Lobstr.
+ * @returns Promise<WalletSession | null>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function trySilentReconnectLobstr(): Promise<WalletSession | null> {
   const saved = getSavedWalletAddress();
   if (!saved) return null;

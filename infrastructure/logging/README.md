@@ -72,3 +72,6 @@ Query from the Grafana Explore tab or the Loki API directly:
 # Request rate per service (last 5 minutes)
 sum by (service) (rate({service=~".+"}[5m]))
 ```
+## Unified schema
+
+All new service logs should follow the shared schema in [docs/unified-logging-schema.md](../../docs/unified-logging-schema.md). The schema standardizes `timestamp`, `level`, `service`, `session_id`, `request_id`, and `duration_ms` across coordinator, MPC nodes, contract tooling, and local scripts.

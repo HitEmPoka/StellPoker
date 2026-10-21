@@ -1,5 +1,8 @@
 "use client";
 
+/** Renders Skeleton.
+ * @param props(object) - props(object).
+ */
 export function Skeleton({ className = "", width = "100%", height = "16px" }: { className?: string; width?: string; height?: string }) {
   return (
     <div

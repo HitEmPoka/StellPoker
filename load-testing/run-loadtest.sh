@@ -9,7 +9,7 @@ DURATION=${DURATION:-3m}
 
 docker compose up -d
 
-docker compose run --rm \
+docker compose run --rm --entrypoint k6 \
   -e BASE_URL="$BASE_URL" \
   -e TABLE_COUNT="$TABLE_COUNT" \
   -e VUS="$VUS" \

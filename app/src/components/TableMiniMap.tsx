@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { SpectatorCount } from "./SpectatorCount";
 import {
   listTableOverview,
   type TableOverviewInfo,
@@ -25,6 +26,9 @@ function formatChips(n: number): string {
   return n.toLocaleString();
 }
 
+/** Renders Table Mini Map.
+ * @param props(object) - props(object).
+ */
 export function TableMiniMap({
   currentTableId,
   defaultCollapsed = true,
@@ -177,8 +181,11 @@ export function TableMiniMap({
                 >
                   #{table.table_id}
                 </span>
-                <span className="text-[7px]" style={{ color: "#95a5a6" }}>
-                  {table.phase}
+                <span className="flex items-center gap-1">
+                  <SpectatorCount count={table.spectators ?? 0} hideWhenZero size="sm" />
+                  <span className="text-[7px]" style={{ color: "#95a5a6" }}>
+                    {table.phase}
+                  </span>
                 </span>
               </div>
               <div

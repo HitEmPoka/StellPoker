@@ -23,6 +23,16 @@ coordinator writes table sessions and lobby assignments to
 on restart. Persistent chain state is still rehydrated from Soroban when a
 session is missing from memory.
 
+## Safety checks
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SOROBAN_PRESIMULATE` | `true` | Simulate each state-changing `stellar contract invoke` with `--send no`, and submit only if the simulation succeeds. Failed simulations are logged and never submitted. Read-only calls (`get_*`, `is_*`, `has_*`) skip this step. See `src/soroban/simulation.rs`. |
+| `SOROBAN_SIMULATION_CACHE_TTL_SECS` | `10` | How long a simulation result is reused for an identical call. `0` disables the cache. Transient failures are never cached. |
+| `MPC_RECONSTRUCTION_VALIDATION` | `enforce` | Check reconstructed hole cards against the deal proof's hand commitment (Poseidon2). `enforce` retries up to 3 times, then rejects the request with `502`. `warn` only logs a mismatch. `off` skips the check. After 3 failed requests in a row for one table, it logs an error with `alert = "mpc_reconstruction_failure"`. See `src/mpc_validation.rs`. |
+
+Table chat (`/api/table/:table_id/chat/ws`) accepts only frames with a known schema. Text is reduced to plain text: tags, angle brackets, and control and bidi characters are removed, and it's truncated to 128 characters and aliases to 24. Emotes must be in the allowlist. Each connection may send 5 frames per 10 seconds. See `src/chat.rs`; the web client applies the same rules with DOMPurify in `app/src/lib/chat-sanitize.ts`.
+
 ## API Endpoints
 
 ### GET `/api/health`

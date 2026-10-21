@@ -5,6 +5,11 @@ function normalizeBaseUrl(url: string | undefined): string {
   return value.replace(/\/+$/, "");
 }
 
+/** Stellar Expert Url.
+ * @param resource - resource.
+ * @param id - id.
+ * @returns string.
+ */
 export function stellarExpertUrl(
   resource: "tx" | "account" | "contract",
   id: string

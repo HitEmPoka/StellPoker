@@ -24,6 +24,7 @@ function shortAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+/** Default */
 export default function StatsPage() {
   const t = useT();
   const [stats, setStats] = useState<StatsResponse | null>(null);

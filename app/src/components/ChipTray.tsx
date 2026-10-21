@@ -19,6 +19,9 @@ const DENOMS: ChipDenom[] = [
   { label: "1K", value: 1000, color: "gold" },
 ];
 
+/** Renders Chip Tray.
+ * @param props(object) - props(object).
+ */
 export function ChipTray({ myStack, betAmount, setBetAmount, disabled }: ChipTrayProps) {
   const [selectedChips, setSelectedChips] = useState<number[]>([]);
   const [dragAmount, setDragAmount] = useState(0);

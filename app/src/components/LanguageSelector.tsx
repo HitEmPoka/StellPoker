@@ -6,6 +6,11 @@ import type { Locale } from "@/lib/i18n";
 const OPTIONS: { value: Locale; labelKey: string }[] = [
   { value: "en", labelKey: "settings.english" },
   { value: "es", labelKey: "settings.spanish" },
+  { value: "de", labelKey: "settings.german" },
+  { value: "fr", labelKey: "settings.french" },
+  { value: "ja", labelKey: "settings.japanese" },
+  { value: "zh", labelKey: "settings.chinese" },
+  { value: "ar", labelKey: "settings.arabic" },
 ];
 
 interface LanguageSelectorProps {
@@ -13,6 +18,9 @@ interface LanguageSelectorProps {
   variant?: "header" | "settings";
 }
 
+/** Renders Language Selector.
+ * @param props(object) - props(object).
+ */
 export function LanguageSelector({ variant = "header" }: LanguageSelectorProps) {
   const { locale, setLocale, t } = useI18n();
 
@@ -53,14 +61,13 @@ export function LanguageSelector({ variant = "header" }: LanguageSelectorProps) 
       >
         {t("settings.language")}
       </div>
-      <div style={{ display: "flex", gap: "4px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(70px, 1fr))", gap: "4px" }}>
         {OPTIONS.map((o) => (
           <button
             key={o.value}
             type="button"
             onClick={() => setLocale(o.value)}
             style={{
-              flex: 1,
               background: locale === o.value ? "#3a4438" : "#6b7a60",
               color: locale === o.value ? "#b8c4a0" : "#a0b090",
               border: "2px solid #3a4438",
@@ -68,6 +75,7 @@ export function LanguageSelector({ variant = "header" }: LanguageSelectorProps) 
               fontSize: "6px",
               fontFamily: "'Press Start 2P', monospace",
               cursor: "pointer",
+              textAlign: "center",
             }}
           >
             {t(o.labelKey)}

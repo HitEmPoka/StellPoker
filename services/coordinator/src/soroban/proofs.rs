@@ -7,6 +7,19 @@ use super::{
     invoke_contract_with_retries, parse_tx_result, resolve_onchain_table_id, SorobanConfig,
 };
 
+/// Validate proof bytes and public inputs before invoking the Stellar CLI.
+/// This is a structural pre-flight check: full UltraHonk verification remains
+/// the contract's responsibility, but malformed proofs are rejected before a
+/// transaction is simulated or submitted.
+pub fn verify_proof_preflight(proof: &[u8], public_inputs: &[String]) -> Result<(), String> {
+    if proof.is_empty() {
+        return Err("proof is empty".to_string());
+    }
+    convert_keccak_proof_to_soroban(proof)?;
+    public_inputs_to_hex(public_inputs)?;
+    Ok(())
+}
+
 /// Submit a deal proof to the on-chain poker-table contract via `commit_deal`.
 pub async fn submit_deal_proof(
     config: &SorobanConfig,
@@ -20,6 +33,8 @@ pub async fn submit_deal_proof(
         tracing::warn!("Soroban not configured, skipping deal proof submission");
         return Ok(String::new());
     }
+
+    verify_proof_preflight(proof, public_inputs)?;
 
     // Issue #108: content-addressable cache of already-verified proofs, so a
     // retried submission of byte-identical proof data skips the (expensive)
@@ -130,6 +145,8 @@ pub async fn submit_reveal_proof(
         return Ok(String::new());
     }
 
+    verify_proof_preflight(proof, public_inputs)?;
+
     let cache_key = crate::proof_cache::proof_key(proof, public_inputs);
     if let Some(tx_hash) = crate::proof_cache::get(&cache_key).await {
         tracing::info!("Reveal proof cache hit — skipping redundant on-chain verification");
@@ -183,6 +200,8 @@ pub async fn submit_showdown_proof(
         tracing::warn!("Soroban not configured, skipping showdown proof submission");
         return Ok(String::new());
     }
+
+    verify_proof_preflight(proof, public_inputs)?;
 
     let cache_key = crate::proof_cache::proof_key(proof, public_inputs);
     if let Some(tx_hash) = crate::proof_cache::get(&cache_key).await {
@@ -423,7 +442,10 @@ fn convert_keccak_proof_to_soroban(proof_bytes: &[u8]) -> Result<Vec<u8>, String
 /// This is needed because Soroban `BytesN<32>` expects hex-encoded bytes, but
 /// MPC proof outputs are decimal field element strings.
 fn field_to_bytes32_hex(field_str: &str) -> Result<String, String> {
-    let fr = Fr::from_hex(field_str);
+    let fr = Fr::from_str(field_str.trim())
+        .map_err(|_| format!("invalid field element: {field_str}"))?;
+    let fr = Fr::from_str(field_str)
+        .map_err(|_| format!("invalid field element: {}", field_str))?;
     let bytes = fr.into_bigint().to_bytes_be();
     // Pad to exactly 32 bytes (should already be, but be safe)
     if bytes.len() > 32 {
@@ -448,7 +470,9 @@ fn fields_to_bytes32_json(fields: &[String]) -> Result<String, String> {
 fn public_inputs_to_hex(public_inputs: &[String]) -> Result<String, String> {
     let mut all_bytes = Vec::with_capacity(public_inputs.len() * 32);
     for pi in public_inputs {
-        let fr = Fr::from_hex(pi);
+        let fr = Fr::from_str(pi.trim())
+            .map_err(|_| format!("invalid field element: {pi}"))?;
+        let fr = Fr::from_str(pi).map_err(|_| format!("invalid public input: {}", pi))?;
         let bytes = fr.into_bigint().to_bytes_be();
         let mut padded = vec![0u8; 32 - bytes.len()];
         padded.extend_from_slice(&bytes);
@@ -510,6 +534,18 @@ mod error_handling_tests {
     }
 
     #[test]
+    fn preflight_rejects_before_submission_for_empty_proof() {
+        let err = verify_proof_preflight(&[], &[]).unwrap_err();
+        assert_eq!(err, "proof is empty");
+    }
+
+    #[test]
+    fn preflight_rejects_malformed_proof() {
+        let err = verify_proof_preflight(&[0u8; 33], &[]).unwrap_err();
+        assert!(err.contains("32-byte aligned"), "got: {err}");
+    }
+
+    #[test]
     fn rejects_non_numeric_field_element() {
         let err = field_to_bytes32_hex("deadbeef_not_decimal").unwrap_err();
         assert!(err.contains("failed to parse field element"), "got: {err}");
@@ -530,8 +566,7 @@ mod error_handling_tests {
 
     #[test]
     fn fields_json_rejects_invalid_entry() {
-        let err =
-            fields_to_bytes32_json(&["12".to_string(), "bad-field".to_string()]).unwrap_err();
+        let err = fields_to_bytes32_json(&["12".to_string(), "bad-field".to_string()]).unwrap_err();
         assert!(err.contains("failed to parse field element"), "got: {err}");
     }
 

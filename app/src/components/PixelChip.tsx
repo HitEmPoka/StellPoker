@@ -21,6 +21,9 @@ interface PixelChipProps {
   size?: number;
 }
 
+/** Renders Pixel Chip.
+ * @param props(object) - props(object).
+ */
 export function PixelChip({ color = "red", size = 3 }: PixelChipProps) {
   const c = CHIP_COLORS[color];
   const px = size;
@@ -113,6 +116,9 @@ interface PixelChipStackProps {
   size?: number;
 }
 
+/** Renders Pixel Chip Stack.
+ * @param props(object) - props(object).
+ */
 export function PixelChipStack({ amount, size = 2 }: PixelChipStackProps) {
   const chips = representativeChips(amount);
   if (chips.length === 0) return null;
@@ -149,6 +155,9 @@ interface PotChipPileProps {
   size?: number;
 }
 
+/** Renders Pot Chip Pile.
+ * @param props(object) - props(object).
+ */
 export function PotChipPile({ amount, size = 3 }: PotChipPileProps) {
   const chips = representativeChips(amount);
   if (chips.length === 0) return null;

@@ -39,6 +39,8 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from test_data_factory import PlayerFactory, TableFactory
+
 try:
     import requests
     from requests.adapters import HTTPAdapter
@@ -61,12 +63,6 @@ DEFAULT_DURATION_S = 24 * 3600          # 24 hours
 SNAPSHOT_INTERVAL  = 60                 # collect a metric snapshot every 60 s
 RESTART_INTERVAL   = 3600               # restart the coordinator every 1 h (if PID provided)
 WORKER_THREADS     = 4                  # concurrent game-action workers
-PLAYER_ADDRS       = [
-    "PLAYER_ADDR_A000000000000000000000000000001",
-    "PLAYER_ADDR_B000000000000000000000000000002",
-    "PLAYER_ADDR_C000000000000000000000000000003",
-    "PLAYER_ADDR_D000000000000000000000000000004",
-]
 PHASES             = ["flop", "turn", "river"]
 ACTIONS            = ["fold", "check", "call", "bet", "raise", "all-in"]
 
@@ -158,29 +154,32 @@ def _get(session: requests.Session, url: str) -> tuple[bool, float]:
     return ok, (time.monotonic() - t0) * 1000
 
 
-def game_cycle(base: str, session: requests.Session, metrics: Metrics):
+def game_cycle(base: str, session: requests.Session, metrics: Metrics,
+               table_factory: TableFactory):
     """
     One synthetic game cycle:
       create-table → join → request-deal → player-action(s)
                         → request-reveal(flop) → request-showdown
     All failures are recorded but never raise – the soak loop must keep going.
     """
-    table_id = random.randint(1, 999_999)
+    table = table_factory.create()
+    table_id = table.table_id
+    players = [player.address for player in table.players]
 
     # create table
     ok, lat = _post(session, f"{base}/api/tables/create",
-                    {"table_id": table_id, "players": PLAYER_ADDRS[:2]})
+                    {"table_id": table_id, "players": players})
     metrics.record(ok, lat)
 
     # join
-    for addr in PLAYER_ADDRS[:2]:
+    for player in table.players:
         ok, lat = _post(session, f"{base}/api/table/{table_id}/join",
-                        {"player": addr, "buy_in": 1000})
+                        {"player": player.address, "buy_in": player.buy_in})
         metrics.record(ok, lat)
 
     # request-deal
     ok, lat = _post(session, f"{base}/api/table/{table_id}/request-deal",
-                    {"players": PLAYER_ADDRS[:2]})
+                    {"players": players})
     metrics.record(ok, lat)
 
     # player actions (random mix)
@@ -207,11 +206,13 @@ def game_cycle(base: str, session: requests.Session, metrics: Metrics):
 
 # ── Worker thread ─────────────────────────────────────────────────────────────
 
-def worker(base: str, metrics: Metrics, stop_event: threading.Event):
+def worker(base: str, metrics: Metrics, stop_event: threading.Event,
+           seed: int):
     session = make_session(base)
+    factory = TableFactory(random.Random(seed), PlayerFactory(random.Random(seed)))
     while not stop_event.is_set():
         try:
-            game_cycle(base, session, metrics)
+            game_cycle(base, session, metrics, factory)
         except Exception as exc:
             # Belt-and-suspenders: never let an uncaught exception kill a worker.
             metrics.record(False, 0.0)
@@ -347,6 +348,8 @@ def main():
     parser.add_argument("--duration",  type=float, default=DEFAULT_DURATION_S,
                         help="Total run time in seconds (default: 86400 = 24 h)")
     parser.add_argument("--workers",   type=int,   default=WORKER_THREADS)
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed fixture generation for reproducible runs")
     parser.add_argument("--pid",       type=int,   default=None,
                         help="PID of the coordinator process for memory/fd monitoring "
                              "and periodic restarts")
@@ -361,8 +364,9 @@ def main():
     metrics = Metrics()
     proc = _get_coordinator_proc(args.pid)
 
+    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2**32)
     print(f"[soak] Starting — url={base}  duration={args.duration}s  "
-          f"workers={args.workers}  pid={args.pid}")
+          f"workers={args.workers}  pid={args.pid}  seed={seed}")
     print(f"[soak] Thresholds: mem<{MAX_MEMORY_GROWTH_MB}MB  "
           f"err<{MAX_ERROR_RATE_PCT}%  p99<{MAX_P99_LATENCY_MS}ms  "
           f"slowdown<{MAX_SLOWDOWN_FACTOR}x")
@@ -385,8 +389,8 @@ def main():
 
     # Launch workers.
     threads = [
-        threading.Thread(target=worker, args=(base, metrics, stop), daemon=True)
-        for _ in range(args.workers)
+        threading.Thread(target=worker, args=(base, metrics, stop, seed + worker_id), daemon=True)
+        for worker_id in range(args.workers)
     ]
     for t in threads:
         t.start()

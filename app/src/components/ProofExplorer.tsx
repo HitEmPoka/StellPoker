@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ProofStatusStepper, type ProofStep } from "./ProofStatusStepper";
 
 // ── Tooltip data ──────────────────────────────────────────────────────────────
 
@@ -108,18 +109,54 @@ function InfoTooltip({ text }: { text: string }) {
 
 // ── Phase row ─────────────────────────────────────────────────────────────────
 
+interface PublicInputRow {
+  label: string;
+  value: string;
+}
+
 interface PhaseRowProps {
   phase: ProofPhase;
   status?: "pending" | "verified" | "missing";
   txHash?: string;
   proofSize?: number;
+  publicInputs?: PublicInputRow[];
 }
 
-function PhaseRow({ phase, status = "pending", txHash, proofSize }: PhaseRowProps) {
+/** One label/value line in a phase's drill-down. */
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 3, fontSize: "7px" }}>
+      <dt style={{ color: "#95a5a6", flexShrink: 0, width: 92 }}>{label}</dt>
+      <dd style={{ color: "#f5e6c8", margin: 0, wordBreak: "break-all" }}>{children}</dd>
+    </div>
+  );
+}
+
+function PhaseRow({ phase, status = "pending", txHash, proofSize, publicInputs = [] }: PhaseRowProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [fee, setFee] = useState<TransactionFee | null>(null);
+  const [feeLoading, setFeeLoading] = useState(false);
   const statusColor =
     status === "verified" ? "#27ae60" : status === "missing" ? "#e74c3c" : "#7f8c8d";
   const statusLabel =
     status === "verified" ? "✔ VERIFIED" : status === "missing" ? "✗ MISSING" : "— PENDING";
+
+  // The fee is fetched only once the drill-down is opened, so the panel does
+  // not hit Horizon for every phase on every render.
+  useEffect(() => {
+    if (!detailsOpen || !txHash) return;
+    const controller = new AbortController();
+    setFee(null);
+    setFeeLoading(true);
+    void fetchTransactionFee(txHash, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setFee(result);
+      setFeeLoading(false);
+    });
+    return () => controller.abort();
+  }, [detailsOpen, txHash]);
+
+  const txUrl = txHash ? stellarExpertUrl("tx", txHash) : undefined;
 
   return (
     <div
@@ -160,22 +197,76 @@ function PhaseRow({ phase, status = "pending", txHash, proofSize }: PhaseRowProp
           TX: {txHash.slice(0, 12)}…{txHash.slice(-8)}
         </div>
       )}
+
+      <button
+        onClick={() => setDetailsOpen((v) => !v)}
+        aria-expanded={detailsOpen}
+        style={{
+          background: "none",
+          border: "none",
+          color: "#c47d2e",
+          cursor: "pointer",
+          fontSize: "7px",
+          padding: 0,
+          marginTop: 4,
+        }}
+      >
+        {detailsOpen ? "▼" : "▶"} DETAILS
+      </button>
+
+      {detailsOpen && (
+        <dl style={{ margin: "2px 0 0", paddingLeft: 8, borderLeft: "2px solid rgba(196,125,46,0.3)" }}>
+          {publicInputs.map((input) => (
+            <DetailRow key={input.label} label={input.label}>
+              {input.value}
+            </DetailRow>
+          ))}
+          <DetailRow label="Verifier tx">
+            {txUrl ? (
+              <a href={txUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#3498db" }}>
+                {txHash} ↗
+              </a>
+            ) : (
+              "not recorded yet"
+            )}
+          </DetailRow>
+          <DetailRow label="Gas used (fee)">
+            {!txHash
+              ? "—"
+              : feeLoading
+                ? "loading…"
+                : fee
+                  ? `${fee.feeStroops.toLocaleString()} stroops (${formatStroopsAsXlm(fee.feeStroops)} fee)`
+                  : "unavailable"}
+          </DetailRow>
+          <DetailRow label="Verification key">not exposed by the app yet</DetailRow>
+        </dl>
+      )}
     </div>
   );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+/** Proof Explorer Data shape. */
 export interface ProofExplorerData {
   dealTxHash?: string;
-  revealTxHashes?: Record<string, string>;
+  revealTxHashes?: Partial<Record<string, string>>;
   showdownTxHash?: string;
+  /** Proof sizes in bytes, keyed by phase key (deal, flop, turn, river, showdown). */
+  proofSizes?: Partial<Record<string, number>>;
+  /** Public inputs the deal proof was verified against (#625). */
+  dealPublicInputs?: { deckRoot?: string; handCommitments?: string[] };
 }
 
 interface ProofExplorerProps {
   data?: ProofExplorerData;
 }
 
+/** Renders Proof Explorer.
+ * @param props(object) - props(object).
+ * @returns string | undefined.
+ */
 export function ProofExplorer({ data }: ProofExplorerProps) {
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
 
@@ -190,8 +281,21 @@ export function ProofExplorer({ data }: ProofExplorerProps) {
     return tx ? "verified" : "pending";
   };
 
+  const publicInputsFor = (key: string): PublicInputRow[] => {
+    if (key !== "deal" || !data?.dealPublicInputs) return [];
+    const { deckRoot, handCommitments = [] } = data.dealPublicInputs;
+    const rows: PublicInputRow[] = [];
+    if (deckRoot) rows.push({ label: "Deck root", value: deckRoot });
+    handCommitments.forEach((value, i) =>
+      rows.push({ label: `Hand commitment ${i + 1}`, value })
+    );
+    return rows;
+  };
+
   return (
     <div style={{ padding: "12px 0" }}>
+      <ProofStatusStepper active={data?.showdownTxHash ? "settle" : data?.dealTxHash ? "verify" : "shuffle" as ProofStep} />
+      <div style={{ height: 10 }} />
       {/* How it works collapsible */}
       <button
         onClick={() => setHowItWorksOpen((v) => !v)}
@@ -253,6 +357,8 @@ export function ProofExplorer({ data }: ProofExplorerProps) {
           phase={phase}
           status={statusFor(phase.key)}
           txHash={txFor(phase.key)}
+          proofSize={data?.proofSizes?.[phase.key]}
+          publicInputs={publicInputsFor(phase.key)}
         />
       ))}
 

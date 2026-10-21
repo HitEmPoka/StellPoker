@@ -6,6 +6,9 @@ import { PixelWorld } from "@/components/PixelWorld";
 import { ReplayViewer } from "@/components/ReplayViewer";
 import { fetchReplayHand, parseHandId, type ReplayHand } from "@/lib/replay";
 
+/** Default.
+ * @param props(object) - props(object).
+ */
 export default function ReplayPage({
   params,
 }: {

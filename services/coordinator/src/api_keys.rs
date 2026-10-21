@@ -16,7 +16,7 @@ use sqlx::{Pool, Postgres};
 const API_KEY_PREFIX: &str = "sk_";
 const KEY_LENGTH: usize = 32; // 256 bits
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ApiKey {
     pub id: i64,
     pub key_id: String,
@@ -55,33 +55,22 @@ pub async fn create_api_key(
     let key_hash = hash_api_key(&api_key);
     let key_id = format!("key_{}", uuid::Uuid::new_v4().simple());
 
-    let record = sqlx::query!(
+    let record = sqlx::query_as::<_, ApiKey>(
         r#"
         INSERT INTO api_keys (key_id, key_hash, node_id, description, expires_at)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, key_id, node_id, description, is_active, created_at, expires_at, last_used_at, revoked_at, revoked_reason
         "#,
-        key_id,
-        key_hash,
-        node_id,
-        description,
-        expires_at
     )
+    .bind(&key_id)
+    .bind(&key_hash)
+    .bind(node_id)
+    .bind(description)
+    .bind(expires_at)
     .fetch_one(pool)
     .await?;
 
-    let api_key_record = ApiKey {
-        id: record.id,
-        key_id: record.key_id,
-        node_id: record.node_id,
-        description: record.description,
-        is_active: record.is_active,
-        created_at: record.created_at,
-        expires_at: record.expires_at,
-        last_used_at: record.last_used_at,
-        revoked_at: record.revoked_at,
-        revoked_reason: record.revoked_reason,
-    };
+    let api_key_record = record;
 
     Ok((api_key, api_key_record))
 }
@@ -94,45 +83,46 @@ pub async fn validate_api_key(
     let key_hash = hash_api_key(api_key);
     let now = Utc::now();
 
-    let record = sqlx::query!(
+    let record = sqlx::query_as::<
+        _,
+        (String, bool, Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    >(
         r#"
         SELECT node_id, is_active, expires_at, revoked_at
         FROM api_keys
         WHERE key_hash = $1
         "#,
-        key_hash
     )
+    .bind(&key_hash)
     .fetch_optional(pool)
     .await?;
 
-    if let Some(record) = record {
+    if let Some((node_id, is_active, expires_at, revoked_at)) = record {
         // Check if key is active
-        if !record.is_active {
+        if !is_active {
             return Ok(None);
         }
 
         // Check if key is revoked
-        if record.revoked_at.is_some() {
+        if revoked_at.is_some() {
             return Ok(None);
         }
 
         // Check if key is expired
-        if let Some(expires_at) = record.expires_at {
+        if let Some(expires_at) = expires_at {
             if now > expires_at {
                 return Ok(None);
             }
         }
 
         // Update last_used_at
-        sqlx::query!(
-            "UPDATE api_keys SET last_used_at = $1 WHERE key_hash = $2",
-            now,
-            key_hash
-        )
-        .execute(pool)
-        .await?;
+        sqlx::query("UPDATE api_keys SET last_used_at = $1 WHERE key_hash = $2")
+            .bind(now)
+            .bind(&key_hash)
+            .execute(pool)
+            .await?;
 
-        Ok(Some(record.node_id))
+        Ok(Some(node_id))
     } else {
         Ok(None)
     }
@@ -144,16 +134,16 @@ pub async fn revoke_api_key(
     key_id: &str,
     reason: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
-    let rows_affected = sqlx::query!(
+    let rows_affected = sqlx::query(
         r#"
         UPDATE api_keys 
         SET is_active = false, revoked_at = $1, revoked_reason = $2
         WHERE key_id = $3 AND is_active = true
         "#,
-        Utc::now(),
-        reason,
-        key_id
     )
+    .bind(Utc::now())
+    .bind(reason)
+    .bind(key_id)
     .execute(pool)
     .await?
     .rows_affected();
@@ -166,30 +156,19 @@ pub async fn list_api_keys(
     pool: &Pool<Postgres>,
     node_id: &str,
 ) -> Result<Vec<ApiKey>, sqlx::Error> {
-    let records = sqlx::query!(
+    let records = sqlx::query_as::<_, ApiKey>(
         r#"
         SELECT id, key_id, node_id, description, is_active, created_at, expires_at, last_used_at, revoked_at, revoked_reason
         FROM api_keys
         WHERE node_id = $1
         ORDER BY created_at DESC
         "#,
-        node_id
     )
+    .bind(node_id)
     .fetch_all(pool)
     .await?;
 
-    let keys = records.into_iter().map(|record| ApiKey {
-        id: record.id,
-        key_id: record.key_id,
-        node_id: record.node_id,
-        description: record.description,
-        is_active: record.is_active,
-        created_at: record.created_at,
-        expires_at: record.expires_at,
-        last_used_at: record.last_used_at,
-        revoked_at: record.revoked_at,
-        revoked_reason: record.revoked_reason,
-    }).collect();
+    let keys = records;
 
     Ok(keys)
 }
@@ -203,17 +182,17 @@ pub async fn log_api_key_usage(
     ip_address: Option<&str>,
     success: bool,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO api_key_usage_log (key_id, node_id, endpoint, ip_address, success)
         VALUES ($1, $2, $3, $4, $5)
         "#,
-        key_id,
-        node_id,
-        endpoint,
-        ip_address,
-        success
     )
+    .bind(key_id)
+    .bind(node_id)
+    .bind(endpoint)
+    .bind(ip_address)
+    .bind(success)
     .execute(pool)
     .await?;
 
@@ -256,14 +235,14 @@ pub async fn authenticate_mpc_node(
 /// Clean up expired keys (should be run periodically)
 pub async fn cleanup_expired_keys(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error> {
     let now = Utc::now();
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
         UPDATE api_keys 
         SET is_active = false, revoked_at = $1, revoked_reason = 'Expired'
         WHERE expires_at < $1 AND is_active = true
         "#,
-        now
     )
+    .bind(now)
     .execute(pool)
     .await?;
 

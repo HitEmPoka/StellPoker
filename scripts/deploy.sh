@@ -190,3 +190,6 @@ echo "  2. Register committee members: stellar contract invoke --id $COMMITTEE_I
 echo "  3. Start MPC nodes: docker-compose up mpc-node-0 mpc-node-1 mpc-node-2"
 echo "  4. Start coordinator: docker-compose up coordinator"
 echo "  5. Start web app: cd app && npm run dev"
+echo ""
+echo "To upgrade poker-table later (timelocked propose/execute, with rollback):"
+echo "  See scripts/upgrade.sh and scripts/migrations.json."

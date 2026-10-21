@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { PixelWorld } from "@/components/PixelWorld";
 
+/** Default */
 export default function NotFound() {
   return (
     <PixelWorld>

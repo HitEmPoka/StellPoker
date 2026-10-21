@@ -5,6 +5,7 @@ import {
   signMessage as freighterSignMessage,
 } from "@stellar/freighter-api";
 
+/** Wallet Session shape. */
 export interface WalletSession {
   address: string;
   walletType: "freighter" | "lobstr";
@@ -286,6 +287,10 @@ function saveWalletAddress(address: string): void {
   }
 }
 
+/** Loads Saved Wallet Address.
+ * @returns string | null.
+ * @remarks Reads/writes browser storage.
+ */
 export function getSavedWalletAddress(): string | null {
   try {
     return localStorage.getItem(WALLET_KEY);
@@ -294,6 +299,9 @@ export function getSavedWalletAddress(): string | null {
   }
 }
 
+/** Clear Saved Wallet.
+ * @remarks Reads/writes browser storage.
+ */
 export function clearSavedWallet(): void {
   try {
     localStorage.removeItem(WALLET_KEY);
@@ -302,6 +310,9 @@ export function clearSavedWallet(): void {
   }
 }
 
+/** Checks is Freighter Installed.
+ * @returns boolean.
+ */
 export function isFreighterInstalled(): boolean {
   if (typeof window === "undefined") return false;
 
@@ -332,6 +343,9 @@ function isVersionAllowed(version: string): boolean {
   }
 }
 
+/** Verify Freighter Extension Integrity.
+ * @returns Promise<void>.
+ */
 export async function verifyFreighterExtensionIntegrity(): Promise<void> {
   if (typeof window === "undefined") return;
 
@@ -408,6 +422,10 @@ export async function verifyFreighterExtensionIntegrity(): Promise<void> {
   }
 }
 
+/** Connect Freighter Wallet.
+ * @returns Promise<WalletSession>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function connectFreighterWallet(): Promise<WalletSession> {
   await verifyFreighterExtensionIntegrity();
   try {
@@ -470,6 +488,9 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
   }
 }
 
+/** Loads Active Address.
+ * @returns Promise<string | null>.
+ */
 export async function getActiveAddress(): Promise<string | null> {
   try {
     const connected = await freighterIsConnected();

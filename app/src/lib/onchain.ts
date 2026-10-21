@@ -4,11 +4,21 @@ import {
   Contract,
   TransactionBuilder,
   nativeToScVal,
+  scValToNative,
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
 import type { WalletSession } from "./wallet";
 import { getChainConfig } from "./api";
+import { assertOnline } from "./online";
+import {
+  parseContractMetrics,
+  parseTableMetrics,
+  type ContractMetrics,
+  type TableMetrics,
+} from "./contract-metrics";
+import { fetchPlayerPositions, type PlayerPosition } from "./player-positions";
+import { parseTableRules, type TableRules } from "./table-rules";
 
 type LobstrSignResult = {
   signedTxXdr?: string;
@@ -147,6 +157,8 @@ async function submitWalletTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string | undefined> {
+  // Transactions are never queued for later: refuse while offline (#632).
+  assertOnline();
   const cfg = await getConfig();
   const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
 
@@ -195,6 +207,13 @@ async function submitWalletTx(
   return sent.hash || undefined;
 }
 
+/** Runs Table On Chain.
+ * @param wallet - wallet.
+ * @param tableId - table Id.
+ * @param buyIn - buy In.
+ * @returns Promise<string | undefined>.
+ * @remarks Submits/signs a Soroban chain transaction.
+ */
 export async function joinTableOnChain(
   wallet: WalletSession,
   tableId: number,
@@ -207,6 +226,14 @@ export async function joinTableOnChain(
   ]);
 }
 
+/** Runs player Action On Chain.
+ * @param wallet - wallet.
+ * @param tableId - table Id.
+ * @param action - action.
+ * @param amount - amount.
+ * @returns Promise<string | undefined>.
+ * @remarks Submits/signs a Soroban chain transaction.
+ */
 export async function playerActionOnChain(
   wallet: WalletSession,
   tableId: number,
@@ -218,4 +245,309 @@ export async function playerActionOnChain(
     new Address(wallet.address).toScVal(),
     toActionScVal(action, amount),
   ]);
+}
+
+/**
+ * Simulates a read-only call against the given contract, using
+ * `sourceAddress`'s account purely to build a syntactically valid
+ * transaction envelope for simulation — no signature or submission
+ * happens, matching the account-not-required nature of a getter.
+ */
+async function simulateReadCall(
+  sourceAddress: string,
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<unknown> {
+  const cfg = await getConfig();
+  const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
+  const account = await server.getAccount(sourceAddress);
+  const contract = new Contract(contractId);
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: cfg.networkPassphrase,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed for ${method}: ${sim.error}`);
+  }
+  const result = (sim as rpc.Api.SimulateTransactionSuccessResponse).result;
+  if (!result) {
+    throw new Error(`No result returned for ${method}`);
+  }
+  return scValToNative(result.retval);
+}
+
+/**
+ * Reads the contract-wide aggregate counters (tables created, hands played,
+ * total rake, active seats) via `get_contract_metrics` (Issue #563). The view
+ * reads running counters, so it costs the same however much the contract has
+ * done.
+ */
+export async function getContractMetrics(sourceAddress: string): Promise<ContractMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(
+    sourceAddress,
+    cfg.pokerTableContract,
+    "get_contract_metrics",
+    []
+  );
+  return parseContractMetrics(native);
+}
+
+/** Reads one table's hands played, total rake and seated players via `get_table_metrics` (Issue #563). */
+export async function getTableMetrics(
+  sourceAddress: string,
+  tableId: number
+): Promise<TableMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table_metrics", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ]);
+  return parseTableMetrics(native);
+}
+
+/** Subset of contracts/poker-table's TableConfig needed by auto-rebuy (Issue #164). */
+export interface RebuyRelevantTableConfig {
+  minBuyIn: bigint;
+  maxBuyIn: bigint;
+  maxRebuys: number;
+  /** Payment token contract for this table (used to check wallet balance). */
+  tokenContract: string;
+  /**
+   * Big blind of the schedule's first level. Correct for the common
+   * fixed-blinds case; an escalating (tournament-style) multi-level
+   * schedule's *currently active* level requires the same level-selection
+   * logic the contract applies internally, which this does not replicate —
+   * auto-rebuy's "below N big blinds" threshold on such a table will use
+   * the starting level's big blind, not the current one.
+   */
+  bigBlind: bigint;
+}
+
+/**
+ * Reads the subset of a table's on-chain config relevant to auto-rebuy
+ * decisions, via `get_table` (Issue #164).
+ */
+export async function getTableConfig(
+  sourceAddress: string,
+  tableId: number
+): Promise<RebuyRelevantTableConfig> {
+  const cfg = await getConfig();
+  const native = (await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ])) as {
+    config: {
+      min_buy_in: bigint;
+      max_buy_in: bigint;
+      max_rebuys: number;
+      token: string;
+      blinds_schedule: { levels: Array<{ big_blind: bigint }> };
+    };
+  };
+
+  const firstLevel = native.config.blinds_schedule.levels[0];
+  return {
+    minBuyIn: BigInt(native.config.min_buy_in),
+    maxBuyIn: BigInt(native.config.max_buy_in),
+    maxRebuys: Number(native.config.max_rebuys),
+    tokenContract: native.config.token,
+    bigBlind: firstLevel ? BigInt(firstLevel.big_blind) : BigInt(0),
+  };
+}
+
+/**
+ * Reads a table's `config_version` via `get_config_version` (#624). This is
+ * the cheap check the rules popover polls: it only changes when the table's
+ * rules do, so the full config is re-read only then.
+ */
+export async function getTableConfigVersion(
+  sourceAddress: string,
+  tableId: number
+): Promise<number> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_config_version", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ]);
+  return Number(native);
+}
+
+/**
+ * Reads everything the in-table rules popover shows (#624): the full table
+ * config from `get_table`, tagged with the `config_version` it was read at.
+ */
+export async function getTableRules(
+  sourceAddress: string,
+  tableId: number
+): Promise<TableRules> {
+  const cfg = await getConfig();
+  const [version, table] = await Promise.all([
+    getTableConfigVersion(sourceAddress, tableId),
+    simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table", [
+      nativeToScVal(tableId, { type: "u32" }),
+    ]),
+  ]);
+  return parseTableRules(table, version);
+}
+
+/** Reads a seated player's rebuy count so far this session, via `get_player_buy_in` (Issue #164). */
+export async function getPlayerRebuyCount(
+  sourceAddress: string,
+  tableId: number,
+  playerAddress: string
+): Promise<number> {
+  const cfg = await getConfig();
+  const native = (await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_player_buy_in", [
+    nativeToScVal(tableId, { type: "u32" }),
+    new Address(playerAddress).toScVal(),
+  ])) as [bigint, number];
+
+  return Number(native[1]);
+}
+
+/**
+ * Reads a wallet's position at each of `tableIds` with the contract's batched
+ * `get_player_positions` (#560): one simulated call per 20 tables rather than
+ * one `get_table` per table. Positions come back in the order the ids were
+ * first given; tables that don't exist or where the wallet isn't seated are
+ * included with `exists` / `seated` false.
+ */
+export async function getPlayerPositions(
+  sourceAddress: string,
+  tableIds: readonly number[]
+): Promise<PlayerPosition[]> {
+  const cfg = await getConfig();
+  return fetchPlayerPositions(tableIds, (ids) =>
+    simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_player_positions", [
+      new Address(sourceAddress).toScVal(),
+      xdr.ScVal.scvVec(ids.map((id) => nativeToScVal(id, { type: "u32" }))),
+    ])
+  );
+}
+
+/**
+ * Reads a wallet's balance of the given SEP-41 token contract, via the
+ * token contract's standard `balance` method (Issue #164) — the same
+ * interface every Soroban token contract implements, including the one
+ * `contracts/poker-table` transfers buy-ins/rebuys through.
+ */
+export async function getTokenBalance(
+  sourceAddress: string,
+  tokenContract: string
+): Promise<bigint> {
+  const native = (await simulateReadCall(sourceAddress, tokenContract, "balance", [
+    new Address(sourceAddress).toScVal(),
+  ])) as bigint;
+
+  return BigInt(native);
+}
+
+/** Submits an on-chain rebuy for the connected wallet (Issue #164). */
+export async function rebuyOnChain(
+  wallet: WalletSession,
+  tableId: number,
+  amount: bigint
+): Promise<string | undefined> {
+  return submitWalletTx(wallet, "rebuy", [
+    nativeToScVal(tableId, { type: "u32" }),
+    new Address(wallet.address).toScVal(),
+    nativeToScVal(amount, { type: "i128" }),
+  ]);
+}
+
+// ============================================================
+// Avatar registry tx submission (Issue #153: player-avatar contract)
+// ============================================================
+
+/**
+ * Submit a tx to the player-avatar contract targeting a specific contract ID.
+ * Reuses the same wallet-signing + sequence-queuing machinery as poker actions.
+ */
+async function submitAvatarTx(
+  wallet: WalletSession,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<string | undefined> {
+  assertOnline();
+  const cfg = await getConfig();
+  const avatarContract = (cfg as unknown as { player_avatar_contract?: string }).player_avatar_contract;
+  if (!avatarContract) {
+    throw new Error("Player avatar contract is not configured on this network");
+  }
+  const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
+
+  const sent = await enqueueForAccount(wallet.address, async () => {
+    const account = await server.getAccount(wallet.address);
+    const contract = new Contract(avatarContract);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: cfg.networkPassphrase,
+    })
+      .addOperation(contract.call(method, ...args))
+      .setTimeout(60)
+      .build();
+
+    const prepared = await server.prepareTransaction(tx);
+    const signedXdr = await signWithWallet(wallet, prepared.toXDR(), {
+      networkPassphrase: cfg.networkPassphrase,
+      address: wallet.address,
+    });
+
+    const signedTx = TransactionBuilder.fromXDR(signedXdr, cfg.networkPassphrase);
+    const response = await server.sendTransaction(signedTx);
+    if (response.status === "ERROR") {
+      throw new Error("Avatar transaction rejected by network");
+    }
+    return response;
+  });
+
+  if (sent.hash) {
+    const result = await server.pollTransaction(sent.hash, {
+      attempts: 30,
+      sleepStrategy: () => 1500,
+    });
+    if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error("Avatar transaction failed on-chain");
+    }
+  }
+  return sent.hash || undefined;
+}
+
+/** Set the player's on-chain SVG avatar (Issue #153). */
+export async function submitSvgAvatarTx(
+  wallet: WalletSession,
+  templateId: number,
+  paramsString: string
+): Promise<string | undefined> {
+  return submitAvatarTx(wallet, "set_svg_avatar", [
+    new Address(wallet.address).toScVal(),
+    nativeToScVal(templateId, { type: "u32" }),
+    nativeToScVal(paramsString, { type: "string" }),
+  ]);
+}
+
+/** Link an external NFT as the player's avatar (Issue #153). */
+export async function submitNftAvatarTx(
+  wallet: WalletSession,
+  nftContract: string,
+  tokenId: number
+): Promise<string | undefined> {
+  return submitAvatarTx(wallet, "set_nft_avatar", [
+    new Address(wallet.address).toScVal(),
+    new Address(nftContract).toScVal(),
+    nativeToScVal(tokenId, { type: "u32" }),
+  ]);
+}
+
+/** Clear custom avatar back to Identicon (Issue #153). */
+export async function submitClearAvatarTx(
+  wallet: WalletSession
+): Promise<string | undefined> {
+  return submitSvgAvatarTx(wallet, 0xffffffff, "");
 }

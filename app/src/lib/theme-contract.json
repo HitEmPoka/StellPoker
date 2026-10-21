@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "description": "Public CSS variable contract for table felt and card deck (card back) community themes.",
+  "cssVariables": {
+    "feltDark": "--felt-dark",
+    "feltMid": "--felt-mid",
+    "feltLight": "--felt-light",
+    "feltShadow": "--felt-shadow",
+    "uiBorder": "--ui-border",
+    "cardBackStart": "--card-back-start",
+    "cardBackEnd": "--card-back-end",
+    "cardBackBorder": "--card-back-border",
+    "cardBackSymbol": "--card-back-symbol"
+  },
+  "requiredFields": [
+    "id",
+    "label",
+    "feltDark",
+    "feltMid",
+    "feltLight",
+    "feltShadow",
+    "uiBorder",
+    "cardBackStart",
+    "cardBackEnd",
+    "cardBackBorder",
+    "cardBackSymbol"
+  ]
+}

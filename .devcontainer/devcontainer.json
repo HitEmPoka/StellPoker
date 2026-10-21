@@ -1,0 +1,59 @@
+// Dev container / GitHub Codespaces config (Issue #671).
+// Toolchain parity with `nix develop` (flake.nix) is documented in
+// .devcontainer/Dockerfile and enforced by scripts/check-devenv-parity.sh.
+{
+  "name": "Stellar Poker",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "NOIR_VERSION": "1.0.0-beta.17"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    // docker-compose for the local stack, using the host / Codespaces daemon.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "64gb"
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "CARGO_TARGET_DIR": "${containerWorkspaceFolder}/target"
+  },
+  "forwardPorts": [3000, 8080, 8000, 8101, 8102, 8103],
+  "portsAttributes": {
+    "3000": { "label": "frontend" },
+    "8080": { "label": "coordinator" },
+    "8000": { "label": "soroban rpc" },
+    "8101": { "label": "mpc-node-0" },
+    "8102": { "label": "mpc-node-1" },
+    "8103": { "label": "mpc-node-2" }
+  },
+  "postCreateCommand": "bash scripts/dev-env-doctor.sh",
+  "customizations": {
+    "vscode": {
+      // Same set as .vscode/extensions.json, minus remote-* (already in a container).
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.makefile-tools",
+        "humao.rest-client",
+        "eamodio.gitlens",
+        "usernamehw.errorlens",
+        "noir-lang.vscode-noir"
+      ]
+    }
+  }
+}

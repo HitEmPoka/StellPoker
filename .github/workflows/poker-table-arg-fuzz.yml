@@ -1,0 +1,59 @@
+name: Poker-Table Arg Validation Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # Nightly at 03:00 UTC (issue #568)
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/poker-table/src/**"
+      - ".github/workflows/poker-table-arg-fuzz.yml"
+
+jobs:
+  arg-fuzz:
+    name: arg validation fuzz (proptest, typed-errors-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run argument-validation fuzz suite
+        run: |
+          cargo test -p poker-table arg_validation -- --nocapture | tee arg-fuzz.log
+          cargo test -p poker-table prop_ -- --nocapture | tee -a arg-fuzz.log
+
+      - name: Publish fuzz summary
+        if: always()
+        run: |
+          {
+            echo "## Arg validation fuzz results (issue #568)"
+            echo "- **Suite**: proptest arbitrary args over all poker-table entrypoints"
+            echo "- **Oracle**: no unexpected traps; typed PokerTableError only"
+            echo '```'
+            tail -n 100 arg-fuzz.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fuzz log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arg-fuzz-log
+          path: arg-fuzz.log
+          retention-days: 90

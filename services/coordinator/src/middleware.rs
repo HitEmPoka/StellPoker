@@ -10,13 +10,7 @@
 //!
 //! Request bodies are never logged (may contain sensitive game state).
 
-use axum::{
-    body::Body,
-    extract::Request,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use std::time::Instant;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -45,8 +39,8 @@ pub async fn log_request(request: Request<Body>, next: Next) -> Response {
     let session_id = extract_session_id(&path);
 
     // Read incoming traceparent so the span is correctly parented.
-    let traceparent = crate::telemetry::extract_traceparent(request.headers())
-        .unwrap_or_else(|| "-".to_string());
+    let traceparent =
+        crate::telemetry::extract_traceparent(request.headers()).unwrap_or_else(|| "-".to_string());
 
     let span = tracing::info_span!(
         "http.request",

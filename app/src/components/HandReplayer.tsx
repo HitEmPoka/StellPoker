@@ -480,11 +480,16 @@ function Controls({
 
 // ── Main HandReplayer component ────────────────────────────────────────────
 
+/** Hand Replayer Props shape. */
 export interface HandReplayerProps {
   entry: HandHistoryEntry | null;
   onClose: () => void;
 }
 
+/** Renders Hand Replayer.
+ * @param props(object) - props(object).
+ * @returns [].
+ */
 export function HandReplayer({ entry, onClose }: HandReplayerProps) {
   const [frameIndex, setFrameIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);

@@ -10,8 +10,55 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{sleep, Duration, Instant};
+
+/// Runs `cmd` to completion. When `profile` is `Some`, also samples the
+/// child process's CPU/memory on a fixed interval for the duration of the
+/// run and records it under `phase` in the registry (issue #244). When
+/// `profile` is `None` (the default — profiling is opt-in per session),
+/// this is exactly `cmd.output().await` with no extra overhead.
+async fn run_profiled(
+    cmd: &mut Command,
+    session_id: &str,
+    phase: &str,
+    profile: Option<&crate::profiling::ProfileRegistry>,
+) -> std::io::Result<std::process::Output> {
+    let Some(registry) = profile else {
+        return cmd.output().await;
+    };
+
+    // .output() configures piped stdio internally; .spawn() does not, so
+    // it must be set explicitly here to still capture stdout/stderr for
+    // the error-reporting paths above.
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+    let sampler = child.id().map(|pid| {
+        tokio::spawn(crate::profiling::sample_process_until_exit(
+            registry.clone(),
+            session_id.to_string(),
+            phase.to_string(),
+            pid,
+        ))
+    });
+
+    let output = child.wait_with_output().await?;
+
+    // The sampler notices the process exited (its next refresh finds no
+    // such pid) and finishes on its own; just make sure it has recorded
+    // the phase before returning so a caller reading the profile
+    // immediately afterward sees it.
+    if let Some(sampler) = sampler {
+        let _ = sampler.await;
+    }
+
+    Ok(output)
+}
+
+use crate::cost::SessionCost;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum SessionStatus {
@@ -82,6 +129,13 @@ pub struct MpcSessionState {
     pub proof_path: Option<PathBuf>,
     /// Public inputs emitted by co-noir for the generated proof.
     pub public_inputs: Option<Vec<String>>,
+    /// When the session record was created (for CPU-seconds attribution).
+    /// `std` (not `tokio`) Instant: `cost::SessionCost` consumes std time.
+    pub created_at: std::time::Instant,
+    /// Total decoded share-fragment bytes received (#572 cost attribution).
+    pub bytes_in: u64,
+    /// Proof bytes produced (0 until complete).
+    pub bytes_out: u64,
     /// Timestamp when the current phase started.
     pub phase_started_at: Option<Instant>,
     /// Timeout configuration for this session.
@@ -101,9 +155,35 @@ impl MpcSessionState {
             witness_path: None,
             proof_path: None,
             public_inputs: None,
+            created_at: std::time::Instant::now(),
+            bytes_in: 0,
+            bytes_out: 0,
             phase_started_at: None,
             phase_timeouts: PhaseTimeouts::from_env(),
         }
+    }
+
+    pub fn status_str(&self) -> String {
+        match &self.status {
+            SessionStatus::SharesReceived => "shares_received".to_string(),
+            SessionStatus::WitnessGenerating => "witness_generating".to_string(),
+            SessionStatus::ProofGenerating => "proof_generating".to_string(),
+            SessionStatus::Complete => "complete".to_string(),
+            SessionStatus::Failed(e) => format!("failed: {}", e),
+        }
+    }
+
+    /// Structured cost snapshot for logs/metrics (#572).
+    pub fn cost_snapshot(&self) -> SessionCost {
+        SessionCost::snapshot(
+            &self.session_id,
+            &self.circuit_name,
+            &self.status_str(),
+            &self.created_at,
+            self.bytes_in,
+            self.bytes_out,
+            self.partial_share_paths.len(),
+        )
     }
 
     /// Record that a new phase has started; used by the watchdog.
@@ -115,10 +195,7 @@ impl MpcSessionState {
     /// Check whether the current phase has exceeded its timeout.
     /// Returns `Ok(remaining)` if still within budget, or `Err(phase_name)` on timeout.
     pub fn check_phase_timeout(&self) -> Result<Duration, &'static str> {
-        let started = self
-            .phase_started_at
-            .as_ref()
-            .ok_or("no phase started")?;
+        let started = self.phase_started_at.as_ref().ok_or("no phase started")?;
         let elapsed = started.elapsed();
 
         let budget = match &self.status {
@@ -177,6 +254,8 @@ pub fn receive_share_fragment(
         .decode(share_data_b64)
         .map_err(|e| format!("base64 decode error: {}", e))?;
 
+    session.bytes_in += bytes.len() as u64;
+
     let share_path = session
         .work_dir
         .join(format!("share_source_{}.shared", source_party_id));
@@ -209,6 +288,7 @@ pub async fn run_proof_generation(
     crs_path: String,
     limits: crate::limits::ResourceLimits,
     phase_timeouts: PhaseTimeouts,
+    profile: Option<crate::profiling::ProfileRegistry>,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
     let circuit_path = format!(
         "{}/{}/target/{}.json",
@@ -241,10 +321,8 @@ pub async fn run_proof_generation(
         "merging share fragments"
     );
     let merge_start = Instant::now();
-    let witness_deadline =
-        Instant::now() + Duration::from_secs(phase_timeouts.witness_generation);
-    let proof_deadline =
-        Instant::now() + Duration::from_secs(phase_timeouts.proof_generation);
+    let witness_deadline = Instant::now() + Duration::from_secs(phase_timeouts.witness_generation);
+    let proof_deadline = Instant::now() + Duration::from_secs(phase_timeouts.proof_generation);
 
     let mut merge_cmd = Command::new("co-noir");
     merge_cmd
@@ -261,10 +339,14 @@ pub async fn run_proof_generation(
     merge_cmd.arg("--out").arg(&share_path);
     limits.apply_to_command(&mut merge_cmd);
 
-    let merge_output = merge_cmd
-        .output()
-        .await
-        .map_err(|e| format!("failed to spawn co-noir merge-input-shares: {}", e))?;
+    let merge_output = run_profiled(
+        &mut merge_cmd,
+        &session_id,
+        "merge_shares",
+        profile.as_ref(),
+    )
+    .await
+    .map_err(|e| format!("failed to spawn co-noir merge-input-shares: {}", e))?;
 
     if !merge_output.status.success() {
         let stderr = String::from_utf8_lossy(&merge_output.stderr);
@@ -320,10 +402,14 @@ pub async fn run_proof_generation(
         .arg("--out")
         .arg(&witness_path);
     limits.apply_to_command(&mut witness_cmd);
-    let witness_output = witness_cmd
-        .output()
-        .await
-        .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
+    let witness_output = run_profiled(
+        &mut witness_cmd,
+        &session_id,
+        "witness_generation",
+        profile.as_ref(),
+    )
+    .await
+    .map_err(|e| format!("failed to spawn co-noir generate-witness: {}", e))?;
 
     if !witness_output.status.success() {
         let stderr = String::from_utf8_lossy(&witness_output.stderr);
@@ -391,10 +477,14 @@ pub async fn run_proof_generation(
             .arg(&public_inputs_path)
             .arg("--fields-as-json");
         limits.apply_to_command(&mut proof_cmd);
-        let proof_output = proof_cmd
-            .output()
-            .await
-            .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;
+        let proof_output = run_profiled(
+            &mut proof_cmd,
+            &session_id,
+            "proof_generation",
+            profile.as_ref(),
+        )
+        .await
+        .map_err(|e| format!("failed to spawn co-noir build-and-generate-proof: {}", e))?;
 
         if proof_output.status.success() {
             last_proof_output = Some(proof_output);
@@ -464,6 +554,16 @@ pub async fn run_proof_generation(
         .map_err(|e| format!("failed to read public inputs file: {}", e))?;
     let public_inputs: Vec<String> = serde_json::from_slice(&public_inputs_bytes)
         .map_err(|e| format!("failed to parse public inputs json: {}", e))?;
+
+    // #579: cache the generated proof keyed by (circuit, artifact hash,
+    // public_inputs), so a caller retrying this exact phase with the same
+    // public inputs in hand can skip re-running MPC generation entirely.
+    // Best-effort: a hashing failure (e.g. artifact moved) must not fail an
+    // otherwise-successful proof generation.
+    if let Ok(artifact_hash) = crate::proof_cache::circuit_artifact_hash(&circuit_dir, &circuit_name) {
+        let key = crate::proof_cache::cache_key(&circuit_name, &artifact_hash, &public_inputs);
+        crate::proof_cache::insert(key, proof_bytes.clone()).await;
+    }
 
     Ok((proof_bytes, public_inputs))
 }

@@ -27,6 +27,7 @@ import {
 
 export { isFlagEnabled };
 
+/** Use Feature Flags Result shape. */
 export interface UseFeatureFlagsResult {
   /** Current flag snapshot. Falls back to all-false defaults while loading. */
   flags: FeatureFlags;

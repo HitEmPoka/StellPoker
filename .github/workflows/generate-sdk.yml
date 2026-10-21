@@ -1,0 +1,160 @@
+name: Generate OpenAPI Client SDKs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/api/openapi.yaml'
+      - '.github/workflows/generate-sdk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  generate-sdk:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sdk: [typescript, rust]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (for TypeScript SDK)
+        if: matrix.sdk == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install OpenAPI Generator
+        run: |
+          npm install -g @openapitools/openapi-generator-cli
+          openapi-generator-cli version
+
+      - name: Generate TypeScript SDK
+        if: matrix.sdk == 'typescript'
+        run: |
+          mkdir -p generated/typescript-sdk
+          openapi-generator-cli generate \
+            -i docs/api/openapi.yaml \
+            -g typescript-fetch \
+            -o generated/typescript-sdk \
+            -c scripts/openapi/ts-config.json \
+            --additional-properties=npmName=@stellpoker/coordinator-sdk \
+            --additional-properties=npmVersion=$(git describe --tags --always) \
+            --skip-validate-spec
+
+      - name: Build TypeScript SDK
+        if: matrix.sdk == 'typescript'
+        run: |
+          cd generated/typescript-sdk
+          npm install
+          npm run build
+          npm run lint || true
+
+      - name: Generate Rust SDK
+        if: matrix.sdk == 'rust'
+        run: |
+          mkdir -p generated/rust-sdk
+          openapi-generator-cli generate \
+            -i docs/api/openapi.yaml \
+            -g rust \
+            -o generated/rust-sdk \
+            -c scripts/openapi/rust-config.json \
+            --additional-properties=crateName=stellpoker_coordinator_sdk \
+            --additional-properties=crateVersion=$(git describe --tags --always) \
+            --skip-validate-spec
+
+      - name: Verify Rust SDK builds
+        if: matrix.sdk == 'rust'
+        run: |
+          cd generated/rust-sdk
+          cargo check
+          cargo clippy -- -D warnings || true
+
+      - name: Upload SDK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.sdk }}-sdk
+          path: generated/${{ matrix.sdk }}-sdk/
+          retention-days: 7
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet generated/ || [ ! -d "generated" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push SDK changes
+        if: matrix.sdk == 'typescript' && steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add generated/
+          git commit -m "chore: regenerate SDKs from OpenAPI spec
+
+Generated-by: GitHub Actions (generate-sdk.yml)
+Spec-commit: ${{ github.sha }}"
+          git push
+
+  publish-sdk:
+    needs: generate-sdk
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download TypeScript SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: typescript-sdk
+          path: generated/typescript-sdk
+
+      - name: Publish TypeScript SDK to npm
+        run: |
+          cd generated/typescript-sdk
+          npm ci
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+      - name: Create release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cat > /tmp/sdk-release.md << 'EOF'
+          # OpenAPI Client SDKs
+
+          Auto-generated TypeScript and Rust SDKs from the OpenAPI specification.
+
+          ## TypeScript SDK
+          Install: `npm install @stellpoker/coordinator-sdk`
+
+          ## Rust SDK
+          Add to Cargo.toml:
+          ```
+          stellpoker_coordinator_sdk = { version = "..." }
+          ```
+
+          Both SDKs are regenerated whenever `docs/api/openapi.yaml` changes.
+          EOF
+
+      - name: Upload SDK release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-release-notes
+          path: /tmp/sdk-release.md

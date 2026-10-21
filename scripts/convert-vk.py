@@ -15,11 +15,25 @@ co-noir keccak format (1888 bytes):
   28 × 64-byte G1 points: each as (x, y) with 32 bytes per coordinate
 
 Usage:
-  python3 convert-vk.py <input_vk> <output_soroban> [<output_keccak>]
+  python3 convert-vk.py [--circuit NAME] <input_vk> <output_soroban> [<output_keccak>]
+
+When --circuit is supplied, conversion fails if the VK public-input count does
+not match that circuit. This prevents a valid VK from being registered under
+the wrong circuit name.
 """
 
-import sys
+import argparse
+import hashlib
 import struct
+from pathlib import Path
+
+
+EXPECTED_PUBLIC_INPUTS = {
+    "deal_valid": 20,
+    "reveal_board_valid": 25,
+    "showdown_valid": 27,
+    "time_bank_valid": 6,
+}
 
 
 def combine_limbs(lo: bytes, hi: bytes) -> bytes:
@@ -69,7 +83,7 @@ def write_soroban_compact(output_path, log_circuit_size, num_public_inputs, pub_
         out += y
 
     assert len(out) == 1824, f"Soroban output size mismatch: {len(out)} != 1824"
-    open(output_path, "wb").write(out)
+    Path(output_path).write_bytes(out)
     return len(out)
 
 
@@ -86,21 +100,39 @@ def write_keccak_vk(output_path, log_circuit_size, num_public_inputs, pub_inputs
         out += y
 
     assert len(out) == 1888, f"Keccak output size mismatch: {len(out)} != 1888"
-    open(output_path, "wb").write(out)
+    Path(output_path).write_bytes(out)
     return len(out)
 
 
-def convert_vk(input_path: str, output_soroban: str, output_keccak: str = None):
-    data = open(input_path, "rb").read()
+def validate_circuit_pair(circuit: str, num_public_inputs: int) -> None:
+    expected = EXPECTED_PUBLIC_INPUTS.get(circuit)
+    if expected is None:
+        choices = ", ".join(sorted(EXPECTED_PUBLIC_INPUTS))
+        raise ValueError(f"Unknown circuit '{circuit}' (expected one of: {choices})")
+    if num_public_inputs != expected:
+        raise ValueError(
+            f"VK/circuit mismatch for {circuit}: VK has {num_public_inputs} "
+            f"public inputs, expected {expected}"
+        )
 
-    if len(data) == 1760:
+
+def convert_vk(input_path: str, output_soroban: str, output_keccak: str = None, circuit: str = None):
+    data = Path(input_path).read_bytes()
+
+    if len(data) == 1824:
+        num_public_inputs = struct.unpack(">Q", data[16:24])[0]
+        if circuit:
+            validate_circuit_pair(circuit, num_public_inputs)
         print(f"  VK already in Soroban compact format ({len(data)} bytes), copying as-is.")
-        open(output_soroban, "wb").write(data)
+        Path(output_soroban).write_bytes(data)
         return
 
     log_cs, num_pi, pi_off, cs, points = parse_bb_vk(data)
+    if circuit:
+        validate_circuit_pair(circuit, num_pi)
     print(f"  log_circuit_size={log_cs}, circuit_size={cs}")
     print(f"  num_public_inputs={num_pi}, pub_inputs_offset={pi_off}")
+    print(f"  content_sha256={hashlib.sha256(data).hexdigest()}")
 
     sz = write_soroban_compact(output_soroban, log_cs, num_pi, pi_off, cs, points)
     print(f"  Soroban compact: {len(data)} -> {sz} bytes ({output_soroban})")
@@ -111,8 +143,18 @@ def convert_vk(input_path: str, output_soroban: str, output_keccak: str = None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print(f"Usage: {sys.argv[0]} <input_vk> <output_soroban> [<output_keccak>]")
-        sys.exit(1)
-    output_keccak = sys.argv[3] if len(sys.argv) == 4 else None
-    convert_vk(sys.argv[1], sys.argv[2], output_keccak)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--circuit", choices=sorted(EXPECTED_PUBLIC_INPUTS))
+    parser.add_argument("input_vk")
+    parser.add_argument("output_soroban")
+    parser.add_argument("output_keccak", nargs="?")
+    args = parser.parse_args()
+    try:
+        convert_vk(
+            args.input_vk,
+            args.output_soroban,
+            args.output_keccak,
+            args.circuit,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))

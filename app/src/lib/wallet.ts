@@ -1,11 +1,14 @@
+/** Wallet Type shape. */
 export type WalletType = "freighter" | "lobstr";
 
+/** Wallet Session shape. */
 export interface WalletSession {
   address: string;
   walletType: WalletType;
   signMessage: (message: string) => Promise<string>;
 }
 
+/** Wallet Info shape. */
 export interface WalletInfo {
   type: WalletType;
   name: string;
@@ -33,6 +36,10 @@ const WALLET_META: Record<WalletType, { name: string }> = {
   lobstr: { name: "Lobstr" },
 };
 
+/** Detect Installed Wallets.
+ * @returns WalletInfo[].
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export function detectInstalledWallets(): WalletInfo[] {
   const results: WalletInfo[] = [];
 
@@ -64,6 +71,11 @@ export function detectInstalledWallets(): WalletInfo[] {
   return results;
 }
 
+/** Connect Wallet.
+ * @param type - type.
+ * @returns Promise<WalletSession>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function connectWallet(type: WalletType): Promise<WalletSession> {
   switch (type) {
     case "freighter":
@@ -73,6 +85,10 @@ export async function connectWallet(type: WalletType): Promise<WalletSession> {
   }
 }
 
+/** Try Silent Reconnect.
+ * @returns Promise<WalletSession | null>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function trySilentReconnect(): Promise<WalletSession | null> {
   const freighterSession = await tryReconnectFreighter();
   if (freighterSession) return freighterSession;
@@ -83,11 +99,20 @@ export async function trySilentReconnect(): Promise<WalletSession | null> {
   return null;
 }
 
+/** Loads Wallet Display Name.
+ * @param session - session.
+ * @returns string.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export function getWalletDisplayName(session: WalletSession): string {
   const meta = WALLET_META[session.walletType];
   return meta ? meta.name : session.walletType;
 }
 
+/** Loads Active Address.
+ * @returns Promise<string | null>.
+ * @remarks Reads wallet state; connecting may trigger a wallet popup.
+ */
 export async function getActiveAddress(): Promise<string | null> {
   return freighterGetActiveAddress();
 }

@@ -12,6 +12,9 @@ interface BoardProps {
 /** Stagger between consecutive cards flipping in, in seconds. */
 const FLIP_STAGGER = 0.1;
 
+/** Renders Board.
+ * @param props(object) - props(object).
+ */
 export function Board({ cards, pot }: BoardProps) {
   // Track how many cards were already on the board so that only the
   // newly-revealed cards (flop, then turn, then river) animate, and they

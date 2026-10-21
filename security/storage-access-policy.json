@@ -65,6 +65,38 @@
           "authorized_functions": ["create_table"],
           "auth_model": "creator_admin_require_auth",
           "admin_multisig_required": true
+        },
+        "DataKey::ContractMetrics": {
+          "authorized_functions": [
+            "join_table",
+            "leave_table",
+            "player_action",
+            "claim_timeout",
+            "submit_showdown",
+            "finalize_sunset",
+            "get_contract_metrics"
+          ],
+          "auth_model": "written_only_by_seat_and_settlement_counters",
+          "admin_multisig_required": false
+        },
+        "DataKey::TableMetrics": {
+          "authorized_functions": [
+            "player_action",
+            "claim_timeout",
+            "submit_showdown",
+            "get_table_metrics"
+          ],
+          "auth_model": "written_only_on_hand_settlement",
+          "admin_multisig_required": false
+        },
+        "DataKey::TableSunset": {
+          "authorized_functions": [
+            "finalize_sunset",
+            "is_table_sunset",
+            "get_sunset_record"
+          ],
+          "auth_model": "table_admin_require_auth",
+          "admin_multisig_required": true
         }
       }
     },

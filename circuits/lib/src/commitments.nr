@@ -2,13 +2,13 @@
 // Uses Poseidon2 permutation over BN254.
 
 // Poseidon2 hash: message_length must equal array length
-fn poseidon2_hash_2(a: Field, b: Field) -> Field {
+pub fn poseidon2_hash_2(a: Field, b: Field) -> Field {
     // For Noir 1.0.0-beta, poseidon2_permutation requires array len == message_length
     // Using a 4-element state with all 4 as message
     std::hash::poseidon2_permutation([a, b, 0, 0], 4)[0]
 }
 
-fn poseidon2_hash_3(a: Field, b: Field, c: Field) -> Field {
+pub fn poseidon2_hash_3(a: Field, b: Field, c: Field) -> Field {
     std::hash::poseidon2_permutation([a, b, c, 0], 4)[0]
 }
 
@@ -20,6 +20,13 @@ pub fn commit_card(card: Field, salt: Field) -> Field {
 // Commit to a player's hand (2 hole cards): H(commit1, commit2)
 pub fn commit_hand(card1_commit: Field, card2_commit: Field) -> Field {
     poseidon2_hash_2(card1_commit, card2_commit)
+}
+
+// Blinded commitment to a 2-hole-card range proof (Issue #211):
+// H(card1, card2, blinding). Blinds the exact cards so the commitment is
+// zero-knowledge and binds the range claim to a single indistinguishable hand.
+pub fn commit_range_hand(card1: Field, card2: Field, blinding: Field) -> Field {
+    poseidon2_hash_3(card1, card2, blinding)
 }
 
 // Commit to an Omaha player's hand (4 hole-card commitments):

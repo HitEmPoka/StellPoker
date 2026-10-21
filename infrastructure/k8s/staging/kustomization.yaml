@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Apply before installing the Helm charts into the staging namespace:
+#   kubectl apply -k infrastructure/k8s/staging
+resources:
+  - namespace.yaml
+  - resourcequota.yaml
+  - limitrange.yaml

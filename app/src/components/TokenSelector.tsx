@@ -2,11 +2,15 @@
 
 import { useState } from "react";
 
+/** Token Choice shape. */
 export type TokenChoice = {
   type: "XLM" | "SAC";
   sacAddress?: string;
 };
 
+/** Renders Token Selector.
+ * @param props(object) - props(object).
+ */
 export function TokenSelector({ value, onChange }: { value?: TokenChoice; onChange: (v: TokenChoice) => void }) {
   const [choice, setChoice] = useState<TokenChoice>(value ?? { type: "XLM" });
 

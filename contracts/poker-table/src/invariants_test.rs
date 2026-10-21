@@ -88,6 +88,7 @@ fn build_table(env: &Env, gen: &[GenPlayer]) -> (TableState, i128) {
             token: admin.clone(),
             min_buy_in: 0,
             max_buy_in: i128::MAX,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             blinds_schedule: BlindsSchedule::fixed(env, 0, 0),
             min_players: 2,
             max_players: 9,
@@ -100,6 +101,10 @@ fn build_table(env: &Env, gen: &[GenPlayer]) -> (TableState, i128) {
             jackpot_rake_share_bps: 0,
             min_bad_beat_category: 7,
             min_bad_beat_rank: 12,
+            street_time_limit: OptionalStreetTimeLimit::None,
+            treasury: None,
+            dead_chip_timeout_ledgers: 0,
+            reclaim_period_ledgers: 0,
         },
         phase: GamePhase::Showdown,
         players,
@@ -118,11 +123,13 @@ fn build_table(env: &Env, gen: &[GenPlayer]) -> (TableState, i128) {
         rake_balance: 0,
         action_deadline: 0,
         hand_actions: Vec::new(env),
-        rit_state: None,
+        rit_state: OptionalRitState::None,
         jackpot_balance: 0,
         last_raise_size: 0,
         current_blind_level: 0,
         level_started_at: 0,
+        break_ends_at: 0,
+        settlement_entered_ledger: 0,
     };
     (table, total)
 }

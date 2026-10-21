@@ -1,0 +1,113 @@
+name: Terraform Drift Detection
+
+# Scheduled drift detection for the IaC in infrastructure/terraform (Issue #679).
+# Runs terraform plan on a schedule and fails the job (alerting maintainers via
+# GitHub notifications) when the plan shows changes — i.e. manual console edits
+# that no longer match the code.
+
+on:
+  schedule:
+    - cron: '45 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift-plan:
+    name: Scheduled plan with drift report
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The check is only meaningful with cloud credentials to refresh against
+      # live infrastructure and a state to compare against. Without them the
+      # job reports how to enable it instead of raising a false alarm.
+      - name: Check prerequisites
+        id: prereq
+        run: |
+          set -euo pipefail
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${GOOGLE_CREDENTIALS:-}" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Terraform drift check skipped"
+              echo ""
+              echo "Cloud credentials are not configured, so a live refresh/plan is not possible."
+              echo "To enable drift detection, add the \`AWS_ACCESS_KEY_ID\`, \`AWS_SECRET_ACCESS_KEY\`"
+              echo "and \`GOOGLE_CREDENTIALS\` repository secrets and a remote state backend"
+              echo "(see the commented \`backend \"s3\"\` block in \`infrastructure/terraform/main.tf\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Drift check skipped: cloud credentials not configured."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Terraform
+        if: steps.prereq.outputs.ready == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.9
+
+      - name: terraform init
+        if: steps.prereq.outputs.ready == 'true'
+        run: terraform init -input=false
+
+      # -detailed-exitcode: 0 = no changes, 2 = drift, 1 = error.
+      - name: terraform plan (drift report)
+        if: steps.prereq.outputs.ready == 'true'
+        id: plan
+        run: |
+          set -euo pipefail
+          set +e
+          terraform plan -input=false -detailed-exitcode -out=drift.tfplan
+          code=$?
+          set -e
+          case "$code" in
+            0)
+              echo "drift=false" >> "$GITHUB_OUTPUT"
+              echo "### Terraform drift check" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "No drift: infrastructure matches the code." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            2)
+              echo "drift=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "### Terraform drift detected"
+                echo ""
+                echo "The live infrastructure differs from \`infrastructure/terraform\`."
+                echo "The plan below was written to the \`terraform-drift-report\` artifact."
+                echo ""
+                echo '```hcl'
+                terraform show -no-color drift.tfplan
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "terraform plan failed with exit code ${code}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload drift report
+        if: always() && steps.plan.outputs.drift == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-drift-report
+          path: infrastructure/terraform/drift.tfplan
+          retention-days: 90
+
+      # Failing the scheduled workflow is the alert: GitHub notifies the
+      # repository about the failed run and the report sits in the summary.
+      - name: Alert on drift
+        if: steps.plan.outputs.drift == 'true'
+        run: |
+          echo "::error::Terraform drift detected — infrastructure was changed outside IaC. See the job summary and the terraform-drift-report artifact."
+          exit 1

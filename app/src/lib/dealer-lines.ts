@@ -9,6 +9,7 @@ function shortAddr(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-6)}`;
 }
 
+/** Loads Dealer Line*/
 export function getDealerLine(opts: {
   loading: boolean;
   elapsed: number;

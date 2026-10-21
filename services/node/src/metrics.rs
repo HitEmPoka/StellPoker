@@ -8,7 +8,7 @@
 //! `proof_generation` errors).
 
 use axum::{body::Body, http::Response};
-use prometheus::{Encoder, IntCounterVec, IntGauge, Gauge, GaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, GaugeVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
 pub struct NodeMetrics {
@@ -30,6 +30,10 @@ pub struct NodeMetrics {
     pub clock_skew_seconds: Gauge,
     /// Days until TLS certificate expires.
     pub cert_expiry_days: GaugeVec,
+    /// Node-side proof cache hits, labeled by circuit name (#579).
+    pub proof_cache_hits: IntCounterVec,
+    /// Node-side proof cache misses, labeled by circuit name (#579).
+    pub proof_cache_misses: IntCounterVec,
 }
 
 impl NodeMetrics {
@@ -93,14 +97,49 @@ impl NodeMetrics {
         )
         .unwrap();
 
-        registry.register(Box::new(active_sessions.clone())).unwrap();
-        registry.register(Box::new(proofs_generated.clone())).unwrap();
+        registry
+            .register(Box::new(active_sessions.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(proofs_generated.clone()))
+            .unwrap();
         registry.register(Box::new(session_errors.clone())).unwrap();
         registry.register(Box::new(node_up.clone())).unwrap();
         registry.register(Box::new(memory_bytes.clone())).unwrap();
-        registry.register(Box::new(memory_limit_bytes.clone())).unwrap();
-        registry.register(Box::new(clock_skew_seconds.clone())).unwrap();
-        registry.register(Box::new(cert_expiry_days.clone())).unwrap();
+        registry
+            .register(Box::new(memory_limit_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(clock_skew_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cert_expiry_days.clone()))
+            .unwrap();
+
+        let proof_cache_hits = IntCounterVec::new(
+            Opts::new(
+                "mpc_node_proof_cache_hits_total",
+                "Node-side proof cache hits, labeled by circuit.",
+            ),
+            &["circuit"],
+        )
+        .unwrap();
+
+        let proof_cache_misses = IntCounterVec::new(
+            Opts::new(
+                "mpc_node_proof_cache_misses_total",
+                "Node-side proof cache misses, labeled by circuit.",
+            ),
+            &["circuit"],
+        )
+        .unwrap();
+
+        registry
+            .register(Box::new(proof_cache_hits.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(proof_cache_misses.clone()))
+            .unwrap();
 
         Self {
             registry,
@@ -112,6 +151,8 @@ impl NodeMetrics {
             memory_limit_bytes,
             clock_skew_seconds,
             cert_expiry_days,
+            proof_cache_hits,
+            proof_cache_misses,
         }
     }
 
@@ -199,6 +240,37 @@ mod tests {
                 .with_label_values(&["proof_generation"])
                 .get(),
             0
+        );
+    }
+
+    #[test]
+    fn proof_cache_hits_and_misses_counted_by_circuit() {
+        let metrics = NodeMetrics::new();
+        metrics
+            .proof_cache_hits
+            .with_label_values(&["deal_valid"])
+            .inc();
+        metrics
+            .proof_cache_misses
+            .with_label_values(&["deal_valid"])
+            .inc();
+        metrics
+            .proof_cache_misses
+            .with_label_values(&["deal_valid"])
+            .inc();
+        assert_eq!(
+            metrics
+                .proof_cache_hits
+                .with_label_values(&["deal_valid"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            metrics
+                .proof_cache_misses
+                .with_label_values(&["deal_valid"])
+                .get(),
+            2
         );
     }
 

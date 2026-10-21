@@ -1,0 +1,13 @@
+kind,name,public_fields,acir_opcodes,circuit_size,proof_bytes,public_bytes,total_bytes,verify_ms,measured
+synthetic,K=1,2,1,57,16256,64,16320,17.5,True
+synthetic,K=2,3,2,59,16256,96,16352,17.2,True
+synthetic,K=4,5,4,63,16256,160,16416,16.9,True
+synthetic,K=8,9,8,71,16256,288,16544,17.0,True
+synthetic,K=16,17,16,87,16256,544,16800,17.3,True
+synthetic,K=32,33,32,119,16256,1056,17312,18.0,True
+synthetic,K=64,65,64,183,16256,2080,18336,17.3,True
+synthetic,K=128,129,128,311,16256,4128,20384,17.8,True
+synthetic,K=256,257,256,567,16256,8224,24480,18.4,True
+circuit,deal_valid,20,13292,25938,16256,640,16896,,True
+circuit,reveal_board_valid,25,12359,32833,16256,800,17056,,True
+circuit,showdown_valid,29,11133,34645,16256,928,17184,,True

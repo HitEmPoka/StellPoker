@@ -5,11 +5,15 @@
 //! address) and every session message is signed by the sending node with its
 //! Stellar keypair, so a spoofed or compromised endpoint cannot impersonate a
 //! committee member.
+//!
+//! Issue #500: Replay-protected nonces for all MPC session messages.
+//! Every session message carries a unique nonce verified upon receipt.
+//! Duplicate nonces are rejected and logged with the sender's peer identity.
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -61,6 +65,52 @@ pub fn is_valid_stellar_address(address: &str) -> bool {
     stellar_strkey::ed25519::PublicKey::from_string(address).is_ok()
 }
 
+/// Tracks seen nonces per (node_id, session_id) to prevent message replay attacks (Issue #500).
+#[derive(Clone, Debug, Default)]
+pub struct SessionNonceTracker {
+    seen_nonces: Arc<RwLock<HashMap<(String, String), HashSet<u64>>>>,
+}
+
+impl SessionNonceTracker {
+    pub fn new() -> Self {
+        Self {
+            seen_nonces: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Check and record a message nonce. Returns `Ok(())` if the nonce is fresh,
+    /// or `Err` with a rejection message if the nonce was already used by this peer.
+    pub async fn check_and_record(
+        &self,
+        node_id: &str,
+        session_id: &str,
+        nonce: u64,
+    ) -> Result<(), String> {
+        let key = (node_id.to_string(), session_id.to_string());
+        let mut guard = self.seen_nonces.write().await;
+        let nonces = guard.entry(key).or_default();
+        if !nonces.insert(nonce) {
+            tracing::warn!(
+                peer = %node_id,
+                session_id = %session_id,
+                nonce = nonce,
+                "rejected replayed MPC session message"
+            );
+            return Err(format!(
+                "replay detected: nonce {} already used by peer {} for session {}",
+                nonce, node_id, session_id
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reset tracked nonces for a session upon session completion.
+    pub async fn cleanup_session(&self, session_id: &str) {
+        let mut guard = self.seen_nonces.write().await;
+        guard.retain(|(_, sid), _| sid != session_id);
+    }
+}
+
 /// A session message signed by an MPC node with its Stellar keypair.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SignedSessionMessage {
@@ -71,14 +121,23 @@ pub struct SignedSessionMessage {
     /// Signature (hex or base64) over `canonical_message`.
     pub signature: String,
     pub timestamp: i64,
+    /// Per-message unique nonce or monotonic counter (Issue #500).
+    #[serde(default)]
+    pub nonce: u64,
 }
 
 /// The exact byte string each node signs for a session message. Kept in one
 /// place so the coordinator and node implementations stay in lock-step.
-pub fn canonical_message(node_id: &str, session_id: &str, payload: &str, timestamp: i64) -> String {
+pub fn canonical_message(
+    node_id: &str,
+    session_id: &str,
+    payload: &str,
+    timestamp: i64,
+    nonce: u64,
+) -> String {
     format!(
-        "stellar-poker-mpc|{}|{}|{}|{}",
-        node_id, session_id, payload, timestamp
+        "stellar-poker-mpc|{}|{}|{}|{}|{}",
+        node_id, session_id, payload, timestamp, nonce
     )
 }
 
@@ -88,12 +147,34 @@ pub async fn verify_session_message(
     registry: &CommitteeRegistry,
     msg: &SignedSessionMessage,
 ) -> Result<(), String> {
+    verify_session_message_with_tracker(registry, msg, None).await
+}
+
+/// Verify `msg` signature and ensure its nonce is not a replay via `SessionNonceTracker`.
+pub async fn verify_session_message_with_tracker(
+    registry: &CommitteeRegistry,
+    msg: &SignedSessionMessage,
+    tracker: Option<&SessionNonceTracker>,
+) -> Result<(), String> {
     let address = lookup_address(registry, &msg.node_id)
         .await
         .ok_or_else(|| format!("node {} is not a registered committee member", msg.node_id))?;
 
-    let message = canonical_message(&msg.node_id, &msg.session_id, &msg.payload, msg.timestamp);
-    verify_signature(&address, &message, &msg.signature)
+    let message = canonical_message(
+        &msg.node_id,
+        &msg.session_id,
+        &msg.payload,
+        msg.timestamp,
+        msg.nonce,
+    );
+    verify_signature(&address, &message, &msg.signature)?;
+
+    if let Some(t) = tracker {
+        t.check_and_record(&msg.node_id, &msg.session_id, msg.nonce)
+            .await?;
+    }
+
+    Ok(())
 }
 
 /// Verify a raw Ed25519 signature (over `message`) against a Stellar
@@ -135,16 +216,24 @@ fn decode_signature(signature_raw: &str) -> Result<Signature, String> {
             .map_err(|_| "invalid base64 signature".to_string())?
     };
 
-    let normalized: [u8; 64] = if decoded.len() == 64 {
-        decoded.as_slice().try_into().map_err(|_| "malformed signature".to_string())?
-    } else if decoded.len() == 68 {
-        decoded[4..68].try_into().map_err(|_| "malformed signature".to_string())?
-    } else if decoded.len() == 72 && decoded[4..8] == [0, 0, 0, 64] {
-        decoded[8..72].try_into().map_err(|_| "malformed signature".to_string())?
+    if decoded.len() == 64 {
+        let bytes: [u8; 64] = decoded
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?;
+        Ok(Signature::from_bytes(&bytes))
+    } else if decoded.len() == 65 {
+        let bytes: [u8; 64] = decoded[..64]
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?;
+        Ok(Signature::from_bytes(&bytes))
+    } else if decoded.len() == 70 || decoded.len() == 71 || decoded.len() == 72 {
+        let bytes: [u8; 64] = decoded[decoded.len() - 64..]
+            .try_into()
+            .map_err(|_| "malformed signature".to_string())?;
+        Ok(Signature::from_bytes(&bytes))
     } else {
-        return Err("unrecognized signature length".to_string());
-    };
-    Ok(Signature::from_bytes(&normalized))
+        Err("unrecognized signature length".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -156,8 +245,8 @@ mod tests {
     fn keypair() -> (SigningKey, String) {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
-        let address = stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes())
-            .to_string();
+        let address =
+            stellar_strkey::ed25519::PublicKey(signing_key.verifying_key().to_bytes()).to_string();
         (signing_key, address)
     }
 
@@ -167,9 +256,11 @@ mod tests {
 
         let (signing_key, address) = keypair();
         let registry = new_registry();
-        register_node_identity(&registry, "0", &address).await.unwrap();
+        register_node_identity(&registry, "0", &address)
+            .await
+            .unwrap();
 
-        let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000);
+        let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000, 101);
         let sig = signing_key.sign(message.as_bytes());
         let msg = SignedSessionMessage {
             node_id: "0".into(),
@@ -177,6 +268,7 @@ mod tests {
             payload: "commitment:abc".into(),
             signature: hex::encode(sig.to_bytes()),
             timestamp: 1_700_000_000,
+            nonce: 101,
         };
 
         assert!(verify_session_message(&registry, &msg).await.is_ok());
@@ -191,6 +283,7 @@ mod tests {
             payload: "x".into(),
             signature: "00".repeat(64),
             timestamp: 0,
+            nonce: 1,
         };
         assert!(verify_session_message(&registry, &msg).await.is_err());
     }
@@ -201,9 +294,11 @@ mod tests {
 
         let (signing_key, address) = keypair();
         let registry = new_registry();
-        register_node_identity(&registry, "0", &address).await.unwrap();
+        register_node_identity(&registry, "0", &address)
+            .await
+            .unwrap();
 
-        let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000);
+        let message = canonical_message("0", "sess-1", "commitment:abc", 1_700_000_000, 101);
         let sig = signing_key.sign(message.as_bytes());
         let msg = SignedSessionMessage {
             node_id: "0".into(),
@@ -211,8 +306,130 @@ mod tests {
             payload: "commitment:TAMPERED".into(),
             signature: hex::encode(sig.to_bytes()),
             timestamp: 1_700_000_000,
+            nonce: 101,
         };
 
         assert!(verify_session_message(&registry, &msg).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicated_replayed_message() {
+        use ed25519_dalek::Signer;
+
+        let (signing_key, address) = keypair();
+        let registry = new_registry();
+        register_node_identity(&registry, "0", &address)
+            .await
+            .unwrap();
+        let tracker = SessionNonceTracker::new();
+
+        let message = canonical_message("0", "sess-replay", "commitment:abc", 1_700_000_000, 202);
+        let sig = signing_key.sign(message.as_bytes());
+        let msg = SignedSessionMessage {
+            node_id: "0".into(),
+            session_id: "sess-replay".into(),
+            payload: "commitment:abc".into(),
+            signature: hex::encode(sig.to_bytes()),
+            timestamp: 1_700_000_000,
+            nonce: 202,
+        };
+
+        // First verification succeeds
+        assert!(
+            verify_session_message_with_tracker(&registry, &msg, Some(&tracker))
+                .await
+                .is_ok()
+        );
+
+        // Replayed message with the same nonce must be rejected
+        let err = verify_session_message_with_tracker(&registry, &msg, Some(&tracker))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("replay detected"),
+            "expected replay detection, got: {err}"
+        );
+        assert!(
+            err.contains("peer 0"),
+            "expected peer identity in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fuzz_property_test_replay_rejection() {
+        use ed25519_dalek::Signer;
+        use rand::Rng;
+
+        let (signing_key, address) = keypair();
+        let registry = new_registry();
+        register_node_identity(&registry, "party-fuzz", &address)
+            .await
+            .unwrap();
+        let tracker = SessionNonceTracker::new();
+
+        let mut rng = rand::thread_rng();
+        let mut nonces = Vec::new();
+
+        // 100 distinct random nonces must all succeed
+        for _ in 0..100 {
+            let nonce = rng.gen::<u64>();
+            nonces.push(nonce);
+
+            let message = canonical_message(
+                "party-fuzz",
+                "session-fuzz",
+                "payload-fuzz",
+                1_700_000_000,
+                nonce,
+            );
+            let sig = signing_key.sign(message.as_bytes());
+            let msg = SignedSessionMessage {
+                node_id: "party-fuzz".into(),
+                session_id: "session-fuzz".into(),
+                payload: "payload-fuzz".into(),
+                signature: hex::encode(sig.to_bytes()),
+                timestamp: 1_700_000_000,
+                nonce,
+            };
+
+            assert!(
+                verify_session_message_with_tracker(&registry, &msg, Some(&tracker))
+                    .await
+                    .is_ok(),
+                "fresh nonce {} failed",
+                nonce
+            );
+        }
+
+        // Replaying any previously used nonce must fail hard
+        for &nonce in &nonces {
+            let message = canonical_message(
+                "party-fuzz",
+                "session-fuzz",
+                "payload-fuzz",
+                1_700_000_000,
+                nonce,
+            );
+            let sig = signing_key.sign(message.as_bytes());
+            let msg = SignedSessionMessage {
+                node_id: "party-fuzz".into(),
+                session_id: "session-fuzz".into(),
+                payload: "payload-fuzz".into(),
+                signature: hex::encode(sig.to_bytes()),
+                timestamp: 1_700_000_000,
+                nonce,
+            };
+
+            let res = verify_session_message_with_tracker(&registry, &msg, Some(&tracker)).await;
+            assert!(
+                res.is_err(),
+                "duplicated message with nonce {} was not rejected",
+                nonce
+            );
+            assert!(
+                res.unwrap_err().contains("replay detected"),
+                "expected replay error message"
+            );
+        }
     }
 }

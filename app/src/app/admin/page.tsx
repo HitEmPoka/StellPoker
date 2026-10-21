@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { trySilentReconnect, connectWallet, type WalletSession } from "@/lib/wallet";
+import { ContractMetricsPanel } from "@/components/ContractMetricsPanel";
+import type { ContractMetrics } from "@/lib/contract-metrics";
+import { getContractMetrics } from "@/lib/onchain";
 
 interface TableSummary {
   id: string;
@@ -29,11 +32,17 @@ const ADMIN_WHITELIST = [
   "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFXYSFZUK25QG5W2H2MVM",
 ];
 
+/** Default */
 export default function AdminDashboardPage() {
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(true);
   const [isContractPaused, setIsContractPaused] = useState(false);
   const [showPanicModal, setShowPanicModal] = useState(false);
+
+  // On-chain aggregate metrics (#563)
+  const [metrics, setMetrics] = useState<ContractMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
 
   // Active tables state
   const [tables] = useState<TableSummary[]>([
@@ -59,6 +68,24 @@ export default function AdminDashboardPage() {
         setLoadingWallet(false);
       });
   }, []);
+
+  const walletAddress = wallet?.address;
+  const refreshMetrics = useCallback(async () => {
+    if (!walletAddress) return;
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      setMetrics(await getContractMetrics(walletAddress));
+    } catch (err) {
+      setMetricsError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [walletAddress]);
+
+  useEffect(() => {
+    void refreshMetrics();
+  }, [refreshMetrics]);
 
   const handleConnectWallet = async () => {
     try {
@@ -212,6 +239,14 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
             )}
+
+            {/* Contract-level metrics from the poker-table O(1) views (#563) */}
+            <ContractMetricsPanel
+              metrics={metrics}
+              loading={metricsLoading}
+              error={metricsError}
+              onRefresh={() => void refreshMetrics()}
+            />
 
             {/* Active Tables Grid */}
             <div className="space-y-3">

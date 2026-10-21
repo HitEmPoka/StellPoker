@@ -133,7 +133,9 @@ stellar contract invoke \
   --source deployer \
   --network mainnet \
   -- set_verification_key \
-     --vk "$(cat circuits/poker.vk | base64 -w0)"
+     --circuit '"DealValid"' \
+     --vk_data "$(xxd -p circuits/deal_valid/target/vk.compact | tr -d '\n')" \
+     --version 1
 ```
 
 ### 3.3 Update coordinator environment

@@ -38,9 +38,16 @@
   --pixel-gold: #f1c40f;
   --pixel-blue: #3498db;
   --pixel-green: #27ae60;
+  /* Table felt — part of the public community theme contract. */
   --felt-dark: #1a5c2a;
   --felt-mid: #237a3a;
   --felt-light: #2d9648;
+  --felt-shadow: #0f3b1a;
+  /* Card deck back — part of the public community theme contract. */
+  --card-back-start: #1a3a5c;
+  --card-back-end: #0d2137;
+  --card-back-border: #2a5a8c;
+  --card-back-symbol: #3498db;
   --card-white: #fefefe;
   --card-shadow: #c0c0c0;
   --ui-panel: rgba(20, 12, 8, 0.85);
@@ -222,6 +229,17 @@ body {
   50% { box-shadow: 0 0 0 5px #f1c40f, 0 0 28px 10px rgba(241,196,15,0.65); }
 }
 
+/* Seat occupancy: a player who has just sat down settles into their seat (#622) */
+@keyframes seatArrive {
+  0% { transform: translateY(-10px) scale(0.92); opacity: 0; }
+  60% { transform: translateY(2px) scale(1.03); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.seat-arrive {
+  animation: seatArrive 0.6s ease-out;
+}
+
 /* Game Boy modal slide in */
 @keyframes gameboySlideIn {
   0% { transform: translateY(30px) scale(0.95); opacity: 0; }
@@ -238,15 +256,20 @@ body {
   animation: cardDeal 0.3s ease-out forwards;
 }
 
-/* 3D card flip for deal (hole cards) and reveal (community cards).
-   The outer element provides the 3D perspective and a subtle slide-in; the
-   inner element rotates from showing the back (180deg) to the front (0deg).
-   `--flip-delay` is set per-card to stagger consecutive cards. */
+/* Card dealing: slide from the deck (table center) to the seat, landing
+   with a 3D back-to-front flip. The outer element provides the 3D
+   perspective plus the deck-to-seat slide (`cardDealSlide`, driven by
+   `--deal-x`/`--deal-y` — the deck's offset from this card's own resting
+   position, in px); the inner element rotates from the back (180deg) to
+   the front (0deg). `--flip-delay` staggers consecutive cards so they
+   don't all land at once. Uses only `transform`/`opacity` so the browser
+   can animate both on the compositor thread. */
 .card-flip {
   position: relative;
   perspective: 600px;
-  animation: cardSlideIn 0.3s ease-out both;
+  animation: cardDealSlide 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
   animation-delay: var(--flip-delay, 0s);
+  will-change: transform, opacity;
 }
 
 .card-flip-inner {
@@ -255,7 +278,8 @@ body {
   height: 100%;
   transform-style: preserve-3d;
   animation: cardFlip 0.3s ease-out both;
-  animation-delay: var(--flip-delay, 0s);
+  animation-delay: calc(var(--flip-delay, 0s) + 0.2s);
+  will-change: transform;
 }
 
 .card-flip-face {
@@ -273,16 +297,26 @@ body {
   100% { transform: rotateY(0deg); }
 }
 
-@keyframes cardSlideIn {
-  0% { transform: translateY(-10px); opacity: 0; }
-  100% { transform: translateY(0); opacity: 1; }
+@keyframes cardDealSlide {
+  0% {
+    transform: translate(var(--deal-x, 0px), var(--deal-y, -60px)) scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
 }
 
 /* Accessibility: show cards instantly when reduced motion is preferred. */
 @media (prefers-reduced-motion: reduce) {
   .animate-card-deal,
   .card-flip,
-  .card-flip-inner {
+  .card-flip-inner,
+  .seat-arrive {
     animation: none;
   }
   .card-flip {
@@ -647,3 +681,386 @@ textarea {
     padding: 8px 10px !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile bottom action bar (#175)
+
+   The bar is always rendered and hidden by this media query above the mobile
+   breakpoint, so there's no viewport-width state in React to get wrong during
+   hydration. Below the breakpoint the desktop panel's own interactive
+   clusters are hidden instead, so the two never present duplicate controls.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mobile-action-bar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .mobile-action-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom, 0px));
+    background: rgba(10, 8, 18, 0.96);
+    border-top: 3px solid var(--ui-border, #6b4f12);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.45);
+  }
+
+  /* Reserve room so the felt and the chat toggle never sit under the bar. */
+  body:has(.mobile-action-bar) {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-toggle-btn {
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .chat-drawer {
+    bottom: calc(152px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* The bottom bar owns betting on mobile; the desktop panel keeps only its
+     read-only bet/stack summary and status hints. */
+  .action-panel-desktop .action-panel-buttons,
+  .action-panel-desktop .bet-slider-row,
+  .action-panel-desktop .chip-tray-row {
+    display: none !important;
+  }
+}
+
+.mobile-action-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.mobile-action-btn {
+  flex: 1 1 0;
+  /* WCAG 2.5.5 touch target, and comfortably thumb-sized. */
+  min-height: 48px;
+  font-size: 9px !important;
+  padding: 8px 4px !important;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+.mobile-action-btn:disabled {
+  opacity: 0.5;
+}
+
+.mobile-action-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 8px;
+  color: #95a5a6;
+  font-style: italic;
+}
+
+/* ── Raise sheet ── */
+
+.mobile-raise-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(16, 14, 30, 0.98);
+  border: 3px solid var(--ui-border, #6b4f12);
+}
+
+.mobile-raise-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #f1c40f;
+}
+
+.mobile-raise-close {
+  background: none;
+  border: none;
+  color: #95a5a6;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Horizontal scroll for the preset row — more sizings than fit, by design. */
+.mobile-raise-presets {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  padding-bottom: 4px;
+}
+
+.mobile-raise-preset {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  font-size: 8px !important;
+  padding: 6px 10px !important;
+}
+
+.mobile-raise-preset-value {
+  font-size: 7px;
+  color: #c8e6ff;
+}
+
+.mobile-raise-slider {
+  width: 100%;
+  height: 4px;
+}
+
+.mobile-raise-confirm {
+  min-height: 48px;
+  font-size: 9px !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Live hand timeline scrubber (#176)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.hand-timeline-track {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px;
+  background: rgba(12, 10, 24, 0.75);
+  border: 2px solid var(--ui-border, #6b4f12);
+  scroll-snap-type: x proximity;
+}
+
+.hand-timeline-track:focus-visible {
+  outline: 2px solid #f1c40f;
+  outline-offset: 2px;
+}
+
+.hand-timeline-marker {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: 4px 6px;
+  border: 2px solid;
+  cursor: pointer;
+  font-family: 'Press Start 2P', monospace;
+}
+
+.hand-timeline-marker-label {
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.hand-timeline-marker-time {
+  font-size: 6px;
+  opacity: 0.75;
+}
+
+@media (max-width: 640px) {
+  .hand-timeline-marker {
+    min-width: 44px;
+  }
+}
+
+/* Board shown at a past moment rather than live — tinted so the felt can
+   never be mistaken for the current state. */
+.timeline-reviewing {
+  outline: 2px dashed #f1c40f;
+  outline-offset: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Proof explorer side panel (#160)
+
+   Docked to the right edge on desktop, where it is dragged by its header and
+   resized from its left edge. Below the mobile breakpoint it becomes a bottom
+   sheet instead; as with the action bar, CSS alone decides which, so there is
+   no viewport-width state in React.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.proof-panel {
+  position: fixed;
+  top: 88px;
+  right: 16px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 120px);
+  background: rgba(12, 10, 24, 0.97);
+}
+
+.proof-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  font-size: 9px;
+  color: #f1c40f;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.proof-panel-header:active {
+  cursor: grabbing;
+}
+
+.proof-panel:not(.proof-panel-collapsed) .proof-panel-header {
+  border-bottom: 2px solid rgba(196, 125, 46, 0.3);
+}
+
+.proof-panel-btn {
+  min-width: 24px;
+  min-height: 24px;
+  background: none;
+  border: none;
+  color: #f5e6c8;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 9px;
+}
+
+.proof-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 8px;
+}
+
+.proof-panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  width: 8px;
+  z-index: 1;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.proof-panel-resize:hover,
+.proof-panel-resize:focus-visible {
+  background: rgba(241, 196, 15, 0.35);
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  .proof-panel {
+    top: auto !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 60vh !important;
+    transform: none !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Sit above the sticky action bar rather than cover it (#175). */
+  body:has(.mobile-action-bar) .proof-panel {
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .proof-panel-header {
+    cursor: default;
+  }
+
+  .proof-panel-resize {
+    display: none;
+  }
+
+  /* WCAG 2.5.5 touch targets. */
+  .proof-panel-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Right-to-Left (RTL) Layout Support (Issue #621)
+   Logical CSS properties and bidirectional layout handling
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+
+html[dir="rtl"] body {
+  direction: rtl;
+}
+
+/* Logical positioning for floating controls */
+.app-top-controls {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  z-index: 9999;
+}
+
+/* RTL Proof Explorer Panel adjustments */
+html[dir="rtl"] .proof-panel {
+  right: auto;
+  left: 16px;
+}
+
+html[dir="rtl"] .proof-panel-resize {
+  left: auto;
+  right: -6px;
+}
+
+/* RTL Chat Drawer and toggle */
+html[dir="rtl"] .chat-toggle-btn {
+  right: auto !important;
+  left: 16px !important;
+}
+
+html[dir="rtl"] .chat-drawer {
+  right: auto !important;
+  left: 16px !important;
+}
+
+/* RTL Table header navigation */
+html[dir="rtl"] .table-header-left,
+html[dir="rtl"] .table-header-right {
+  flex-direction: row;
+}
+
+/* RTL text alignment and logical margins */
+html[dir="rtl"] .text-start {
+  text-align: right;
+}
+
+html[dir="rtl"] .text-end {
+  text-align: left;
+}
+
+[dir="rtl"] .ms-auto {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+[dir="rtl"] .me-auto {
+  margin-left: auto;
+  margin-right: 0;
+}
+

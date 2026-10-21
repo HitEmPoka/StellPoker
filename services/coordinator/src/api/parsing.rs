@@ -218,7 +218,9 @@ mod error_handling_tests {
         assert!(parse_requested_buy_in("-10")
             .unwrap_err()
             .contains("must be > 0"));
-        assert!(parse_requested_buy_in("0").unwrap_err().contains("must be > 0"));
+        assert!(parse_requested_buy_in("0")
+            .unwrap_err()
+            .contains("must be > 0"));
         // Surrounding whitespace is tolerated for an otherwise valid value.
         assert_eq!(parse_requested_buy_in(" 250 ").unwrap(), 250);
     }
@@ -247,11 +249,13 @@ mod error_handling_tests {
     #[test]
     fn reveal_outputs_reject_short_and_overlong() {
         assert!(parse_reveal_outputs(&[], 1)
-            .err().unwrap()
+            .err()
+            .unwrap()
             .contains("too short"));
         let pi = vec!["0".to_string(); 6];
         assert!(parse_reveal_outputs(&pi, 4)
-            .err().unwrap()
+            .err()
+            .unwrap()
             .contains("exceeds MAX_REVEAL"));
     }
 

@@ -7,6 +7,7 @@
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/** Tournament Status shape. */
 export type TournamentStatus =
   | "registration"
   | "running"
@@ -14,6 +15,7 @@ export type TournamentStatus =
   | "completed"
   | "cancelled";
 
+/** Blind Level shape. */
 export interface BlindLevel {
   small_blind: number;
   big_blind: number;
@@ -21,11 +23,13 @@ export interface BlindLevel {
   hands: number;
 }
 
+/** Payout Schedule shape. */
 export interface PayoutSchedule {
   /** shares[0] = 1st place %, shares[1] = 2nd place %, etc. Must sum to 100. */
   shares: number[];
 }
 
+/** Tournament Player shape. */
 export interface TournamentPlayer {
   address: string;
   table_contract: string;
@@ -34,6 +38,7 @@ export interface TournamentPlayer {
   payout: number | null;
 }
 
+/** Tournament Summary shape. */
 export interface TournamentSummary {
   id: string;
   name: string;
@@ -47,6 +52,7 @@ export interface TournamentSummary {
   blind_level: number;
 }
 
+/** Tournament Detail shape. */
 export interface TournamentDetail extends TournamentSummary {
   min_players: number;
   players_per_table: number;
@@ -57,12 +63,14 @@ export interface TournamentDetail extends TournamentSummary {
   payout_schedule: PayoutSchedule;
 }
 
+/** Table Move shape. */
 export interface TableMove {
   player: string;
   from_table: string;
   to_table: string;
 }
 
+/** Hand Result Response shape. */
 export interface HandResultResponse {
   tournament: TournamentDetail;
   newly_eliminated: string[];
@@ -70,6 +78,7 @@ export interface HandResultResponse {
   empty_tables: string[];
 }
 
+/** Create Tournament Params shape. */
 export interface CreateTournamentParams {
   name: string;
   buy_in: number;
@@ -106,14 +115,25 @@ async function apiFetch<T>(
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
+/** List Tournaments.
+ * @returns Promise<TournamentSummary[]>.
+ */
 export async function listTournaments(): Promise<TournamentSummary[]> {
   return apiFetch<TournamentSummary[]>("/api/tournaments");
 }
 
+/** Loads Tournament.
+ * @param id - id.
+ * @returns Promise<TournamentDetail>.
+ */
 export async function getTournament(id: string): Promise<TournamentDetail> {
   return apiFetch<TournamentDetail>(`/api/tournaments/${id}`);
 }
 
+/** Creates Tournament.
+ * @param params - params.
+ * @returns Promise<TournamentDetail>.
+ */
 export async function createTournament(
   params: CreateTournamentParams
 ): Promise<TournamentDetail> {
@@ -123,6 +143,12 @@ export async function createTournament(
   });
 }
 
+/** Register Player.
+ * @param tournamentId - tournament Id.
+ * @param address - address.
+ * @param tableContract - table Contract.
+ * @returns Promise<TournamentDetail>.
+ */
 export async function registerPlayer(
   tournamentId: string,
   address: string,
@@ -137,6 +163,10 @@ export async function registerPlayer(
   );
 }
 
+/** Start Tournament.
+ * @param tournamentId - tournament Id.
+ * @returns Promise<TournamentDetail>.
+ */
 export async function startTournament(
   tournamentId: string
 ): Promise<TournamentDetail> {
@@ -146,6 +176,10 @@ export async function startTournament(
   );
 }
 
+/** Checks cancel Tournament.
+ * @param tournamentId - tournament Id.
+ * @returns Promise<TournamentDetail>.
+ */
 export async function cancelTournament(
   tournamentId: string
 ): Promise<TournamentDetail> {
@@ -155,6 +189,11 @@ export async function cancelTournament(
   );
 }
 
+/** Record Hand Result.
+ * @param tournamentId - tournament Id.
+ * @param stacks - stacks.
+ * @returns Promise<HandResultResponse>.
+ */
 export async function recordHandResult(
   tournamentId: string,
   stacks: Record<string, number>
@@ -168,6 +207,10 @@ export async function recordHandResult(
   );
 }
 
+/** Loads Balancing Moves.
+ * @param tournamentId - tournament Id.
+ * @returns Promise<.
+ */
 export async function getBalancingMoves(
   tournamentId: string
 ): Promise<{ balancing_moves: TableMove[]; current_small_blind: number; current_big_blind: number; blind_level: number }> {
@@ -178,11 +221,19 @@ export async function getBalancingMoves(
 
 const STROOPS = 10_000_000;
 
+/** Stroops To Xlm.
+ * @param stroops - stroops.
+ * @returns string.
+ */
 export function stroopsToXlm(stroops: number): string {
   const xlm = stroops / STROOPS;
   return xlm % 1 === 0 ? xlm.toFixed(0) : xlm.toFixed(2);
 }
 
+/** Status Label.
+ * @param status - status.
+ * @returns string.
+ */
 export function statusLabel(status: TournamentStatus): string {
   const labels: Record<TournamentStatus, string> = {
     registration: "REGISTRATION",
@@ -194,6 +245,10 @@ export function statusLabel(status: TournamentStatus): string {
   return labels[status] ?? status.toUpperCase();
 }
 
+/** Status Color.
+ * @param status - status.
+ * @returns string.
+ */
 export function statusColor(status: TournamentStatus): string {
   const colors: Record<TournamentStatus, string> = {
     registration: "#3498db",
@@ -205,6 +260,10 @@ export function statusColor(status: TournamentStatus): string {
   return colors[status] ?? "#95a5a6";
 }
 
+/** Place Label.
+ * @param pos - pos.
+ * @returns string.
+ */
 export function placeLabel(pos: number): string {
   if (pos === 1) return "1ST";
   if (pos === 2) return "2ND";
@@ -212,6 +271,10 @@ export function placeLabel(pos: number): string {
   return `${pos}TH`;
 }
 
+/** Short Addr.
+ * @param addr - addr.
+ * @returns string.
+ */
 export function shortAddr(addr: string): string {
   if (!addr || addr.length < 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;

@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/compilerla/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Format Rust code with cargo fmt
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [commit]
+
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint Rust code with cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [commit]
+
+      - id: nargo-check
+        name: nargo check
+        description: Check Noir circuits
+        entry: bash -c 'if command -v nargo &> /dev/null; then nargo check --all; fi'
+        language: system
+        types: [noir]
+        pass_filenames: false
+        stages: [commit]

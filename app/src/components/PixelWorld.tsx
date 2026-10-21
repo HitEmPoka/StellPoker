@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { isReducedDataMode } from "@/lib/reduced-data-mode";
 
 /**
  * PixelWorld — immersive background with day/night toggle and ambient music.
@@ -28,6 +29,9 @@ export function getMasterVolume(): number {
   return sharedAudioState?.masterVolume ?? 1;
 }
 
+/** Persists Master Volume.
+ * @param v - v.
+ */
 export function setMasterVolume(v: number): void {
   if (!sharedAudioState) return;
   sharedAudioState.masterVolume = Math.max(0, Math.min(1, v));
@@ -60,8 +64,12 @@ function ensureSharedAudioState(): SharedAudioState {
   return sharedAudioState;
 }
 
+/** Renders Pixel World.
+ * @param props(object) - props(object).
+ */
 export function PixelWorld({ children }: { children: React.ReactNode }) {
   const [isNight, setIsNight] = useState(() => sharedAudioState?.isNight ?? false);
+  const reducedData = isReducedDataMode();
   const dayAudioRef = useRef<HTMLAudioElement | null>(null);
   const nightAudioRef = useRef<HTMLAudioElement | null>(null);
   const fadeRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -89,6 +97,7 @@ export function PixelWorld({ children }: { children: React.ReactNode }) {
 
   // Crossfade when isNight changes — respects master volume
   const crossfade = useCallback((toNight: boolean) => {
+    if (reducedData) return;
     const fadeIn = toNight ? nightAudioRef.current : dayAudioRef.current;
     const fadeOut = toNight ? dayAudioRef.current : nightAudioRef.current;
     if (!fadeIn || !fadeOut) return;
@@ -118,6 +127,7 @@ export function PixelWorld({ children }: { children: React.ReactNode }) {
 
   // Start music on first user click anywhere in the world
   const handleFirstInteraction = useCallback(() => {
+    if (reducedData) return;
     const shared = ensureSharedAudioState();
     if (musicStartedRef.current || shared.started) return;
     musicStartedRef.current = true;
@@ -132,7 +142,7 @@ export function PixelWorld({ children }: { children: React.ReactNode }) {
     if (inactive) {
       inactive.volume = 0;
     }
-  }, [isNight]);
+  }, [isNight, reducedData]);
 
   const duration = '2s';
 

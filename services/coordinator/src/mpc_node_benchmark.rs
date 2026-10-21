@@ -54,7 +54,11 @@ pub fn record_sample(store: &NodeBenchmarkStore, sample: NodeBenchmarkSample) {
 pub fn get_samples(store: &NodeBenchmarkStore, node_id: Option<&str>) -> Vec<NodeBenchmarkSample> {
     match store.lock() {
         Ok(samples) => match node_id {
-            Some(id) => samples.iter().filter(|s| s.node_id == id).cloned().collect(),
+            Some(id) => samples
+                .iter()
+                .filter(|s| s.node_id == id)
+                .cloned()
+                .collect(),
             None => samples.clone(),
         },
         Err(_) => Vec::new(),
@@ -97,7 +101,10 @@ pub struct NodePerformanceReport {
 pub fn generate_report(samples: &[NodeBenchmarkSample]) -> Vec<NodePerformanceReport> {
     let mut by_node: HashMap<String, Vec<&NodeBenchmarkSample>> = HashMap::new();
     for sample in samples {
-        by_node.entry(sample.node_id.clone()).or_default().push(sample);
+        by_node
+            .entry(sample.node_id.clone())
+            .or_default()
+            .push(sample);
     }
 
     let mut reports: Vec<NodePerformanceReport> = by_node
@@ -166,10 +173,18 @@ pub async fn measure_latency(client: &reqwest::Client, endpoint: &str) -> Option
 /// Probe a node's health endpoint for latency plus any self-reported
 /// resource metrics (memory_bytes / cpu_percent / proof_throughput_per_sec
 /// fields in the JSON body, if present).
-pub async fn probe_node(client: &reqwest::Client, node_id: &str, endpoint: &str) -> NodeBenchmarkSample {
+pub async fn probe_node(
+    client: &reqwest::Client,
+    node_id: &str,
+    endpoint: &str,
+) -> NodeBenchmarkSample {
     let url = format!("{}/health", endpoint.trim_end_matches('/'));
     let start = Instant::now();
-    let response = client.get(&url).timeout(Duration::from_secs(5)).send().await;
+    let response = client
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
 
     let mut sample = NodeBenchmarkSample {
         node_id: node_id.to_string(),
@@ -221,7 +236,13 @@ pub async fn run_benchmark_sweep(
 mod tests {
     use super::*;
 
-    fn sample(node_id: &str, latency: f64, mem: u64, cpu: f64, throughput: f64) -> NodeBenchmarkSample {
+    fn sample(
+        node_id: &str,
+        latency: f64,
+        mem: u64,
+        cpu: f64,
+        throughput: f64,
+    ) -> NodeBenchmarkSample {
         NodeBenchmarkSample {
             node_id: node_id.to_string(),
             timestamp: 0,

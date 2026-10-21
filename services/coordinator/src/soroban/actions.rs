@@ -4,8 +4,8 @@ use tokio::process::Command;
 
 use super::{
     invoke_committee_registry_with_source, invoke_contract_with_retries,
-    invoke_contract_with_source_retries, parse_i128_value, parse_tx_result,
-    parse_u32_from_stdout, parse_u32_value, resolve_onchain_table_id, SorobanConfig,
+    invoke_contract_with_source_retries, parse_i128_value, parse_tx_result, parse_u32_from_stdout,
+    parse_u32_value, resolve_onchain_table_id, SorobanConfig,
 };
 use crate::key_rotation::CommitteeKey;
 
@@ -620,10 +620,7 @@ pub async fn get_players_paginated(
 }
 
 /// Read the total player count via `get_player_count`.
-pub async fn get_player_count(
-    config: &SorobanConfig,
-    table_id: u32,
-) -> Result<String, String> {
+pub async fn get_player_count(config: &SorobanConfig, table_id: u32) -> Result<String, String> {
     if !config.is_configured() {
         return Err("Soroban not configured".to_string());
     }
@@ -675,4 +672,76 @@ pub async fn get_hand_history_chunk(
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+/// Transfer chips from one table to another for a player.
+/// The player must be seated at both tables.
+/// A fee (percentage) is deducted from the transferred amount.
+/// The contract function `transfer_chips` is expected to handle the on-chain logic.
+pub async fn transfer_chips(
+    config: &SorobanConfig,
+    source_table_id: u32,
+    destination_table_id: u32,
+    player_address: &str,
+    amount: i128,
+    fee_basis_points: u32, // Fee in basis points (100 = 1%)
+) -> Result<(String, String), String> {
+    if !config.is_configured() {
+        return Err("Soroban not configured".to_string());
+    }
+
+    let source_identity = config.identity_for_player(player_address).ok_or_else(|| {
+        format!(
+            "no local identity configured for player {} (set PLAYERn_ADDRESS/PLAYERn_IDENTITY)",
+            player_address
+        )
+    })?;
+
+    let onchain_source_table_id = resolve_onchain_table_id(config, source_table_id);
+    let onchain_dest_table_id = resolve_onchain_table_id(config, destination_table_id);
+
+    let output = invoke_contract_with_source_retries(
+        config,
+        source_identity,
+        vec![
+            "transfer_chips".to_string(),
+            "--source_table_id".to_string(),
+            onchain_source_table_id.to_string(),
+            "--destination_table_id".to_string(),
+            onchain_dest_table_id.to_string(),
+            "--player".to_string(),
+            player_address.to_string(),
+            "--amount".to_string(),
+            amount.to_string(),
+            "--fee_basis_points".to_string(),
+            fee_basis_points.to_string(),
+        ],
+    )
+    .await?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "transfer_chips failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Expect JSON response with source_tx_hash and destination_tx_hash
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("failed to parse transfer_chips output: {}", e))?;
+
+    let source_tx_hash = value
+        .get("source_tx_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let dest_tx_hash = value
+        .get("destination_tx_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok((source_tx_hash, dest_tx_hash))
 }

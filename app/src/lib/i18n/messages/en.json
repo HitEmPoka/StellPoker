@@ -35,7 +35,8 @@
     "allIn": "ALL IN!",
     "editAlias": "Change your alias",
     "edit": "[EDIT]",
-    "dealer": "[D]"
+    "dealer": "[D]",
+    "editAvatar": "Click to customize avatar"
   },
   "stats": {
     "title": "Onchain Stats",
@@ -90,6 +91,11 @@
     "language": "LANGUAGE",
     "english": "English",
     "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
     "logout": "LOG OUT",
     "autoDetect": "Auto (browser)"
   },
@@ -119,5 +125,77 @@
     "winner": "Hand complete. Winner: {addr}.",
     "handComplete": "Hand complete. Start the next hand when ready.",
     "ready": "Ready when you are."
+  },
+  "common": {
+    "cancel": "CANCEL",
+    "submitting": "SUBMITTING…"
+  },
+  "avatar": {
+    "title": "CUSTOMIZE AVATAR",
+    "connectWallet": "Connect a wallet first.",
+    "resetDesc": "Clear custom avatar and fall back to the deterministic pixel Identicon.",
+    "rawSvg": "Raw SVG",
+    "chooseTemplate": "Choose template",
+    "nftContract": "NFT Contract Address",
+    "nftTokenId": "NFT Token ID",
+    "nftNote": "Only NFTs from admin-approved contracts are accepted.",
+    "saveSvg": "SAVE SVG AVATAR",
+    "linkNft": "LINK NFT",
+    "resetConfirm": "RESET TO IDENTICON"
+  },
+  "diagnostics": {
+    "title": "Transaction Diagnostics",
+    "simulationFailed": "Transaction simulation failed",
+    "executionFailed": "Transaction execution failed",
+    "viewDocs": "View Stellar Documentation ↗",
+    "simulationLogs": "Simulation Logs",
+    "hideLogs": "Hide Logs",
+    "commonCauses": "Common Causes",
+    "suggestedAction": "Suggested Action",
+    "insufficient_balance": {
+      "title": "Insufficient Balance",
+      "description": "Your wallet does not have enough XLM to cover the buy-in and network fee reserve.",
+      "cause": "Account balance is below the required amount plus the Stellar base reserve.",
+      "action": "Deposit additional XLM into your wallet to cover the table buy-in and minimum balance requirements."
+    },
+    "timeout": {
+      "title": "Transaction Timeout",
+      "description": "The transaction or RPC request timed out before receiving network confirmation.",
+      "cause": "Network congestion or temporary RPC node latency caused the request to exceed its timeout window.",
+      "action": "Check your network connection and retry the transaction. Your funds have not been deducted."
+    },
+    "seq": {
+      "title": "Sequence Number Mismatch",
+      "description": "The transaction sequence number does not match the current account sequence on-chain.",
+      "cause": "Another transaction was submitted from this account concurrently, advancing the sequence.",
+      "action": "Refresh the table to fetch the updated account sequence number and retry."
+    },
+    "expired": {
+      "title": "Transaction Expired",
+      "description": "The transaction reached its maximum time bounds or ledger sequence bounds before inclusion.",
+      "cause": "The transaction remained pending past the ledger sequence expiry limit.",
+      "action": "Submit a fresh transaction with current ledger time bounds."
+    },
+    "budget": {
+      "title": "Resource Budget Exceeded",
+      "description": "The contract invocation exceeded the Soroban CPU or memory instruction budget.",
+      "cause": "Complex smart contract execution consumed more compute units or storage instructions than budgeted.",
+      "action": "Review operation parameters or wait for fee/budget adjustments before retrying."
+    },
+    "unknown": {
+      "title": "Transaction Error",
+      "description": "An unexpected transaction failure occurred.",
+      "cause": "Unknown error or contract panic occurred during execution.",
+      "action": "Check the technical simulation logs below or retry the operation."
+    }
+  },
+  "offline": {
+    "cachedView": "CACHED VIEW (READ-ONLY)",
+    "disconnected": "Wallet disconnected",
+    "lastUpdated": "Last updated: {time}",
+    "stale": "STALE",
+    "reconnect": "RECONNECT WALLET",
+    "viewingCached": "You are viewing cached table data while disconnected.",
+    "offlineNotice": "Offline Mode: Showing cached lobby state."
   }
 }

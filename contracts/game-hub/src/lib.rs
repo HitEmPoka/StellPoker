@@ -46,6 +46,20 @@ impl MockGameHub {
         env.storage().instance().extend_ttl(17_280, 518_400);
     }
 
+    /// End game.
+    ///
+    /// # Parameters
+    /// - `session_id`: parameter
+    /// - `player1_won`: parameter
+    ///
+    /// # Returns
+    /// - `()`
+    ///
+    /// # Errors
+    /// Returns an error if the operation fails.
+    ///
+    /// # Authorization
+    /// Requires appropriate authorization.
     pub fn end_game(env: Env, session_id: u32, player1_won: bool) {
         GameEnded {
             session_id,

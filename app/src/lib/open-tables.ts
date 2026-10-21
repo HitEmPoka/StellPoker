@@ -12,6 +12,7 @@
 
 export type PlayMode = "single" | "headsup" | "multi";
 
+/** Open Table shape. */
 export interface OpenTable {
   tableId: number;
   /** Mode the table was opened in, so switching back restores the same view. */
@@ -31,6 +32,11 @@ function storageKey(address: string): string {
   return `${STORAGE_PREFIX}${address}`;
 }
 
+/** Loads Open Tables.
+ * @param address - address.
+ * @returns OpenTable[].
+ * @remarks Reads/writes browser storage.
+ */
 export function loadOpenTables(address: string): OpenTable[] {
   if (typeof window === "undefined" || !address) return [];
   try {

@@ -5,6 +5,8 @@ use crate::types::*;
 
 /// Maximum allowed rake, in basis points (5%). Enforced at table creation.
 pub const MAX_RAKE_BPS: u32 = 500;
+pub const DEFAULT_VARIANCE_THRESHOLD_BPS: u32 = 2_500;
+pub const DEFAULT_VARIANCE_JACKPOT_SHARE_BPS: u32 = 1_000;
 
 /// Default minimum hand category for bad-beat qualification (7 = FourOfAKind).
 #[allow(dead_code)]
@@ -22,6 +24,17 @@ pub fn min_bad_beat_qualifying_score(category: u32, rank: u32) -> u32 {
     (category << 28) | (rank << 4)
 }
 
+/// `amount * bps / 10_000`, rounded towards zero, without the intermediate
+/// `amount * bps` product that overflows `i128` for pots above `i128::MAX / bps`.
+///
+/// Splitting `amount = q * 10_000 + r` gives `q * bps + r * bps / 10_000`, which
+/// is exactly the naive result. Both terms are bounded by `amount` for any
+/// `bps <= 10_000`, so nothing can overflow.
+pub(crate) fn mul_bps(amount: i128, bps: u32) -> i128 {
+    let bps = bps as i128;
+    (amount / 10_000) * bps + (amount % 10_000) * bps / 10_000
+}
+
 /// Split `total_rake` into the house share and the jackpot share according to
 /// `jackpot_share_bps` (basis points of the rake).  When jackpot is disabled
 /// (`jackpot_share_bps == 0`), the entire rake goes to the house.
@@ -29,9 +42,29 @@ pub fn split_jackpot_rake(total_rake: i128, jackpot_share_bps: u32) -> (i128, i1
     if jackpot_share_bps == 0 {
         return (total_rake, 0);
     }
-    let jackpot = (total_rake * jackpot_share_bps as i128) / 10_000;
+    let jackpot = mul_bps(total_rake, jackpot_share_bps);
     let house = total_rake - jackpot;
     (house, jackpot)
+}
+
+/// Calculate distribution variance in basis points. A perfectly even winner
+/// distribution is zero; a single seat winning every hand approaches 10,000.
+pub fn outcome_variance_bps(stats: &VarianceStats, player_count: u32) -> u32 {
+    if stats.hands == 0 || player_count < 2 {
+        return 0;
+    }
+
+    let hands = stats.hands as i128;
+    let players = player_count as i128;
+    let mut squared_deviation = 0i128;
+    for seat in 0..player_count {
+        let count = stats.winner_counts.get(seat).unwrap_or(0) as i128;
+        let deviation = count * players - hands;
+        squared_deviation += deviation * deviation;
+    }
+
+    let denominator = hands * hands * players;
+    ((squared_deviation * 10_000) / denominator) as u32
 }
 
 /// Deduct rake from each pot before distribution. Rake is computed per pot as
@@ -51,7 +84,7 @@ pub fn apply_rake(
 
     for i in 0..pots.len() {
         let pot = pots.get(i).ok_or(PokerTableError::InvalidPlayerIndex)?;
-        let rake = (pot.amount * rake_bps as i128) / 10_000;
+        let rake = mul_bps(pot.amount, rake_bps);
         total_rake += rake;
         net_pots.push_back(SidePot {
             amount: pot.amount - rake,
@@ -511,6 +544,7 @@ mod pot_test {
                 token: Address::generate(env),
                 min_buy_in: 0,
                 max_buy_in: i128::MAX,
+                betting_structure: crate::types::BettingStructure::NoLimit,
                 blinds_schedule: BlindsSchedule::fixed(env, 0, 0),
                 min_players: 2,
                 max_players: 9,
@@ -523,6 +557,10 @@ mod pot_test {
                 jackpot_rake_share_bps: 0,
                 min_bad_beat_category: 7,
                 min_bad_beat_rank: 12,
+                street_time_limit: OptionalStreetTimeLimit::None,
+                treasury: None,
+                dead_chip_timeout_ledgers: 0,
+                reclaim_period_ledgers: 0,
             },
             phase: GamePhase::Showdown,
             players,
@@ -541,11 +579,13 @@ mod pot_test {
             rake_balance: 0,
             action_deadline: 0,
             hand_actions: Vec::new(env),
-            rit_state: None,
+            rit_state: OptionalRitState::None,
             jackpot_balance: 0,
             last_raise_size: 0,
             current_blind_level: 0,
             level_started_at: 0,
+            break_ends_at: 0,
+            settlement_entered_ledger: 0,
         }
     }
 

@@ -1,0 +1,29 @@
+# Per-PR preview override (#683).
+#
+# Used only by scripts/pr-preview.sh (via `make pr-preview PR=<n>`).
+# Isolates one preview stack per PR:
+#   - internal services (soroban, mpc nodes) stop publishing host ports —
+#     they talk over the compose network, so concurrent PRs cannot collide;
+#   - the two reviewer-facing endpoints (coordinator API, Soroban RPC) are
+#     republished on PR-derived ports (18080+ and 19000+).
+#
+# `!override` replaces the base file's port list instead of appending to it
+# (requires Docker Compose v2.24+).
+
+services:
+  soroban:
+    ports: !override
+      - "${PREVIEW_SOROBAN_PORT:-19000}:8000"
+
+  coordinator:
+    ports: !override
+      - "${PREVIEW_PORT:-18080}:8080"
+
+  mpc-node-0:
+    ports: !override []
+
+  mpc-node-1:
+    ports: !override []
+
+  mpc-node-2:
+    ports: !override []

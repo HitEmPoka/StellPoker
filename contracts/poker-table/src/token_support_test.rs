@@ -20,6 +20,7 @@ mod token_support_test {
             token: token.clone(),
             min_buy_in: 100,
             max_buy_in: 1000,
+            betting_structure: crate::types::BettingStructure::NoLimit,
             small_blind: 5,
             big_blind: 10,
             min_players: 2,

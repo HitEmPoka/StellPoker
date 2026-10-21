@@ -44,6 +44,32 @@ groups:
           description: "MPC node {{ $labels.instance }} memory usage is above 80% (current value: {{ $value | humanizePercentage }})."
           runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#high-memory-usage"
 
+      - alert: CoordinatorMemoryWatermark
+        expr: |
+          coordinator_process_memory_bytes
+          >= coordinator_memory_watermark_bytes
+          and coordinator_memory_watermark_bytes > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: coordinator
+        annotations:
+          summary: "Coordinator is at the MPC session memory watermark"
+          description: "New MPC sessions are being refused because coordinator memory is {{ $value | humanize1024 }} or above the configured watermark."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#memory-watermark"
+
+      - alert: CoordinatorSessionRefusals
+        expr: |
+          increase(coordinator_mpc_session_refusals_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: coordinator
+        annotations:
+          summary: "Coordinator refused new MPC sessions"
+          description: "The coordinator refused {{ $value }} new MPC session(s) in the last five minutes at the memory watermark."
+          runbook_url: "https://github.com/HitEmPoka/StellPoker/wiki/Runbooks#memory-watermark"
+
       - alert: ClockSkewDetected
         expr: |
           mpc_node_clock_skew_seconds{job="mpc-nodes"} > 1

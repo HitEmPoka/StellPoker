@@ -12,6 +12,11 @@ function storageKey(address: string): string {
   return `${STORAGE_PREFIX}${address}`;
 }
 
+/** Loads Alias.
+ * @param address - address.
+ * @returns string | null.
+ * @remarks Reads/writes browser storage.
+ */
 export function getAlias(address: string): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -21,6 +26,11 @@ export function getAlias(address: string): string | null {
   }
 }
 
+/** Persists Alias.
+ * @param address - address.
+ * @param alias - alias.
+ * @remarks Reads/writes browser storage.
+ */
 export function setAlias(address: string, alias: string): void {
   if (typeof window === "undefined") return;
   const trimmed = alias.trim().slice(0, MAX_ALIAS_LENGTH);

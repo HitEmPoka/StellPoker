@@ -13,16 +13,20 @@
 //! See `docs/API_VERSIONING.md` for the full versioning scheme, deprecation
 //! policy, and the coordinator/contracts/circuits compatibility matrix.
 
-use axum::{
-    body::Body,
-    extract::Request,
-    http::HeaderValue,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::HeaderValue, middleware::Next, response::{Json, Response}};
+use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const CURRENT_API_VERSION: &str = "v1";
 const VERSION_PREFIX: &str = "/api/v1";
+static LEGACY_REQUESTS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Serialize)]
+pub struct DeprecationReport {
+    pub legacy_requests: u64,
+    pub successor_version: &'static str,
+    pub sunset: Option<String>,
+}
 
 /// Rewrites `/api/v1/<rest>` to `/api/<rest>` before routing, and tags every
 /// `/api/...` response with `X-API-Version`. Unversioned `/api/...` requests
@@ -56,14 +60,30 @@ pub async fn rewrite_and_tag_version(mut req: Request<Body>, next: Next) -> Resp
             HeaderValue::from_static(CURRENT_API_VERSION),
         );
         if is_deprecated_unversioned {
+            LEGACY_REQUESTS.fetch_add(1, Ordering::Relaxed);
             headers.insert("Deprecation", HeaderValue::from_static("true"));
             headers.insert(
                 "Link",
                 HeaderValue::from_static("</api/v1>; rel=\"successor-version\""),
             );
+            if let Ok(sunset) = std::env::var("API_V1_SUNSET") {
+                if let Ok(value) = HeaderValue::try_from(&sunset) {
+                    headers.insert("Sunset", value);
+                }
+            }
         }
     }
     response
+}
+
+/// Returns legacy API usage and the configured HTTP-date sunset schedule.
+/// Operators can scrape this endpoint before removing unversioned routes.
+pub async fn deprecation_report() -> Json<DeprecationReport> {
+    Json(DeprecationReport {
+        legacy_requests: LEGACY_REQUESTS.load(Ordering::Relaxed),
+        successor_version: CURRENT_API_VERSION,
+        sunset: std::env::var("API_V1_SUNSET").ok(),
+    })
 }
 
 #[cfg(test)]
@@ -120,5 +140,17 @@ mod tests {
         let res = test_app().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::OK);
         assert!(res.headers().get("X-API-Version").is_none());
+    }
+
+    #[tokio::test]
+    async fn legacy_paths_include_configured_sunset() {
+        std::env::set_var("API_V1_SUNSET", "Wed, 31 Dec 2026 23:59:59 GMT");
+        let req = Request::builder()
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
+        let res = test_app().oneshot(req).await.unwrap();
+        assert_eq!(res.headers().get("Sunset").unwrap(), "Wed, 31 Dec 2026 23:59:59 GMT");
+        std::env::remove_var("API_V1_SUNSET");
     }
 }

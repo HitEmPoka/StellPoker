@@ -1,0 +1,70 @@
+name: Storage Layout Snapshot
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "contracts/**/src/**"
+      - "contracts/**/storage-layout-snapshot.json"
+      - "scripts/check_storage_layout.py"
+      - ".github/workflows/storage-layout.yml"
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**/src/**"
+      - "contracts/**/storage-layout-snapshot.json"
+      - "scripts/check_storage_layout.py"
+
+jobs:
+  storage-layout:
+    name: Storage layout snapshot (issue #566)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check storage layout vs snapshot
+        id: check
+        run: |
+          python3 scripts/check_storage_layout.py --report storage-layout-report.md
+          cat storage-layout-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run storage layout tests
+        run: cargo test -p poker-table storage_layout -- --nocapture
+
+      - name: Upload layout report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-layout-report
+          path: storage-layout-report.md
+          retention-days: 90
+
+      - name: Comment report on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'storage-layout-report.md';
+            if (!fs.existsSync(path)) return;
+            const body = fs.readFileSync(path, 'utf8');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body
+            });

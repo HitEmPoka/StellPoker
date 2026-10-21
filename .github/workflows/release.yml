@@ -1,0 +1,277 @@
+name: Automated Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  detect-version:
+    name: Detect Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      needs_release: ${{ steps.version.outputs.needs_release }}
+      changelog: ${{ steps.version.outputs.changelog }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version from conventional commits
+        id: version
+        run: |
+          # Get last tag or use v0.0.0
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Last tag: $LAST_TAG"
+
+          # Count commit types since last tag
+          BREAKING=$(git log ${LAST_TAG}..HEAD --oneline --grep="^[a-z]*!:" | wc -l)
+          FEATURES=$(git log ${LAST_TAG}..HEAD --oneline --grep="^feat" | wc -l)
+          FIXES=$(git log ${LAST_TAG}..HEAD --oneline --grep="^fix" | wc -l)
+
+          if [ "$BREAKING" -gt 0 ]; then
+            VERSION_BUMP="major"
+          elif [ "$FEATURES" -gt 0 ]; then
+            VERSION_BUMP="minor"
+          elif [ "$FIXES" -gt 0 ]; then
+            VERSION_BUMP="patch"
+          else
+            VERSION_BUMP="none"
+          fi
+
+          if [ "$VERSION_BUMP" != "none" ]; then
+            echo "needs_release=true" >> $GITHUB_OUTPUT
+            echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
+          else
+            echo "needs_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        if: steps.version.outputs.needs_release == 'true'
+        run: |
+          {
+            echo "changelog<<EOF"
+            git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" | \
+              awk '
+                /^- feat/ { print "#### Features\n" $0; in_section=1 }
+                /^- fix/ && in_section { print "#### Bug Fixes\n" $0 }
+                /^- (feat|fix)/ { print $0 }
+                !/^- (feat|fix)/ { print $0 }
+              '
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+  build-artifacts:
+    name: Build and Create SBOM
+    runs-on: ubuntu-latest
+    needs: detect-version
+    if: needs.detect-version.outputs.needs_release == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            app/node_modules
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock', '**/package-lock.json') }}
+
+      - name: Build Rust binaries
+        run: |
+          cargo build --release --locked
+          mkdir -p artifacts
+          cp target/release/stellpoker artifacts/ 2>/dev/null || true
+          ls -la artifacts/
+
+      - name: Build Next.js app
+        run: |
+          cd app
+          npm ci
+          npm run build
+          tar czf ../artifacts/app-build.tar.gz .next public package.json
+          cd ..
+
+      - name: Install syft for SBOM generation
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM
+        run: |
+          syft packages . \
+            --output spdx-json \
+            --file artifacts/sbom.spdx.json \
+            --exclude "vendor,target,.git,node_modules"
+
+          syft packages . \
+            --output cyclonedx-json \
+            --file artifacts/sbom-cyclonedx.json \
+            --exclude "vendor,target,.git,node_modules"
+
+      - name: Validate SBOM
+        run: |
+          echo "SBOM generated with $(jq '.components | length' artifacts/sbom.spdx.json) components"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [detect-version, build-artifacts]
+    if: needs.detect-version.outputs.needs_release == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Generate next version
+        id: semver
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          MAJOR=$(echo $LAST_TAG | cut -d. -f1 | sed 's/v//')
+          MINOR=$(echo $LAST_TAG | cut -d. -f2)
+          PATCH=$(echo $LAST_TAG | cut -d. -f3)
+
+          BREAKING=$(git log ${LAST_TAG}..HEAD --oneline --grep="^[a-z]*!:" | wc -l)
+          FEATURES=$(git log ${LAST_TAG}..HEAD --oneline --grep="^feat" | wc -l)
+          FIXES=$(git log ${LAST_TAG}..HEAD --oneline --grep="^fix" | wc -l)
+
+          if [ "$BREAKING" -gt 0 ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$FEATURES" -gt 0 ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [ "$FIXES" -gt 0 ]; then
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Create Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a ${{ steps.semver.outputs.version }} -m "Release ${{ steps.semver.outputs.version }}"
+          git push origin ${{ steps.semver.outputs.version }}
+
+      - name: Update CHANGELOG.md
+        run: |
+          NEW_VERSION=${{ steps.semver.outputs.version }}
+          RELEASE_DATE=$(date +%Y-%m-%d)
+
+          # Generate changelog entry
+          {
+            echo "## [$NEW_VERSION] - $RELEASE_DATE"
+            echo ""
+            git log $(git describe --tags --abbrev=0 2>/dev/null)..HEAD --pretty=format:"- %s (%h)" | \
+              sort | uniq
+            echo ""
+            tail -n +2 CHANGELOG.md
+          } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: update CHANGELOG for $NEW_VERSION"
+          git push
+
+      - name: Create release body
+        id: release_body
+        run: |
+          {
+            echo "Release automated by conventional commits"
+            echo ""
+            echo "### Artifacts"
+            echo "- SBOM (SPDX): \`sbom.spdx.json\`"
+            echo "- SBOM (CycloneDX): \`sbom-cyclonedx.json\`"
+            echo ""
+            echo "### Changes"
+            git log $(git describe --tags --abbrev=0 --skip=1 2>/dev/null)..HEAD --pretty=format:"- %s (%h)" | head -20
+          } > /tmp/release_body.md
+          cat /tmp/release_body.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.semver.outputs.version }}
+          body_path: /tmp/release_body.md
+          files: |
+            artifacts/sbom.spdx.json
+            artifacts/sbom-cyclonedx.json
+            artifacts/stellpoker
+            artifacts/app-build.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-artifacts:
+    name: Publish Docker and Artifacts
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            stellpoker/coordinator:${{ github.ref_name }}
+            stellpoker/coordinator:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish to Docker Hub
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "Docker image published: stellpoker/coordinator:${{ github.ref_name }}"

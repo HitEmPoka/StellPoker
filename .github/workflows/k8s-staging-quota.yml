@@ -1,0 +1,43 @@
+name: K8s Staging Quota
+
+# Keep the staging ResourceQuota / LimitRange in step with the Helm charts
+# (Issue #674).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/k8s/**'
+      - 'infrastructure/helm/**/values.yaml'
+      - 'scripts/check_k8s_quota.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infrastructure/k8s/**'
+      - 'infrastructure/helm/**/values.yaml'
+      - 'scripts/check_k8s_quota.py'
+
+permissions:
+  contents: read
+
+jobs:
+  quota:
+    name: Quota covers chart worst case
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Check quota and LimitRange against chart values
+        run: python3 scripts/check_k8s_quota.py
+
+      - name: Validate manifests against the Kubernetes schema
+        run: |
+          docker run --rm -v "$PWD/infrastructure/k8s/staging:/m:ro" \
+            ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary \
+            /m/namespace.yaml /m/resourcequota.yaml /m/limitrange.yaml

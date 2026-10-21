@@ -1,0 +1,15 @@
+[package]
+name = "deck_complete"
+type = "bin"
+authors = ["Stellar Poker"]
+compiler_version = ">=0.36.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
+[package.metadata.circuit]
+description = "Verify a shuffled deck contains exactly 52 unique, valid cards with no duplicates. Each card is verified to be within valid rank/suit ranges and all cards are distinct."
+constraint_count = 8000
+proof_size_bytes = 5000
+public_inputs_bytes = 32
+poseidon2_permutations = 0

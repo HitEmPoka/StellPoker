@@ -1,7 +1,13 @@
 pub mod cards;
 pub mod commitments;
+pub mod compression;
 pub mod debug;
 pub mod deck;
+pub mod game;
 pub mod merkle;
+pub mod packing;
 pub mod pot;
+pub mod rank_table;
 pub mod shuffle;
+pub mod test_vectors;
+pub mod vrf;

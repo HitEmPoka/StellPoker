@@ -1,0 +1,73 @@
+name: Showdown Winner Consistency
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # Nightly at 04:00 UTC (issue #565)
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Random deals to play"
+        required: false
+        default: "250000"
+  pull_request:
+    branches: [main]
+    paths:
+      - "stellar-zk-cards/src/**"
+      - "circuits/lib/src/cards.nr"
+      - "circuits/showdown_valid*/src/**"
+      - ".github/workflows/showdown-winner-consistency.yml"
+
+jobs:
+  winner-consistency:
+    name: circuit winner == contract winner (random deals)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Nightly and manual runs play far more deals than a pull request; the
+      # acceptance bar for the nightly job is at least 10,000.
+      SHOWDOWN_CONSISTENCY_ITERATIONS: ${{ github.event_name == 'pull_request' && '10000' || inputs.iterations || '250000' }}
+      # A new seed every run widens coverage over time. It is printed in the
+      # log line and any failure message, so a failing deal reproduces exactly.
+      SHOWDOWN_CONSISTENCY_SEED: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run showdown winner consistency suite
+        run: |
+          set -o pipefail
+          cargo test -p stellar-zk-cards --release showdown_winner_consistency -- --nocapture \
+            | tee winner-consistency.log
+
+      - name: Publish summary
+        if: always()
+        run: |
+          {
+            echo "## Showdown winner consistency (issue #565)"
+            echo "- **Iterations**: ${SHOWDOWN_CONSISTENCY_ITERATIONS}"
+            echo "- **Seed**: ${SHOWDOWN_CONSISTENCY_SEED}"
+            echo "- **Oracle**: circuit \`winner_index\` / \`tie_mask\` vs the contract evaluator"
+            echo '```'
+            grep -E '^\[showdown-consistency\]|test result|panicked|seed=' winner-consistency.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winner-consistency-log
+          path: winner-consistency.log
+          retention-days: 30

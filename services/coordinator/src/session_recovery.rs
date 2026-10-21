@@ -72,7 +72,9 @@ pub fn recover_from_node_failure(
         .collect();
 
     if remaining.len() >= threshold {
-        return RecoveryOutcome::ContinueWithRemaining { endpoints: remaining };
+        return RecoveryOutcome::ContinueWithRemaining {
+            endpoints: remaining,
+        };
     }
 
     match available_replacements
@@ -101,6 +103,29 @@ pub fn checkpoint_session_state(session: &CachedSession) -> Result<(), String> {
     guard
         .save_session(session)
         .map_err(|e| format!("failed to checkpoint session for recovery: {}", e))
+}
+
+/// Load checkpoints left by an interrupted coordinator. A checkpoint is only
+/// considered resumable when it has a non-empty session id and phase; malformed
+/// rows are returned as safe aborts instead of being replayed blindly.
+pub fn load_after_crash() -> Result<(Vec<CachedSession>, Vec<String>), String> {
+    let cache = recovery_cache();
+    let guard = cache
+        .lock()
+        .map_err(|_| "session recovery cache lock poisoned".to_string())?;
+    let sessions = guard
+        .load_all_sessions()
+        .map_err(|e| format!("failed to load recovery checkpoints: {e}"))?;
+    let mut resumable = Vec::new();
+    let mut abort = Vec::new();
+    for session in sessions {
+        if session.session_id.trim().is_empty() || session.phase.trim().is_empty() {
+            abort.push(session.session_id);
+        } else {
+            resumable.push(session);
+        }
+    }
+    Ok((resumable, abort))
 }
 
 #[cfg(test)]

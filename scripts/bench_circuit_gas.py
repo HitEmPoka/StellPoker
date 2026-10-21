@@ -138,7 +138,7 @@ mod bench_{circuit.replace("-", "_")} {{
             .join("vk");
         let vk_bytes = std::fs::read(vk_path).expect("VK file not found");
         let vk = Bytes::from_slice(&env, &vk_bytes);
-        client.set_verification_key(&admin, &CircuitType::{CIRCUIT_TYPES[CIRCUITS.index(circuit)]}, &vk);
+        client.set_verification_key(&admin, &CircuitType::{CIRCUIT_TYPES[CIRCUITS.index(circuit)]}, &vk, &1);
         
         // Load proof and public inputs
         let proof_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

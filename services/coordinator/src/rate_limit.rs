@@ -194,10 +194,8 @@ pub async fn ip_rate_limit_middleware(
             .expect("static response is valid");
 
         // Retry-After: the full window (60 s) is safe; clients should back off.
-        resp.headers_mut().insert(
-            "Retry-After",
-            HeaderValue::from_static("60"),
-        );
+        resp.headers_mut()
+            .insert("Retry-After", HeaderValue::from_static("60"));
         resp.headers_mut().insert(
             axum::http::header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
@@ -408,7 +406,10 @@ mod tests {
         }
 
         let s = store.read().await;
-        assert!(!s.contains_key("stale_ip"), "stale bucket should be evicted");
+        assert!(
+            !s.contains_key("stale_ip"),
+            "stale bucket should be evicted"
+        );
         assert!(s.contains_key("live_ip"), "live bucket should be kept");
     }
 

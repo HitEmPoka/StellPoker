@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const DECK_SIZE: usize = 52;
 const MAX_PLAYERS: usize = 6;
@@ -26,7 +27,7 @@ pub struct PrivateTableState {
     pending_share_sets: HashMap<String, HashMap<u32, String>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 struct PartyContribution {
     permutation: Vec<u32>,
     salts: Vec<String>,
@@ -71,7 +72,7 @@ pub async fn prepare_deal(
         .as_ref()
         .ok_or("missing local party contribution")?;
 
-    let input_toml = build_deal_partial_toml(node_id, contribution, players.len() as u32);
+    let input_toml = Zeroizing::new(build_deal_partial_toml(node_id, contribution, players.len() as u32));
     let share_data_by_party = split_partial_input(circuit_dir, "deal_valid", &input_toml).await?;
 
     let share_set_id = new_share_set_id(table_id);
@@ -115,13 +116,13 @@ pub async fn prepare_reveal(
         .as_ref()
         .ok_or_else(|| format!("table {} has no active deal contribution", table_id))?;
 
-    let input_toml = build_reveal_partial_toml(
+    let input_toml = Zeroizing::new(build_reveal_partial_toml(
         node_id,
         contribution,
         num_revealed,
         previously_used_indices,
         deck_root,
-    )?;
+    )?);
     let share_data_by_party =
         split_partial_input(circuit_dir, "reveal_board_valid", &input_toml).await?;
 
@@ -175,14 +176,14 @@ pub async fn prepare_showdown(
         .as_ref()
         .ok_or_else(|| format!("table {} has no active deal contribution", table_id))?;
 
-    let input_toml = build_showdown_partial_toml(
+    let input_toml = Zeroizing::new(build_showdown_partial_toml(
         node_id,
         contribution,
         board_indices,
         num_active_players,
         hand_commitments,
         deck_root,
-    )?;
+    )?);
     let share_data_by_party =
         split_partial_input(circuit_dir, "showdown_valid", &input_toml).await?;
 
@@ -282,6 +283,8 @@ pub async fn dispatch_share_payloads(
     let total_parties = u32::try_from(peer_http_endpoints.len())
         .map_err(|_| "too many peer endpoints".to_string())?;
     let client = crate::pool::peer_client();
+    // Forward the caller's trace so peer `/shares` handlers join it (Issue #672).
+    let trace = crate::trace_context::current();
 
     let mut handles = Vec::with_capacity(peer_http_endpoints.len());
     for (party_id_usize, endpoint) in peer_http_endpoints.iter().enumerate() {
@@ -306,14 +309,16 @@ pub async fn dispatch_share_payloads(
         let url = format!("{}/session/{}/shares", endpoint, proof_session_id);
         let circuit_name = circuit_name.to_string();
         let client = client.clone();
+        let nonce = rand::random::<u64>();
+        let trace = trace.clone();
         let handle = tokio::spawn(async move {
-            let response = client
-                .post(&url)
+            let response = crate::trace_context::inject(client.post(&url), trace.as_ref())
                 .json(&serde_json::json!({
                     "circuit_name": circuit_name,
                     "share_data": share_data,
                     "source_party_id": source_party_id,
                     "total_parties": total_parties,
+                    "nonce": nonce,
                 }))
                 .send()
                 .await
@@ -662,10 +667,7 @@ pub fn spawn_share_refresh_task(
             }
         }
     });
-    tracing::info!(
-        "Share refresh task started (interval={}s)",
-        interval_secs
-    );
+    tracing::info!("Share refresh task started (interval={}s)", interval_secs);
 }
 
 /// Refresh shares for all active tables by generating new additive masks
@@ -699,6 +701,9 @@ async fn refresh_all_shares(
     for table_id in &active_table_ids {
         let refreshed = generate_refresh_mask(node_id);
         let share_set_id = new_share_set_id(*table_id);
+        // Background rounds have no caller; give each table's round its own
+        // trace so all peers' refresh logs correlate (Issue #672).
+        let trace = crate::trace_context::TraceContext::new_root();
 
         {
             let mut guard = tables.write().await;
@@ -706,7 +711,11 @@ async fn refresh_all_shares(
                 let mut mask_data: HashMap<u32, String> = HashMap::new();
                 let total = peer_http_endpoints.len() as u32;
                 for party in 0..total {
-                    let mask_bytes = refreshed.mask_shares.get(&party).cloned().unwrap_or_default();
+                    let mask_bytes = refreshed
+                        .mask_shares
+                        .get(&party)
+                        .cloned()
+                        .unwrap_or_default();
                     use base64::Engine;
                     mask_data.insert(
                         party,
@@ -727,9 +736,9 @@ async fn refresh_all_shares(
                 let client = client.clone();
                 let share_set_id = share_set_id.clone();
                 let total = peer_http_endpoints.len() as u32;
+                let trace = trace.clone();
                 tokio::spawn(async move {
-                    let _ = client
-                        .post(&url)
+                    let _ = crate::trace_context::inject(client.post(&url), Some(&trace))
                         .json(&serde_json::json!({
                             "circuit_name": "refresh",
                             "share_data": "",

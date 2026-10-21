@@ -1,10 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Card } from "./Card";
 import { stellarExpertUrl } from "@/lib/explorer";
 import { replayUrl } from "@/lib/replay";
+import { HandShareButton } from "./HandShareButton";
 import type { HandHistoryEntry, Street } from "@/lib/hand-history";
+import {
+  exportFilename,
+  exportHandHistoryCsv,
+  exportHandHistoryJson,
+  type ExportFormat,
+} from "@/lib/hand-history-export";
 
 interface HandHistoryPanelProps {
   open: boolean;
@@ -25,8 +33,48 @@ const STREET_LABEL: Record<Street, string> = {
   river: "RIVER",
 };
 
+/** Saves the hands as a JSON or CSV file (#158). */
+function downloadHandHistory(entries: HandHistoryEntry[], format: ExportFormat) {
+  const content =
+    format === "json" ? exportHandHistoryJson(entries) : exportHandHistoryCsv(entries);
+  const blob = new Blob([content], {
+    type: format === "json" ? "application/json" : "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = exportFilename(entries[0].tableId, format);
+  link.click();
+  // Revoke on the next tick so the browser has started the download first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * Rows rendered per page. Long sessions can hold 10k+ hands, so the list grows
+ * in pages and offscreen rows skip layout via `content-visibility` (#613).
+ */
+export const HISTORY_PAGE_SIZE = 50;
+
+const EXPORT_BUTTON_STYLE: React.CSSProperties = {
+  fontFamily: "'Press Start 2P', monospace",
+  fontSize: "7px",
+  background: "rgba(196,125,46,0.15)",
+  border: "1px solid #c47d2e",
+  color: "#ffc078",
+  cursor: "pointer",
+  padding: "2px 6px",
+  lineHeight: 1.4,
+};
+
+/** Renders Hand History Panel.
+ * @param props(object) - props(object).
+ */
 export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHistoryPanelProps) {
+  const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE_SIZE);
   if (!open) return null;
+
+  const visibleEntries = entries.slice(0, visibleCount);
+  const remaining = entries.length - visibleEntries.length;
 
   return (
     <div
@@ -54,6 +102,7 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
           </span>
           <button
             onClick={onClose}
+            aria-label="Close hand history"
             className="text-[11px]"
             style={{ background: "none", border: "none", color: "#e74c3c", cursor: "pointer" }}
           >
@@ -67,12 +116,41 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
           </div>
         )}
 
+        {entries.length > 0 && (
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <span className="text-[7px]" style={{ color: "#7f8c8d" }}>
+              OPPONENTS&apos; HOLE CARDS ARE MASKED
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => downloadHandHistory(entries, "json")}
+                title="Export hand history as JSON"
+                style={EXPORT_BUTTON_STYLE}
+              >
+                ⬇ JSON
+              </button>
+              <button
+                onClick={() => downloadHandHistory(entries, "csv")}
+                title="Export hand history as CSV"
+                style={EXPORT_BUTTON_STYLE}
+              >
+                ⬇ CSV
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col gap-3">
-          {entries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <div
               key={`${entry.tableId}-${entry.handNumber}-${entry.timestamp}`}
               className="pixel-border-thin"
-              style={{ padding: "8px", background: "rgba(255,255,255,0.03)" }}
+              style={{
+                padding: "8px",
+                background: "rgba(255,255,255,0.03)",
+                contentVisibility: "auto",
+                containIntrinsicSize: "auto 180px",
+              }}
             >
               {/* Header row: hand number + time + replay button */}
               <div className="flex items-center justify-between">
@@ -113,6 +191,15 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
                       ▶ REPLAY
                     </button>
                   )}
+                  <HandShareButton
+                    entry={{
+                      tableId: entry.tableId,
+                      handNumber: entry.handNumber,
+                      finalPot: entry.finalPot,
+                      handRankName: entry.handRankName,
+                      txHash: entry.txHash,
+                    }}
+                  />
                 </div>
               </div>
 
@@ -179,6 +266,16 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
             </div>
           ))}
         </div>
+
+        {remaining > 0 && (
+          <button
+            onClick={() => setVisibleCount((n) => n + HISTORY_PAGE_SIZE)}
+            className="w-full mt-3"
+            style={EXPORT_BUTTON_STYLE}
+          >
+            SHOW {Math.min(remaining, HISTORY_PAGE_SIZE)} MORE ({remaining} LEFT)
+          </button>
+        )}
       </div>
     </div>
   );

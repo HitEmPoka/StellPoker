@@ -1,5 +1,19 @@
 use soroban_sdk::{xdr::ToXdr, Address, BytesN, Env};
 
+/// Bytes32 eq.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn bytes32_eq(left: &BytesN<32>, right: &BytesN<32>) -> bool {
     let left_arr = left.to_array();
     let right_arr = right.to_array();
@@ -10,24 +24,94 @@ pub fn bytes32_eq(left: &BytesN<32>, right: &BytesN<32>) -> bool {
     diff == 0
 }
 
+/// U32 eq.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn u32_eq(left: u32, right: u32) -> bool {
     (left ^ right) == 0
 }
 
+/// U32 ne.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn u32_ne(left: u32, right: u32) -> bool {
     !u32_eq(left, right)
 }
 
+/// I128 eq.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn i128_eq(left: i128, right: i128) -> bool {
     ((left ^ right) as u128) == 0
 }
 
+/// Address eq.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn address_eq(env: &Env, left: &Address, right: &Address) -> bool {
     let left_hash: BytesN<32> = env.crypto().keccak256(&left.to_xdr(env)).into();
     let right_hash: BytesN<32> = env.crypto().keccak256(&right.to_xdr(env)).into();
     bytes32_eq(&left_hash, &right_hash)
 }
 
+/// Address ne.
+///
+/// # Parameters
+/// - `left`: parameter
+/// - `right`: parameter
+///
+/// # Returns
+/// - `bool`
+///
+/// # Errors
+/// Returns an error if the operation fails.
+///
+/// # Authorization
+/// Requires appropriate authorization.
 pub fn address_ne(env: &Env, left: &Address, right: &Address) -> bool {
     !address_eq(env, left, right)
 }

@@ -23,6 +23,7 @@ interface ActionPanelProps {
   setBetAmount: (amount: number) => void;
 }
 
+/** Renders Action Panel */
 export function ActionPanel({
   phase,
   isMyTurn,
@@ -97,7 +98,7 @@ export function ActionPanel({
 
   return (
     <div
-      className="pixel-border-thin flex flex-col items-center gap-3 px-4 py-3"
+      className="action-panel-desktop pixel-border-thin flex flex-col items-center gap-3 px-4 py-3"
       style={{
         background: "rgba(10, 20, 30, 0.7)",
         borderColor: "rgba(140, 170, 200, 0.4)",
@@ -129,8 +130,9 @@ export function ActionPanel({
           SOLO VS AI: using fake chips for local play.
         </span>
       )}
-      {/* Action buttons */}
-      <div className="flex items-center gap-2">
+      {/* Action buttons — hidden on mobile, where the sticky bottom bar owns
+          these decisions instead (#175). */}
+      <div className="action-panel-buttons flex items-center gap-2">
         {/* FOLD */}
         <button
           onClick={() => onAction("fold")}
@@ -210,28 +212,33 @@ export function ActionPanel({
 
       {/* Bet slider + quick buttons */}
       {!disabled && myStack > callAmount && (
-        <div className="flex items-center gap-3 w-full max-w-sm">
+        <div className="bet-slider-row flex items-center gap-3 w-full max-w-sm">
           <input
             type="range"
             min={minBet}
             max={maxBet}
             value={betAmount || minBet}
             onChange={(e) => setBetAmount(Number(e.target.value))}
+            aria-label="Bet amount"
+            aria-valuetext={`${betAmount || minBet} chips`}
             className="flex-1"
             style={{
               accentColor: "#f1c40f",
               height: "4px",
             }}
           />
-          <div className="flex gap-1">
+          <div className="flex gap-1" role="group" aria-label="Bet presets">
             {[
+              { label: "½ POT", value: Math.floor(pot / 2), ariaLabel: "Set bet to half the pot" },
+              { label: "POT", value: pot, ariaLabel: "Set bet to the pot" },
               { label: "50%", value: Math.floor(myStack * 0.5) },
               { label: "75%", value: Math.floor(myStack * 0.75) },
               { label: "MAX", value: myStack },
             ].map((preset) => (
               <button
                 key={preset.label}
-                onClick={() => setBetAmount(Math.max(preset.value, minBet))}
+                aria-label={preset.ariaLabel}
+                onClick={() => setBetAmount(Math.min(Math.max(preset.value, minBet), maxBet))}
                 className="pixel-btn text-[8px]"
                 style={{
                   padding: "4px 8px",
@@ -248,7 +255,7 @@ export function ActionPanel({
 
       {/* Chip tray for drag-and-drop betting */}
       {!disabled && myStack > callAmount && (
-        <div className="w-full max-w-sm">
+        <div className="chip-tray-row w-full max-w-sm">
           <ChipTray
             myStack={myStack}
             betAmount={betAmount}

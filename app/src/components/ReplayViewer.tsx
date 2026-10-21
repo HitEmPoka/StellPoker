@@ -225,6 +225,9 @@ interface ReplayViewerProps {
   hand: ReplayHand;
 }
 
+/** Renders Replay Viewer.
+ * @param props(object) - props(object).
+ */
 export function ReplayViewer({ hand }: ReplayViewerProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [playing, setPlaying] = useState(false);

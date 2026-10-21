@@ -46,13 +46,15 @@ impl BenchmarkSession {
     }
 
     pub fn start_phase(&mut self, phase_name: &str) {
-        self.phase_starts.insert(phase_name.to_string(), Instant::now());
+        self.phase_starts
+            .insert(phase_name.to_string(), Instant::now());
     }
 
     pub fn end_phase(&mut self, phase_name: &str) {
         if let Some(start) = self.phase_starts.remove(phase_name) {
             let duration_ms = start.elapsed().as_millis() as u64;
-            self.phase_durations.insert(phase_name.to_string(), duration_ms);
+            self.phase_durations
+                .insert(phase_name.to_string(), duration_ms);
         }
     }
 
@@ -61,10 +63,7 @@ impl BenchmarkSession {
         let mut phase_timings: Vec<PhaseTiming> = self
             .phase_durations
             .into_iter()
-            .map(|(phase, duration_ms)| PhaseTiming {
-                phase,
-                duration_ms,
-            })
+            .map(|(phase, duration_ms)| PhaseTiming { phase, duration_ms })
             .collect();
 
         phase_timings.sort_by(|a, b| a.phase.cmp(&b.phase));
@@ -98,7 +97,11 @@ pub fn record_benchmark(store: &BenchmarkStore, benchmark: DealBenchmark) {
 pub fn get_benchmarks(store: &BenchmarkStore, table_id: Option<u32>) -> Vec<DealBenchmark> {
     if let Ok(benchmarks) = store.lock() {
         match table_id {
-            Some(id) => benchmarks.iter().filter(|b| b.table_id == id).cloned().collect(),
+            Some(id) => benchmarks
+                .iter()
+                .filter(|b| b.table_id == id)
+                .cloned()
+                .collect(),
             None => benchmarks.clone(),
         }
     } else {
@@ -120,7 +123,10 @@ pub fn get_benchmark_stats(benchmarks: &[DealBenchmark]) -> serde_json::Value {
     }
 
     let mut stats = serde_json::Map::new();
-    stats.insert("total_samples".to_string(), serde_json::json!(benchmarks.len()));
+    stats.insert(
+        "total_samples".to_string(),
+        serde_json::json!(benchmarks.len()),
+    );
 
     for (player_count, durations) in by_player_count {
         let avg = durations.iter().sum::<u64>() / durations.len() as u64;

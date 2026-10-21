@@ -128,3 +128,143 @@ fn main(
 
     (burn_cards, burn_indices)
 }
+
+fn setup_test_deck() -> ([u32; 52], [u32; 52], [u32; 52], [Field; 52], [Field; 52], [Field; 52], Field) {
+    let mut id_perm: [u32; 52] = [0; 52];
+    for i in 0..52 {
+        id_perm[i] = i;
+    }
+    let zero_salts: [Field; 52] = [0; 52];
+
+    let mut leaves: [Field; TREE_LEAVES] = [0; TREE_LEAVES];
+    for i in 0..DECK_SIZE {
+        leaves[i] = commitments::commit_card(i as Field, 0);
+    }
+    let deck_root = merkle::compute_merkle_root(leaves);
+
+    (id_perm, id_perm, id_perm, zero_salts, zero_salts, zero_salts, deck_root)
+}
+
+#[test]
+fn test_burn_card_valid_2p_success() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    // 2 players: hole cards are [0, 1, 2, 3].
+    // Base is 4. Burn offsets: 0, 4, 6, 8 -> burn indices: 4, 8, 10, 12.
+    // Board cards: flop (5, 6, 7), turn (9), river (11).
+    let board_indices: [u32; 5] = [5, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let (burn_cards, burn_indices) = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        2, board_indices, deck_root, street_burn_counts,
+    );
+
+    assert(burn_indices[0] == 4, "preflop burn index should be 4");
+    assert(burn_indices[1] == 8, "flop burn index should be 8");
+    assert(burn_indices[2] == 10, "turn burn index should be 10");
+    assert(burn_indices[3] == 12, "river burn index should be 12");
+
+    assert(burn_cards[0] == 4, "preflop burn card should match index in identity deck");
+    assert(burn_cards[1] == 8, "flop burn card should match index in identity deck");
+    assert(burn_cards[2] == 10, "turn burn card should match index in identity deck");
+    assert(burn_cards[3] == 12, "river burn card should match index in identity deck");
+}
+
+#[test]
+fn test_burn_card_valid_6p_success() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    // 6 players: hole cards are [0..11].
+    // Base is 12. Burn offsets: 0, 4, 6, 8 -> burn indices: 12, 16, 18, 20.
+    // Board cards: flop (13, 14, 15), turn (17), river (19).
+    let board_indices: [u32; 5] = [13, 14, 15, 17, 19];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let (burn_cards, burn_indices) = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        6, board_indices, deck_root, street_burn_counts,
+    );
+
+    assert(burn_indices[0] == 12, "preflop burn index should be 12");
+    assert(burn_indices[1] == 16, "flop burn index should be 16");
+    assert(burn_indices[2] == 18, "turn burn index should be 18");
+    assert(burn_indices[3] == 20, "river burn index should be 20");
+    assert(burn_cards[0] == 12);
+    assert(burn_cards[1] == 16);
+    assert(burn_cards[2] == 18);
+    assert(burn_cards[3] == 20);
+}
+
+#[test(should_fail_with = "must burn exactly one card per street")]
+fn test_burn_card_fails_wrong_street_burn_count() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    let board_indices: [u32; 5] = [5, 6, 7, 9, 11];
+    let invalid_burn_counts: [u32; NUM_BURNS] = [2, 1, 1, 1];
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        2, board_indices, deck_root, invalid_burn_counts,
+    );
+}
+
+#[test(should_fail_with = "deck root mismatch")]
+fn test_burn_card_fails_deck_root_mismatch() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, _) = setup_test_deck();
+    let board_indices: [u32; 5] = [5, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+    let tampered_root: Field = 0x12345678;
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        2, board_indices, tampered_root, street_burn_counts,
+    );
+}
+
+#[test(should_fail_with = "board index duplicates dealt card")]
+fn test_burn_card_fails_board_duplicates_hole_card() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    // index 0 is player 0's hole card, not allowed on board
+    let board_indices: [u32; 5] = [0, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        2, board_indices, deck_root, street_burn_counts,
+    );
+}
+
+#[test(should_fail_with = "burn card duplicates a dealt or board card")]
+fn test_burn_card_fails_board_duplicates_burn_card() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    // index 4 is preflop burn card; using it as a board card causes conflict
+    let board_indices: [u32; 5] = [4, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        2, board_indices, deck_root, street_burn_counts,
+    );
+}
+
+#[test(should_fail_with = "need at least 2 players")]
+fn test_burn_card_fails_too_few_players() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    let board_indices: [u32; 5] = [5, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        1, board_indices, deck_root, street_burn_counts,
+    );
+}
+
+#[test(should_fail_with = "too many players")]
+fn test_burn_card_fails_too_many_players() {
+    let (p0_perm, p1_perm, p2_perm, s0, s1, s2, deck_root) = setup_test_deck();
+    let board_indices: [u32; 5] = [5, 6, 7, 9, 11];
+    let street_burn_counts: [u32; NUM_BURNS] = [1, 1, 1, 1];
+
+    let _ = main(
+        p0_perm, p1_perm, p2_perm, s0, s1, s2,
+        7, board_indices, deck_root, street_burn_counts,
+    );
+}

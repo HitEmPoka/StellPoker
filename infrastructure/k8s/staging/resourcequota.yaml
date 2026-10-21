@@ -1,0 +1,50 @@
+# Namespace-wide ceiling for staging (Issue #674).
+#
+# Sized from the Helm chart values at their HPA maximums plus one surge pod per
+# Deployment during a rolling update (see README.md for the worked numbers).
+# scripts/check_k8s_quota.py recomputes that worst case from the charts in CI
+# and fails if a values.yaml change would no longer fit.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: stellpoker-staging-compute
+  namespace: stellpoker-staging
+  labels:
+    app.kubernetes.io/part-of: stellpoker
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 6Gi
+    limits.cpu: "14"
+    limits.memory: 12Gi
+    pods: "20"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: stellpoker-staging-storage
+  namespace: stellpoker-staging
+  labels:
+    app.kubernetes.io/part-of: stellpoker
+spec:
+  hard:
+    # soroban-rpc-proxy ledger (20Gi) + circuits and CRS volumes for mpc-node.
+    requests.storage: 100Gi
+    persistentvolumeclaims: "6"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: stellpoker-staging-objects
+  namespace: stellpoker-staging
+  labels:
+    app.kubernetes.io/part-of: stellpoker
+spec:
+  hard:
+    services: "10"
+    # Traffic enters through the shared ingress controller; staging should
+    # never provision its own cloud load balancers or expose node ports.
+    services.loadbalancers: "0"
+    services.nodeports: "0"
+    configmaps: "30"
+    secrets: "30"

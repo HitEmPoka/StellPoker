@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 
 const TUTORIAL_STORAGE_KEY = "stellpoker-tutorial-seen";
 
+/** Tutorial Step shape. */
 export type TutorialStep =
   | "welcome"
   | "table-layout"
@@ -13,6 +14,7 @@ export type TutorialStep =
   | "wallet-connection"
   | "done";
 
+/** Tutorial State shape. */
 export interface TutorialState {
   isOpen: boolean;
   currentStep: TutorialStep;
@@ -29,6 +31,9 @@ const STEP_ORDER: TutorialStep[] = [
   "done",
 ];
 
+/** React hook that manages use Tutorial.
+ * @remarks Reads/writes browser storage.
+ */
 export function useTutorial() {
   const [isOpen, setIsOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<TutorialStep>("welcome");

@@ -3,6 +3,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  CHAT_EMOTES,
+  CHAT_MAX_MESSAGE_LENGTH,
+  createChatRateLimiter,
+  isChatEmote,
+  parseIncomingChatFrame,
+  sanitizeChatAlias,
+  sanitizeChatText,
+} from "@/lib/chat-sanitize";
 import { Board } from "./Board";
 import { Card } from "./Card";
 import { PlayerSeat } from "./PlayerSeat";
@@ -21,14 +30,25 @@ import {
 import { useWalletMonitor } from "@/lib/use-wallet-monitor";
 import { GameBoyButton, GameBoyModal } from "./GameBoyModal";
 import { HandHistoryPanel } from "./HandHistoryPanel";
+import { ProofExplorerPanel } from "./ProofExplorerPanel";
+import { TableRulesPopover } from "./TableRulesPopover";
 import { HandReplayer } from "./HandReplayer";
+import { HandTimeline } from "./HandTimeline";
+import { MobileActionBar } from "./MobileActionBar";
 import { TransactionSimulation } from "./TransactionSimulation";
 import { MpcNodeIndicator } from "./MpcNodeIndicator";
+import { SpectatorCount } from "./SpectatorCount";
+import { spectateHref } from "@/lib/spectator";
 import { TableTabs } from "./TableTabs";
 import { ThemeSelector } from "./ThemeSelector";
 import { Skeleton } from "./Skeleton";
 import { TableMiniMap } from "./TableMiniMap";
 import { LanguageSelector } from "./LanguageSelector";
+import {
+  saveTableCache,
+  isCacheStale,
+  formatLastUpdated,
+} from "@/lib/lobby-cache";
 import { useI18n, useT } from "@/lib/i18n/context";
 import { usePokerActions } from "@/lib/use-poker-actions";
 import { getDealerLine } from "@/lib/dealer-lines";
@@ -39,16 +59,41 @@ import {
   loadHandHistory,
   saveHandHistoryEntry,
   buildHandRankName,
+  actionsFromTimeline,
   type HandHistoryEntry,
   type Street,
 } from "@/lib/hand-history";
 import {
+  loadStackTrends,
+  recordStacks,
+  saveStackTrends,
+  type StackTrends,
+} from "@/lib/stack-trend";
+import { readTableStakes, saveSeatPreference } from "@/lib/quick-seat";
+import {
   useTurnNotification,
   requestPermissionOnJoin,
 } from "@/lib/use-notifications";
+import {
+  appendEvent,
+  observeEvent,
+  snapshotAt,
+  loadTimeline,
+  saveTimeline,
+  type TimelineEvent,
+  type TimelineStreet,
+} from "@/lib/hand-timeline";
 import { useTutorial } from "@/lib/use-tutorial";
 import { TutorialOverlay, TutorialHelpButton } from "./TutorialOverlay";
+import { EmoteRadialMenu } from "./EmoteRadialMenu";
 import { playSound } from "@/lib/sound-engine";
+import { useAutoRebuy } from "@/lib/use-auto-rebuy";
+import { AutoRebuySettings } from "./AutoRebuySettings";
+import { TurnTimerSettings } from "./TurnTimerSettings";
+import { TurnCountdownBanner } from "./TurnCountdownBanner";
+import { useTurnTimer } from "@/lib/use-turn-timer";
+import { getSeatPrivacyMode, setSeatPrivacyMode, type SeatPrivacyMode } from "@/lib/seat-privacy";
+import { DEFAULT_SHORTCUTS, loadShortcuts, saveShortcuts, type ShortcutMap } from "@/lib/shortcut-store";
 
 type ActiveRequest = "deal" | "flop" | "turn" | "river" | "showdown" | null;
 type PlayMode = "single" | "headsup" | "multi";
@@ -104,6 +149,9 @@ function mapOnChainPhase(phase: string): GamePhase | null {
   }
 }
 
+/** Renders Table.
+ * @param props(object) - props(object).
+ */
 export function Table({ tableId, initialPlayMode }: TableProps) {
   const router = useRouter();
   const t = useT();
@@ -112,6 +160,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>(initialPlayMode ?? "headsup");
   const [error, setError] = useState<string | null>(null);
+  const [spectatorCount, setSpectatorCount] = useState(0);
   const [walletVerificationError, setWalletVerificationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [joiningTable, setJoiningTable] = useState(false);
@@ -119,27 +168,70 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   const [onChainPhase, setOnChainPhase] = useState<string>("unknown");
   const [winnerAddress, setWinnerAddress] = useState<string | null>(null);
   const [lobby, setLobby] = useState<api.TableLobbyResponse | null>(null);
+  const [isWalletDisconnected, setIsWalletDisconnected] = useState(false);
+  const [tableCachedAt, setTableCachedAt] = useState<number>(0);
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [botLine, setBotLine] = useState<string | null>(null);
   const [gameboyOpen, setGameboyOpen] = useState(false);
+  const [autoRebuyOpen, setAutoRebuyOpen] = useState(false);
+  const [turnTimerOpen, setTurnTimerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [proofPanelOpen, setProofPanelOpen] = useState(false);
   const [loadingSkeletonTest, setLoadingSkeletonTest] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HandHistoryEntry[]>(() =>
     loadHandHistory(tableId)
   );
+  // Hand chosen for step-through replay from the history panel (#62). The
+  // replayer and the panel's `onReplay` callback were both wired up already,
+  // but the state connecting them was missing, which broke the type-check.
+  const [replayEntry, setReplayEntry] = useState<HandHistoryEntry | null>(null);
+  // Each seat's settled stack over recent hands, for the sparklines (#157).
+  const [stackTrends, setStackTrends] = useState<StackTrends>(() =>
+    loadStackTrends(tableId)
+  );
+  // Live hand timeline (#176): every moment of the hand in progress, plus the
+  // moment currently being reviewed (null while pinned to live).
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [, bumpAliasTick] = useState(0);
   const [betAmount, setBetAmount] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState<ShortcutMap>(() => loadShortcuts());
+  const [privacyMode, setPrivacyMode] = useState<SeatPrivacyMode>(() => getSeatPrivacyMode());
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ alias: string; text: string; senderColor: string }>>([]);
+  const [chatNotice, setChatNotice] = useState<string | null>(null);
+  const chatRateLimiterRef = useRef(createChatRateLimiter());
   const [newMessagesCount, setNewMessagesCount] = useState(0);
   const [seatEmotes, setSeatEmotes] = useState<Record<number, string>>({});
+
+  // Seat occupancy (#622): addresses that took a seat since the last update,
+  // so their seat can play its arrival animation. The first render only
+  // records who is already seated, so opening a busy table animates nobody.
+  const seatedAddressesRef = useRef<Set<string> | null>(null);
+  const [justSeatedAddresses, setJustSeatedAddresses] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const current = new Set(game.players.map((p) => p.address));
+    const previous = seatedAddressesRef.current;
+    seatedAddressesRef.current = current;
+    if (!previous) return;
+    const arrived = [...current].filter((address) => !previous.has(address));
+    if (arrived.length === 0) return;
+    setJustSeatedAddresses(new Set(arrived));
+    const timer = window.setTimeout(() => setJustSeatedAddresses(new Set()), 1200);
+    return () => window.clearTimeout(timer);
+  }, [game.players]);
   const wsRef = useRef<WebSocket | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const autoStreetRef = useRef<string>("");
   const inferredModeRef = useRef(false);
+  const seatPreferenceRef = useRef<string | null>(null);
+  useEffect(() => {
+    setShortcuts(loadShortcuts());
+    setPrivacyMode(getSeatPrivacyMode());
+  }, []);
   const streetLogRef = useRef<{ handNumber: number; streets: { street: Street; pot: number; boardCards: number[] }[] }>({
     handNumber: 0,
     streets: [],
@@ -158,8 +250,85 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     : onChainTurnAddress;
   const isMyTurn = !!userAddress && displayedTurnAddress === userAddress;
 
+  // Issue #164: check the player's auto-rebuy preference whenever the table
+  // settles into "waiting" between hands, and submit an on-chain rebuy if
+  // their configured rule triggers.
+  useAutoRebuy({
+    tableId,
+    wallet,
+    phase: game.phase,
+    currentStack: userPlayer?.stack ?? 0,
+  });
+
   // Issue #47: browser notification + sound when it becomes the user's turn.
   useTurnNotification({ isMyTurn, tableName: `Table #${tableId}` });
+
+  // Issue #154: per-turn countdown. The hook computes everything and on
+  // timeout we dispatch the configured auto-action (fold / check-if-possible).
+  const userCallAmount = userPlayer
+    ? Math.max(
+        Math.max(...game.players.map((p) => p.betThisRound), 0) - userPlayer.betThisRound,
+        0
+      )
+    : 0;
+  const turnTimer = useTurnTimer(
+    {
+      tableId,
+      address: userAddress ?? "",
+      turnAddress: displayedTurnAddress,
+      phase: game.phase,
+      handNumber: game.handNumber,
+      callAmount: userCallAmount,
+    },
+    (action) => {
+      if (loading) return;
+      if (action === "check") {
+        const liveCall =
+          userPlayer
+            ? Math.max(
+                Math.max(...game.players.map((p) => p.betThisRound), 0) -
+                  userPlayer.betThisRound,
+                0
+              )
+            : 0;
+        if (liveCall <= 0) {
+          void handleAction("check");
+        } else {
+          void handleAction("fold");
+        }
+      } else {
+        void handleAction("fold");
+      }
+    }
+  );
+
+  // Shared table turn-clock: tracks remaining seconds for whoever is currently
+  // acting. This shows up on opponent seats too, not just the user's.
+  const sharedTimerDuration = turnTimer.durationSeconds;
+  const [sharedTimeLeft, setSharedTimeLeft] = useState(sharedTimerDuration);
+  const sharedTurnKey = `${game.handNumber ?? 0}|${game.phase}|${displayedTurnAddress ?? ""}|${sharedTimerDuration}`;
+  const sharedTurnActive =
+    !!displayedTurnAddress && ["preflop", "flop", "turn", "river"].includes(game.phase);
+  useEffect(() => {
+    if (!sharedTurnActive) {
+      setSharedTimeLeft(sharedTimerDuration);
+      return;
+    }
+    setSharedTimeLeft(sharedTimerDuration);
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      const left = sharedTimerDuration - Math.floor((Date.now() - started) / 1000);
+      if (left <= 0) {
+        setSharedTimeLeft(0);
+        window.clearInterval(id);
+        return;
+      }
+      setSharedTimeLeft(left);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [sharedTurnKey, sharedTurnActive, sharedTimerDuration]);
+  const sharedTimerUrgent =
+    sharedTurnActive && sharedTimerDuration > 0 && sharedTimeLeft / sharedTimerDuration <= 0.2;
 
   // Issue #61: tutorial overlay for new players.
   const tutorial = useTutorial();
@@ -379,7 +548,15 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     // have to wait on the slower interval below. `subscribeGameState`
     // returns null on browsers without WebSocket support, in which case the
     // interval poll is the only refresh mechanism.
-    const gameStateSocket = api.subscribeGameState(tableId, () => {
+    const gameStateSocket = api.subscribeGameState(tableId, (msg) => {
+      // Spectator join/leave frames (Issue #171) only update the indicator.
+      if (api.isSpectatorCountEvent(msg)) {
+        setSpectatorCount(msg.spectator_count);
+        return;
+      }
+      if (typeof msg.spectator_count === "number") {
+        setSpectatorCount(msg.spectator_count);
+      }
       void syncOnChainState();
     });
 
@@ -483,13 +660,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     };
   }, [wallet]);
 
-  // Auto-logout when wallet disconnects (#322).
+  // Auto-logout when wallet disconnects (#322, #618).
+  // Preserves table state for read-only / spectator view with stale indicators.
   useWalletMonitor({
     wallet,
     onDisconnect: () => {
       setWallet(null);
-      setGame(createInitialState(tableId));
-      router.push("/");
+      setIsWalletDisconnected(true);
+      const now = Date.now();
+      setTableCachedAt(now);
+      saveTableCache(tableId, game, now);
     },
   });
 
@@ -540,16 +720,120 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         handRankName: buildHandRankName(userPlayer?.cards, game.boardCards),
         winnerAddress,
         txHash: game.lastTxHash,
+        // Who was dealt in and how the betting went, for the export (#158).
+        heroAddress: userAddress,
+        players: game.players.map(({ address, seat }) => ({ address, seat })),
+        actions: actionsFromTimeline(game.handNumber, timeline),
       };
       saveHandHistoryEntry(entry);
       setHistoryEntries(loadHandHistory(tableId));
       streetLogRef.current = { handNumber: game.handNumber, streets: [] };
     }
-  }, [game.phase, game.handNumber, game.pot, game.boardCards, game.lastTxHash, tableId, userPlayer, winnerAddress]);
+  }, [game.phase, game.handNumber, game.pot, game.boardCards, game.lastTxHash, game.players, tableId, timeline, userAddress, userPlayer, winnerAddress]);
+
+  // Chip stack trend per seat (#157). Stacks are only recorded between hands,
+  // once the pot has been paid out, so each point is where a player's stack
+  // settled after a hand rather than wherever it stood mid-bet.
+  useEffect(() => {
+    if (game.phase !== "waiting" && game.phase !== "settlement") return;
+    setStackTrends((previous) => {
+      const next = recordStacks(previous, game.handNumber, game.players);
+      if (next !== previous) {
+        saveStackTrends(tableId, next);
+      }
+      return next;
+    });
+  }, [game.phase, game.handNumber, game.players, tableId]);
+
+  // Quick seat (#159): remember the table size, stakes and seat the player is
+  // sitting in, so the lobby can seat them somewhere similar next time.
+  useEffect(() => {
+    if (!userAddress || !userPlayer || !lobby || playMode === "single") return;
+    const key = `${userAddress}:${tableId}`;
+    if (seatPreferenceRef.current === key) return;
+    seatPreferenceRef.current = key;
+
+    const { max_players: maxPlayers } = lobby;
+    const seatIndex = userPlayer.seat;
+    api
+      .getParsedTableState(tableId)
+      .then(({ parsed }) => {
+        const stakes = readTableStakes(parsed);
+        if (!stakes) return;
+        saveSeatPreference(userAddress, {
+          maxPlayers,
+          buyIn: stakes.buyIn.toString(),
+          token: stakes.token,
+          seatIndex,
+        });
+      })
+      .catch(() => {
+        // Non-fatal: quick seat keeps whatever it remembered before.
+      });
+  }, [lobby, playMode, tableId, userAddress, userPlayer]);
+
+  // ── Live hand timeline (#176) ──────────────────────────────────────────────
+  // Every state sync is an observation; `observeEvent` decides whether this
+  // one is a moment worth a marker, and `appendEvent` makes recording it
+  // idempotent — which matters because the table re-syncs from a chain
+  // subscription, a WebSocket push, and an interval poll all at once.
+  useEffect(() => {
+    if (game.handNumber === 0) return;
+
+    setTimeline((previous) => {
+      // A new hand starts a fresh timeline, restoring anything a reload
+      // mid-hand left behind.
+      const base =
+        previous.length > 0 && previous[0].id.startsWith(`${game.handNumber}:`)
+          ? previous
+          : loadTimeline(tableId, game.handNumber);
+
+      const observed = observeEvent(
+        {
+          handNumber: game.handNumber,
+          phase: game.phase as TimelineStreet,
+          pot: game.pot,
+          boardCards: game.boardCards,
+          turnAddress: displayedTurnAddress,
+        },
+        base[base.length - 1],
+        Date.now()
+      );
+
+      const next = observed ? appendEvent(base, observed) : base;
+      if (next !== previous) {
+        saveTimeline(tableId, game.handNumber, next);
+      }
+      return next;
+    });
+  }, [
+    game.handNumber,
+    game.phase,
+    game.pot,
+    game.boardCards,
+    displayedTurnAddress,
+    tableId,
+  ]);
+
+  // A new moment while reviewing must not yank the player back to live, but a
+  // new hand should — the old hand's timeline is gone.
+  useEffect(() => {
+    setScrubIndex(null);
+  }, [game.handNumber]);
+
+  const liveIndex = Math.max(0, timeline.length - 1);
+  const timelineIndex = scrubIndex ?? liveIndex;
+  const reviewing = scrubIndex !== null && scrubIndex !== liveIndex;
+  const reviewedMoment = reviewing ? snapshotAt(timeline, timelineIndex) : null;
 
   const currentBet = Math.max(...game.players.map((p) => p.betThisRound), 0);
   const displayCurrentBet = currentBet;
-  const displayPot = game.pot;
+  // While a past moment is selected the felt shows that moment's board and pot
+  // instead of the live ones; every control stays bound to the live state.
+  const displayPot = reviewedMoment ? reviewedMoment.pot : game.pot;
+  const displayBoardCards = reviewedMoment
+    ? reviewedMoment.boardCards
+    : game.boardCards;
   const displayMyBet = userPlayer?.betThisRound || 0;
   const displayMyStack = userPlayer?.stack || 0;
   const canStartHand = !!wallet && isWalletSeated;
@@ -645,17 +929,17 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
       const minBet = Math.max(displayCurrentBet * 2, 1);
 
       switch (e.key.toLowerCase()) {
-        case "f":
+        case shortcuts.fold:
           e.preventDefault();
           handleAction("fold");
           break;
-        case "c":
+        case shortcuts.check:
           if (callAmount === 0) {
             e.preventDefault();
             handleAction("check");
           }
           break;
-        case "b":
+        case shortcuts.bet:
           e.preventDefault();
           if (callAmount > 0) {
             handleAction("call", callAmount);
@@ -663,13 +947,13 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             handleAction("bet", betAmount || minBet);
           }
           break;
-        case "r":
+        case shortcuts.raise:
           if (displayCurrentBet > 0 && displayMyStack > callAmount) {
             e.preventDefault();
             handleAction("raise", betAmount || minBet);
           }
           break;
-        case "a":
+        case shortcuts.allin:
           if (displayMyStack > 0) {
             e.preventDefault();
             handleAction("allin", displayMyStack);
@@ -710,10 +994,12 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     displayMyStack,
     displayPot,
     betAmount,
+    shortcuts,
     handleAction,
   ]);
 
-  const EMOTES = ["😃", "😢", "😠", "😎", "🤔", "🎉"];
+  const [emoteRadialOpen, setEmoteRadialOpen] = useState(false);
+  const EMOTES = CHAT_EMOTES;
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -734,38 +1020,30 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as {
-            seat_index: number;
-            alias: string;
-            text?: string;
-            emote?: string;
-          };
+        // Untrusted input: validated and reduced to plain text (Issue #140).
+        const frame = parseIncomingChatFrame(event.data);
+        if (!frame) return;
 
-          if (data.text) {
-            const colors = ["#ff6b6b", "#4dabf7", "#51cf66", "#fcc419", "#cc5de8", "#20c997"];
-            const senderColor = colors[data.seat_index % colors.length];
-            setChatMessages((prev) => [
-              ...prev,
-              { alias: data.alias, text: data.text || "", senderColor },
-            ]);
-            if (!chatOpen) {
-              setNewMessagesCount((c) => c + 1);
-            }
+        if (frame.text) {
+          const colors = ["#ff6b6b", "#4dabf7", "#51cf66", "#fcc419", "#cc5de8", "#20c997"];
+          const senderColor = colors[frame.seatIndex % colors.length];
+          const text = frame.text;
+          setChatMessages((prev) => [...prev, { alias: frame.alias, text, senderColor }]);
+          if (!chatOpen) {
+            setNewMessagesCount((c) => c + 1);
           }
+        }
 
-          if (data.emote) {
-            setSeatEmotes((prev) => ({ ...prev, [data.seat_index]: data.emote || "" }));
-            setTimeout(() => {
-              setSeatEmotes((prev) => {
-                const copy = { ...prev };
-                delete copy[data.seat_index];
-                return copy;
-              });
-            }, 3000);
-          }
-        } catch {
-          // Ignore parse errors
+        if (frame.emote) {
+          const emote = frame.emote;
+          setSeatEmotes((prev) => ({ ...prev, [frame.seatIndex]: emote }));
+          setTimeout(() => {
+            setSeatEmotes((prev) => {
+              const copy = { ...prev };
+              delete copy[frame.seatIndex];
+              return copy;
+            });
+          }, 3000);
         }
       };
 
@@ -785,23 +1063,29 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
     return () => {
       active = false;
       clearTimeout(reconnectTimeout);
-      ws?.close();
+      if (ws) ws.close();
     };
   }, [tableId, chatOpen]);
 
   const sendChatMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    const text = sanitizeChatText(chatInput);
+    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
     }
+    if (!chatRateLimiterRef.current.tryConsume(text)) {
+      setChatNotice("Slow down — too many messages.");
+      return;
+    }
+    setChatNotice(null);
 
     const mySeat = userPlayer ? userPlayer.seat : 0;
-    const myAlias = userAddress ? (getAlias(userAddress) || `Seat ${mySeat}`) : `Seat ${mySeat}`;
+    const myAlias = sanitizeChatAlias(userAddress ? getAlias(userAddress) : "", mySeat);
 
     const payload = {
       seat_index: mySeat,
       alias: myAlias,
-      text: chatInput.trim(),
+      text,
     };
 
     wsRef.current.send(JSON.stringify(payload));
@@ -809,20 +1093,31 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
   };
 
   const sendEmote = (emote: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    if (!isChatEmote(emote)) return;
+    if (!chatRateLimiterRef.current.tryConsume(emote)) {
+      setChatNotice("Slow down — too many messages.");
       return;
     }
-
     const mySeat = userPlayer ? userPlayer.seat : 0;
-    const myAlias = userAddress ? (getAlias(userAddress) || `Seat ${mySeat}`) : `Seat ${mySeat}`;
+    const myAlias = sanitizeChatAlias(userAddress ? getAlias(userAddress) : "", mySeat);
 
-    const payload = {
-      seat_index: mySeat,
-      alias: myAlias,
-      emote,
-    };
+    setSeatEmotes((prev) => ({ ...prev, [mySeat]: emote }));
+    setTimeout(() => {
+      setSeatEmotes((prev) => {
+        const copy = { ...prev };
+        delete copy[mySeat];
+        return copy;
+      });
+    }, 3000);
 
-    wsRef.current.send(JSON.stringify(payload));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const payload = {
+        seat_index: mySeat,
+        alias: myAlias,
+        emote,
+      };
+      wsRef.current.send(JSON.stringify(payload));
+    }
   };
 
   return (
@@ -893,6 +1188,57 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               {t("nav.history")}
             </button>
             <button
+              onClick={() => setProofPanelOpen((open) => !open)}
+              className="text-[9px] mr-2"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#c8e6ff",
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+              }}
+              title="ZK Proof Explorer"
+              aria-pressed={proofPanelOpen}
+            >
+              PROOFS
+            </button>
+            <TableRulesPopover tableId={tableId} address={userAddress} />
+            {userAddress && (
+              <button
+                onClick={() => setAutoRebuyOpen(true)}
+                className="text-[9px] mr-2"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#c8e6ff",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                title="Auto-Rebuy Settings"
+              >
+                AUTO-REBUY
+              </button>
+            )}
+            {userAddress && (
+              <button
+                onClick={() => setTurnTimerOpen(true)}
+                className="text-[9px] mr-2"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#ffd43b",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                title="Turn Timer Settings"
+              >
+                TIMER
+              </button>
+            )}
+            <button
               onClick={() => setShortcutsOpen(true)}
               className="text-[9px]"
               style={{
@@ -913,6 +1259,15 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
 
           <div className="table-header-right flex items-center gap-2 sm:gap-3">
+            <a
+              href={spectateHref(tableId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open an anonymous spectator view of this table"
+              className="no-underline"
+            >
+              <SpectatorCount count={spectatorCount} />
+            </a>
             <div className="text-[9px]" style={{ color: "#c8e6ff" }}>
               {t("table.hand", { n: game.handNumber })} | {game.phase.toUpperCase()}
             </div>
@@ -957,6 +1312,48 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
         </div>
 
+        {isWalletDisconnected && (
+          <div
+            className="pixel-border-thin flex items-center justify-between flex-wrap gap-2 p-2 mb-2 w-full max-w-3xl"
+            style={{
+              background: "rgba(35, 20, 8, 0.95)",
+              borderColor: isCacheStale(tableCachedAt) ? "#e74c3c" : "#f39c12",
+              color: "#f1c40f",
+              fontSize: "8px",
+            }}
+            data-testid="table-offline-banner"
+          >
+            <div className="flex items-center gap-2">
+              <span>⚠️</span>
+              <span>WALLET DISCONNECTED · READ-ONLY TABLE VIEW</span>
+              {tableCachedAt > 0 && (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[7px]"
+                  style={{
+                    background: isCacheStale(tableCachedAt) ? "#e74c3c" : "#e67e22",
+                    color: "#ffffff",
+                  }}
+                  data-testid="table-stale-indicator"
+                >
+                  {isCacheStale(tableCachedAt) ? "STALE" : "CACHED"}
+                </span>
+              )}
+              {tableCachedAt > 0 && (
+                <span style={{ color: "#c8e6ff", fontSize: "7px" }}>
+                  Last updated: {formatLastUpdated(tableCachedAt)}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => router.push("/")}
+              className="pixel-btn pixel-btn-green text-[8px]"
+              style={{ padding: "4px 8px" }}
+              data-testid="reconnect-table-btn"
+            >
+              RECONNECT
+            </button>
+          </div>
+        )}
 
         {/* Dealer line */}
         <div
@@ -1021,6 +1418,17 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
         )}
 
+        {/* Turn countdown with auto-fold toggle and screen-reader
+            announcements (#630). Sits above the table so it is seen on phones
+            as well as desktop. */}
+        <TurnCountdownBanner
+          active={turnTimer.isActive}
+          timeLeftSeconds={turnTimer.timeLeftSeconds}
+          durationSeconds={turnTimer.durationSeconds}
+          autoFoldOn={turnTimer.preference.enabled && turnTimer.preference.autoAction !== "never"}
+          onAutoFoldChange={turnTimer.setAutoFold}
+        />
+
         {/* ═══ THE POKER TABLE ═══ */}
         <div className="table-container w-full max-w-3xl relative" style={{ minHeight: "400px" }}>
           <div
@@ -1050,17 +1458,23 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   <PlayerSeat
                     key={player.address}
                     player={player}
+                    justSeated={justSeatedAddresses.has(player.address)}
                     isCurrentTurn={displayedTurnAddress === player.address}
                     isDealer={player.seat === game.dealerSeat}
                     isUser={false}
                     isWinner={!!winnerAddress && player.address === winnerAddress}
                     isBot={playMode === "single"}
                     alias={getAlias(player.address) ?? undefined}
+                    privacyMode={privacyMode}
                     hideChipStats={false}
                     activeEmote={seatEmotes[player.seat]}
                     boardCards={game.boardCards}
                     gamePhase={game.phase}
                     showStatsTooltip={playMode !== "single"}
+                    stackTrend={stackTrends[player.address]?.map((p) => p.stack)}
+                    turnTimerSecondsLeft={displayedTurnAddress === player.address ? sharedTimeLeft : 0}
+                    turnTimerDurationSeconds={displayedTurnAddress === player.address ? sharedTimerDuration : 0}
+                    turnTimerUrgent={displayedTurnAddress === player.address ? sharedTimerUrgent : false}
                   />
                 ))}
 
@@ -1091,7 +1505,9 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               borderBottom: '2px solid rgba(139, 105, 20, 0.2)',
               padding: '12px 0',
             }}>
-              <Board cards={game.boardCards} pot={displayPot} />
+              <div className={reviewing ? "timeline-reviewing" : undefined}>
+                <Board cards={displayBoardCards} pot={displayPot} />
+              </div>
 
               {game.phase === "waiting" && wallet && !isWalletSeated && playMode !== "single" && (
                 <button
@@ -1136,11 +1552,13 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               {userPlayer ? (
                 <PlayerSeat
                   player={userPlayer}
+                  justSeated={justSeatedAddresses.has(userPlayer.address)}
                   isCurrentTurn={isMyTurn}
                   isDealer={userPlayer.seat === game.dealerSeat}
                   isUser={true}
                   isWinner={!!winnerAddress && userPlayer.address === winnerAddress}
                   alias={getAlias(userPlayer.address) ?? undefined}
+                  privacyMode={privacyMode}
                   onEditAlias={() => {
                     const next = window.prompt(
                       "Set your table alias (max 16 chars):",
@@ -1155,6 +1573,10 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
                   activeEmote={seatEmotes[userPlayer.seat]}
                   boardCards={game.boardCards}
                   gamePhase={game.phase}
+                  stackTrend={stackTrends[userPlayer.address]?.map((p) => p.stack)}
+                  turnTimerSecondsLeft={turnTimer.isActive ? turnTimer.timeLeftSeconds : 0}
+                  turnTimerDurationSeconds={turnTimer.durationSeconds}
+                  turnTimerUrgent={turnTimer.isUrgent}
                 />
               ) : (
                 <div className="flex flex-col items-center gap-2" style={{ opacity: 0.25 }}>
@@ -1171,6 +1593,16 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             </div>
           </div>
         </div>
+
+        {/* Live hand timeline — step back through this hand without leaving
+            the table, for catching up after a disconnect (#176). */}
+        <HandTimeline
+          events={timeline}
+          index={timelineIndex}
+          onSeek={(index) => setScrubIndex(index)}
+          isLive={!reviewing}
+          onReturnToLive={() => setScrubIndex(null)}
+        />
 
         {/* MPC Status footer */}
         <div className="mpc-footer flex flex-col items-center gap-1 mt-2">
@@ -1217,6 +1649,26 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         </div>
       </div>
 
+      {/* Sticky bottom action bar for phones (#175). Hidden by CSS above the
+          mobile breakpoint, where the full action panel is in play instead. */}
+      <MobileActionBar
+        visible={["preflop", "flop", "turn", "river"].includes(game.phase)}
+        isMyTurn={isMyTurn}
+        currentBet={displayCurrentBet}
+        myBet={displayMyBet}
+        myStack={displayMyStack}
+        pot={game.pot}
+        loading={loading}
+        betAmount={betAmount}
+        setBetAmount={setBetAmount}
+        onAction={(action, amount) => {
+          if (["bet", "raise", "call", "allin"].includes(action)) {
+            void playSound("chip");
+          }
+          return handleAction(action, amount);
+        }}
+      />
+
       <GameBoyModal
         open={gameboyOpen}
         onClose={() => setGameboyOpen(false)}
@@ -1229,6 +1681,32 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         entries={historyEntries}
         onReplay={(entry) => setReplayEntry(entry)}
       />
+
+      {/* Issue #160: proof explorer side panel (bottom sheet on mobile) */}
+      <ProofExplorerPanel
+        open={proofPanelOpen}
+        onClose={() => setProofPanelOpen(false)}
+        data={{
+          dealTxHash: game.proofTxHashes?.deal,
+          revealTxHashes: {
+            flop: game.proofTxHashes?.flop,
+            turn: game.proofTxHashes?.turn,
+            river: game.proofTxHashes?.river,
+          },
+          showdownTxHash: game.proofTxHashes?.showdown,
+          proofSizes: game.proofSizes,
+          dealPublicInputs: game.dealPublicInputs,
+        }}
+      />
+
+      {userAddress && (
+        <AutoRebuySettings
+          open={autoRebuyOpen}
+          onClose={() => setAutoRebuyOpen(false)}
+          tableId={tableId}
+          address={userAddress}
+        />
+      )}
 
       {/* Issue #53 — collapsible multi-table overview */}
       <TableMiniMap currentTableId={tableId} defaultCollapsed />
@@ -1251,6 +1729,52 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
               ✕
             </button>
             <h2 className="text-[11px] mb-4 text-[#f1c40f] text-center" style={{ fontFamily: "'Press Start 2P', monospace" }}>KEYBOARD SHORTCUTS</h2>
+            <div className="mb-4 flex flex-col gap-2 text-[8px]" style={{ fontFamily: "'Press Start 2P', monospace" }}>
+              <label className="flex items-center justify-between gap-2">
+                <span>NAMEPLATES</span>
+                <select
+                  value={privacyMode}
+                  onChange={(e) => {
+                    const next = e.target.value as SeatPrivacyMode;
+                    setPrivacyMode(next);
+                    setSeatPrivacyMode(next);
+                  }}
+                  className="bg-[#2a1b12] text-[#f5e6c8] border border-[#6b4f12] px-1 py-1 text-[8px]"
+                  aria-label="Seat nameplate privacy mode"
+                >
+                  <option value="alias">Alias</option>
+                  <option value="address">Address</option>
+                  <option value="anonymous">Anonymous</option>
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-1">
+                {(["fold", "check", "bet", "raise", "allin"] as const).map((action) => (
+                  <label key={action} className="flex items-center justify-between gap-1 text-[#bdc3c7]">
+                    {action.toUpperCase()}
+                    <input
+                      value={shortcuts[action].toUpperCase()}
+                      maxLength={1}
+                      onChange={(e) => {
+                        const key = e.target.value.slice(-1).toLowerCase();
+                        if (!key) return;
+                        const next = { ...shortcuts, [action]: key };
+                        setShortcuts(next);
+                        saveShortcuts(next);
+                      }}
+                      className="w-7 bg-[#2a1b12] text-center text-[#f1c40f] border border-[#6b4f12]"
+                      aria-label={`${action} shortcut`}
+                    />
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShortcuts({ ...DEFAULT_SHORTCUTS }); saveShortcuts(DEFAULT_SHORTCUTS); }}
+                className="self-end text-[7px] text-[#bdc3c7] underline"
+              >
+                RESET SHORTCUTS
+              </button>
+            </div>
             <div className="flex flex-col gap-3 text-[8px] leading-relaxed" style={{ fontFamily: "'Press Start 2P', monospace" }}>
               <div className="flex justify-between border-b border-gray-800 pb-1">
                 <span>[F]</span> <span style={{ color: "#bdc3c7" }}>Fold</span>
@@ -1277,6 +1801,24 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
           </div>
         </div>
       )}
+
+      {/* Emote Radial Menu Toggle Button */}
+      <button
+        type="button"
+        onClick={() => setEmoteRadialOpen((prev) => !prev)}
+        className="emote-toggle-btn pixel-btn pixel-btn-yellow text-[9px] fixed bottom-4 right-28 z-40 flex items-center gap-1"
+        style={{ padding: "8px 12px" }}
+        title="Open Emote Radial Menu"
+      >
+        <span>💬</span> EMOTE
+      </button>
+
+      {/* Emote Radial Menu */}
+      <EmoteRadialMenu
+        isOpen={emoteRadialOpen}
+        onClose={() => setEmoteRadialOpen(false)}
+        onSelectEmote={(emoteText) => sendEmote(emoteText)}
+      />
 
       {/* Chat Overlay Toggle Button */}
       <button
@@ -1319,6 +1861,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             {chatMessages.length === 0 ? (
               <div className="text-gray-600 text-center mt-8 italic" style={{ fontSize: "8px" }}>No messages yet.</div>
             ) : (
+              // Rendered as React text nodes only — never dangerouslySetInnerHTML (#140).
               chatMessages.map((msg, idx) => (
                 <div key={idx} className="leading-relaxed">
                   <span style={{ color: msg.senderColor }}>{msg.alias}: </span>
@@ -1342,11 +1885,18 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
             ))}
           </div>
           
+          {chatNotice && (
+            <div className="text-[#ff6b6b] text-[7px]" role="status">
+              {chatNotice}
+            </div>
+          )}
+
           {/* Input row */}
           <form onSubmit={sendChatMessage} className="flex gap-1 mt-1">
             <input
               type="text"
               value={chatInput}
+              maxLength={CHAT_MAX_MESSAGE_LENGTH}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder="Say something..."
               className="flex-1 px-2 py-1 text-[8px]"
@@ -1418,6 +1968,7 @@ export function Table({ tableId, initialPlayMode }: TableProps) {
         <TransactionSimulation
           simulation={joinSimulation.simulation}
           loading={joinSimulation.loading}
+          buyInAmount={joinSimulation.params?.buyIn}
           onConfirm={() => {
             joinSimulation.confirmJoin();
           }}

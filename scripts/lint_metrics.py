@@ -56,15 +56,19 @@ FORBIDDEN_LABEL_NAMES = {"type", "kind", "status", "name"}
 # Each entry must be justified in review and tracked for removal.
 ALLOWLIST: dict[str, str] = {}
 
-# Matches: Opts::new("metric_name", "Help text.")
-# and     HistogramOpts::new("metric_name", "Help text.")
-# Help string may span lines; the simplest robust approach is to join adjacent
-# string literals (Rust does not auto-concat, but authors write them on one line
-# in practice — we accept both single-line and multi-line via a non-greedy match
-# that stops at the next unescaped closing paren.
+# Matches the two shapes a Rust metric declaration takes in this codebase:
+#   1. `Opts::new("name", "help")`  or  `HistogramOpts::new("name", "help")`
+#      — carries labels in the second builder step; the first two string
+#      literals in the call are name and help.
+#   2. `IntCounter::new("name", "help")` and friends (`Counter`, `Gauge`,
+#      `IntGauge`) — the direct constructor with no `Opts::` wrapper, used for
+#      zero-label metrics (see the MPC session counters in main.rs).
 METRIC_DECL_RE = re.compile(
     r"""
-    (?:Opts|HistogramOpts)::new\(\s*
+    (?:
+        (?:Opts|HistogramOpts)::new
+      | (?:IntCounter|Counter|IntGauge|Gauge)::new
+    )\(\s*
         "(?P<name>[^"]+)"\s*,\s*
         "(?P<help>(?:[^"\\]|\\.)*)"\s*
     (?:,|\))
@@ -138,8 +142,11 @@ def check_help(name: str, help_text: str) -> list[str]:
     if not help_text.strip():
         errors.append("HELP text is empty")
         return errors
-    if not help_text.strip()[0].isupper():
-        errors.append("HELP text should start with a capital letter")
+    first = help_text.strip()[0]
+    # A capital letter is the usual start; digits are also acceptable for help
+    # text that begins with a sentinel value, e.g. "1 when draining, 0 otherwise".
+    if not (first.isupper() or first.isdigit()):
+        errors.append("HELP text should start with a capital letter or digit")
     if not help_text.rstrip().endswith("."):
         errors.append("HELP text should end with a period")
     return errors

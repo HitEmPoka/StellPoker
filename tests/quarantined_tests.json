@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-10-20T00:00:00Z",
+  "policy": {
+    "auto_quarantine_threshold": 1,
+    "dequarantine_consecutive_passes": 10,
+    "max_quarantined_ratio": 0.05
+  },
+  "quarantined_tests": []
+}

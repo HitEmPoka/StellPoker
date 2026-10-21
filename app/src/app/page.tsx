@@ -7,7 +7,10 @@ import { PixelWorld } from "@/components/PixelWorld";
 import { PixelCat } from "@/components/PixelCat";
 import { PixelChip } from "@/components/PixelChip";
 import { TransactionSimulation } from "@/components/TransactionSimulation";
-import { TokenSelector } from "@/components/TokenSelector";
+import { OddsCalculatorModal } from "@/components/OddsCalculatorModal";
+import { TokenSelector, type TokenChoice } from "@/components/TokenSelector";
+import { SpectatorCount } from "@/components/SpectatorCount";
+import { spectateHref } from "@/lib/spectator";
 import * as api from "@/lib/api";
 import { useJoinTableSimulation } from "@/lib/use-transaction-simulation";
 import {
@@ -24,6 +27,26 @@ import {
   tableHref,
   type OpenTable,
 } from "@/lib/open-tables";
+import { getAlias } from "@/lib/alias-store";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import {
+  matchTable,
+  describeSeatMatch,
+  type TableMatch,
+} from "@/lib/table-search";
+import { loadFriends, displayName, type Friend } from "@/lib/friends";
+import {
+  loadSeatPreference,
+  pickQuickSeatTable,
+  readTableStakes,
+  type SeatPreference,
+} from "@/lib/quick-seat";
+import {
+  saveLobbyCache,
+  loadLobbyCache,
+  isCacheStale,
+  formatLastUpdated,
+} from "@/lib/lobby-cache";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -49,6 +72,7 @@ function formatStroopsToXlm(value: bigint): string {
   return trimmedFraction ? `${whole}.${trimmedFraction}` : whole.toString();
 }
 
+/** Default */
 export default function Home() {
   const router = useRouter();
   const [screen, setScreen] = useState<Screen>("splash");
@@ -58,7 +82,7 @@ export default function Home() {
   const [availableWallets, setAvailableWallets] = useState<{ type: WalletType; name: string; isInstalled: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [maxPlayers, setMaxPlayers] = useState(2);
-  const [tokenChoice, setTokenChoice] = useState<{ type: string; sacAddress?: string }>({ type: "XLM" });
+  const [tokenChoice, setTokenChoice] = useState<TokenChoice>({ type: "XLM" });
   const [buyInXlm, setBuyInXlm] = useState(
     formatStroopsToXlm(BigInt("1000000000"))
   );
@@ -74,9 +98,14 @@ export default function Home() {
   const [tableSearch, setTableSearch] = useState("");
   const [filterSeatsOpen, setFilterSeatsOpen] = useState(false);
   const [filterMyStakes, setFilterMyStakes] = useState(false);
+  const [oddsCalculatorOpen, setOddsCalculatorOpen] = useState(false);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [seatPreference, setSeatPreference] = useState<SeatPreference | null>(null);
+  const [lobbyCachedAt, setLobbyCachedAt] = useState<number>(0);
+  const [isWalletDisconnected, setIsWalletDisconnected] = useState(false);
 
   const joinTableSim = useJoinTableSimulation(wallet, () => {
-    if (pendingTableId) {
+    if (pendingTableId !== null) {
       const query = maxPlayers >= 3 ? "?mode=multi" : "?mode=headsup";
       router.push(`/table/${pendingTableId}${query}`);
       setPendingTableId(null);
@@ -109,9 +138,14 @@ export default function Home() {
     setOpenTables(wallet ? loadOpenTables(wallet.address) : []);
   }, [wallet, screen]);
 
+  // The kind of seat this wallet last sat down in, for quick seat (#159).
+  useEffect(() => {
+    setSeatPreference(wallet ? loadSeatPreference(wallet.address) : null);
+  }, [wallet, screen]);
+
   // Load the browsable open-tables list when entering the join screen.
   useEffect(() => {
-    if (screen === "join" && wallet) {
+    if (screen === "join") {
       void loadLobbyTables();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,13 +158,21 @@ export default function Home() {
     }
   }, [screen, wallet]);
 
-  // Auto-logout when wallet disconnects (#322).
+  // Auto-logout when wallet disconnects (#322, #618).
+  // Disconnected players & spectators still see cached tables with stale indicator.
   useWalletMonitor({
     wallet,
     onDisconnect: () => {
       setWallet(null);
-      setScreen("connect");
-      setError("Wallet disconnected. Please reconnect to continue.");
+      setIsWalletDisconnected(true);
+      const cached = loadLobbyCache();
+      if (cached) {
+        setLobbyTables(cached.tables);
+        setTableLobbies(cached.tableLobbies);
+        setLobbyCachedAt(cached.cachedAt);
+      }
+      setScreen("join");
+      setError("Wallet disconnected. Viewing cached table state in read-only mode.");
     },
     onAccountSwitch: (newAddress) => {
       // User switched accounts in Freighter — re-initialise the session with
@@ -148,6 +190,7 @@ export default function Home() {
     try {
       const session = await connectWallet(type);
       setWallet(session);
+      setIsWalletDisconnected(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to connect ${type} wallet`);
     } finally {
@@ -180,6 +223,7 @@ export default function Home() {
       if (!solo && buyIn) {
         setPendingTableId(created.table_id);
         joinTableSim.joinTable(created.table_id, buyIn);
+        setBusy(false);
         return; // Simulation will handle navigation
       }
 
@@ -189,9 +233,18 @@ export default function Home() {
           ? "?mode=multi"
           : "?mode=headsup";
       router.push(`/table/${created.table_id}${query}`);
+      setBusy(false);
     } catch (e) {
+      if (e instanceof api.ApiRequestError && e.retryAfterSeconds !== null) {
+        // Issue #601: respect the server's Retry-After by keeping table
+        // creation disabled for the full back-off window instead of
+        // re-enabling immediately, so the client can't hammer the
+        // coordinator again right away.
+        setError(`${e.message} Retry in ${e.retryAfterSeconds}s.`);
+        setTimeout(() => setBusy(false), e.retryAfterSeconds * 1000);
+        return;
+      }
       setError(e instanceof Error ? e.message : "Create table failed");
-    } finally {
       setBusy(false);
     }
   };
@@ -238,7 +291,16 @@ export default function Home() {
         if (entry) lobbies[entry[0]] = entry[1];
       }
       setTableLobbies(lobbies);
+      const now = Date.now();
+      setLobbyCachedAt(now);
+      saveLobbyCache(result.tables, lobbies, now);
     } catch (e) {
+      const cached = loadLobbyCache();
+      if (cached) {
+        setLobbyTables(cached.tables);
+        setTableLobbies(cached.tableLobbies);
+        setLobbyCachedAt(cached.cachedAt);
+      }
       setError(e instanceof Error ? e.message : "Failed to load open tables");
     } finally {
       setLoadingTables(false);
@@ -259,18 +321,17 @@ export default function Home() {
     router.push(`/table/${table.table_id}${query}`);
   };
 
-  const matchesSearch = (table: api.OpenTableInfo, query: string): boolean => {
-    if (!query) return true;
-    const q = query.trim().toLowerCase();
-    if (table.table_id.toString().includes(q)) return true;
-    const lobby = tableLobbies[table.table_id];
-    if (!lobby) return false;
-    return lobby.seats.some(
-      (seat) =>
-        seat.chain_address.toLowerCase().includes(q) ||
-        (seat.wallet_address ?? "").toLowerCase().includes(q)
+  // Search runs on the settled query so a fast typist isn't re-filtering every
+  // open table (and re-reading an alias per seat) on every keystroke (#173).
+  const debouncedSearch = useDebouncedValue(tableSearch, 250);
+
+  const searchTable = (table: api.OpenTableInfo): TableMatch =>
+    matchTable(
+      debouncedSearch,
+      table.table_id,
+      tableLobbies[table.table_id]?.seats ?? [],
+      getAlias
     );
-  };
 
   const isMyTable = (table: api.OpenTableInfo): boolean => {
     if (!wallet) return false;
@@ -283,12 +344,85 @@ export default function Home() {
     );
   };
 
-  const filteredOpenTables = lobbyTables.filter((t) => {
-    if (!matchesSearch(t, tableSearch)) return false;
-    if (filterSeatsOpen && t.open_wallet_slots <= 0) return false;
-    if (filterMyStakes && !isMyTable(t)) return false;
-    return true;
-  });
+  // Load friends once so the lobby can flag friend-occupied tables (#168).
+  useEffect(() => {
+    setFriends(loadFriends());
+  }, []);
+
+  // Which of the player's friends are seated at the given table?
+  const friendsAtTable = (table: api.OpenTableInfo): Friend[] => {
+    if (friends.length === 0) return [];
+    const lobby = tableLobbies[table.table_id];
+    if (!lobby) return [];
+    const seated = new Set(
+      lobby.seats.map((s) => s.chain_address || s.wallet_address || "")
+    );
+    return friends.filter((f) => seated.has(f.address));
+  };
+
+  // Quick seat (#159): sit a returning player straight down at the open table
+  // that best fits the table size, stakes and seat they last played, joining
+  // through the same buy-in simulation that creating a table uses.
+  const handleQuickSeat = async () => {
+    if (!wallet || !seatPreference) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const sameSize = lobbyTables.filter(
+        (table) =>
+          table.max_players === seatPreference.maxPlayers &&
+          table.open_wallet_slots > 0 &&
+          !isMyTable(table)
+      );
+      // The open-tables list carries no stakes, so read each candidate's
+      // buy-in from its on-chain config.
+      const candidates = await Promise.all(
+        sameSize.map(async (table) => ({
+          tableId: table.table_id,
+          maxPlayers: table.max_players,
+          joinedWallets: table.joined_wallets,
+          stakes: await api
+            .getParsedTableState(table.table_id)
+            .then(({ parsed }) => readTableStakes(parsed))
+            .catch(() => null),
+        }))
+      );
+      const best = pickQuickSeatTable(seatPreference, candidates);
+      if (!best?.stakes) {
+        setError("No open table matches your quick seat preferences");
+        return;
+      }
+      // The simulation's confirm and success handlers read the buy-in and
+      // table size from the form state, so point them at this table.
+      setMaxPlayers(best.maxPlayers);
+      setBuyInXlm(formatStroopsToXlm(best.stakes.buyIn));
+      setPendingTableId(best.tableId);
+      joinTableSim.joinTable(best.tableId, best.stakes.buyIn);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Quick seat failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Each surviving row carries the reason it matched, so the list can show
+  // *which* seat the searched-for player is sitting in rather than only that
+  // the table matched somehow.
+  const filteredOpenTables = lobbyTables
+    .map((table) => ({ table, match: searchTable(table) }))
+    .filter(({ table, match }) => {
+      if (!match.matched) return false;
+      if (filterSeatsOpen && table.open_wallet_slots <= 0) return false;
+      if (filterMyStakes && !isMyTable(table)) return false;
+      return true;
+    });
+
+  const searchActive = debouncedSearch.trim().length > 0;
+  const searchSummary = !searchActive
+    ? `${filteredOpenTables.length} open ${filteredOpenTables.length === 1 ? "table" : "tables"}`
+    : filteredOpenTables.length === 0
+      ? "No tables match that player"
+      : `${filteredOpenTables.length} ${filteredOpenTables.length === 1 ? "table" : "tables"} match`;
 
   const shortAddr = wallet
     ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
@@ -555,6 +689,42 @@ export default function Home() {
             >
               OPEN YOUR WALLET EXTENSION, UNLOCK IT, AND CLICK THE BUTTON ABOVE.
             </div>
+
+            {/* A visitor with no wallet is otherwise stuck on this screen;
+                practice mode and public spectator browsing are what they can do instead (#174, #618). */}
+            <div className="flex flex-col items-center gap-2">
+              <Link
+                href="/practice"
+                className="text-[9px]"
+                style={{ color: "#ffc078", textDecoration: "underline" }}
+              >
+                NO WALLET? PRACTICE VS BOTS →
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  const cached = loadLobbyCache();
+                  if (cached) {
+                    setLobbyTables(cached.tables);
+                    setTableLobbies(cached.tableLobbies);
+                    setLobbyCachedAt(cached.cachedAt);
+                  }
+                  setScreen("join");
+                }}
+                className="text-[9px]"
+                style={{
+                  color: "#27ae60",
+                  textDecoration: "underline",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                data-testid="view-public-lobby-button"
+              >
+                BROWSE PUBLIC TABLES (SPECTATE) →
+              </button>
+            </div>
           </div>
         )}
 
@@ -595,6 +765,19 @@ export default function Home() {
             >
               JOIN TABLE
             </button>
+
+            {/* Practice mode needs no wallet at all, so it is a plain link
+                rather than a gated action (#174). */}
+            <Link
+              href="/practice"
+              className="pixel-btn pixel-btn-blue text-[12px] w-full text-center"
+              style={{ padding: "14px 24px", textDecoration: "none" }}
+            >
+              PRACTICE VS BOTS
+            </Link>
+            <span className="text-[8px]" style={{ color: "#95a5a6" }}>
+              PLAY MONEY · NO WALLET NEEDED
+            </span>
           </div>
         )}
 
@@ -718,6 +901,78 @@ export default function Home() {
               JOIN TABLE
             </h2>
 
+            {/* Offline-aware / Disconnected lobby cache banner (Issue #618) */}
+            {(isWalletDisconnected || !wallet || (lobbyCachedAt > 0 && isCacheStale(lobbyCachedAt))) && (
+              <div
+                className="w-full flex flex-col gap-2 p-3 pixel-border-thin"
+                style={{
+                  background: "rgba(35, 20, 8, 0.95)",
+                  borderColor: isCacheStale(lobbyCachedAt) ? "#e74c3c" : "#f39c12",
+                }}
+                data-testid="offline-lobby-banner"
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2 text-[9px]">
+                  <div className="flex items-center gap-2">
+                    <span>⚠️</span>
+                    <span style={{ color: "#ffc078", fontWeight: "bold" }}>
+                      {!wallet ? "WALLET DISCONNECTED · READ-ONLY CACHE" : "CACHED LOBBY"}
+                    </span>
+                    {lobbyCachedAt > 0 && (
+                      <span
+                        className="px-2 py-[2px] rounded text-[8px]"
+                        style={{
+                          background: isCacheStale(lobbyCachedAt) ? "#e74c3c" : "#e67e22",
+                          color: "#ffffff",
+                        }}
+                        data-testid="stale-indicator"
+                      >
+                        {isCacheStale(lobbyCachedAt) ? "STALE" : "CACHED"}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsWalletDisconnected(false);
+                      setScreen("connect");
+                    }}
+                    className="pixel-btn pixel-btn-green text-[9px]"
+                    style={{ padding: "4px 8px" }}
+                    data-testid="reconnect-lobby-btn"
+                  >
+                    RECONNECT WALLET
+                  </button>
+                </div>
+                {lobbyCachedAt > 0 && (
+                  <div className="text-[8px]" style={{ color: "#c8e6ff" }} data-testid="last-updated-time">
+                    Last updated: {formatLastUpdated(lobbyCachedAt)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* One-click seat for returning players (#159) */}
+            {seatPreference && (
+              <div className="w-full flex flex-col gap-2">
+                <button
+                  onClick={() => void handleQuickSeat()}
+                  disabled={busy || loadingTables || !wallet}
+                  className="pixel-btn pixel-btn-green text-[11px] w-full"
+                  style={{
+                    padding: "12px 24px",
+                    opacity: busy || loadingTables || !wallet ? 0.6 : 1,
+                  }}
+                  data-testid="quick-seat-button"
+                >
+                  {busy ? "SEATING..." : "QUICK SEAT"}
+                </button>
+                <div className="text-[9px] text-center" style={{ color: "#95a5a6" }}>
+                  {seatPreference.maxPlayers === 2 ? "HEADS-UP" : `${seatPreference.maxPlayers}-MAX`}
+                  {" · "}BUY-IN {formatStroopsToXlm(BigInt(seatPreference.buyIn))}
+                  {" · "}SEAT {seatPreference.seatIndex + 1}
+                </div>
+              </div>
+            )}
+
             {/* Tables already open in this browser */}
             {openTables.length > 0 && (
               <div className="w-full flex flex-col gap-2">
@@ -783,14 +1038,47 @@ export default function Home() {
 
             {/* Search + quick filters */}
             <div className="flex flex-col gap-2 w-full">
-              <input
-                type="text"
-                value={tableSearch}
-                onChange={(e) => setTableSearch(e.target.value)}
-                placeholder="SEARCH BY TABLE ID OR ADDRESS"
-                className="w-full text-center text-[11px]"
-                style={{ padding: "8px 10px" }}
-              />
+              <label
+                htmlFor="table-search"
+                className="text-[9px]"
+                style={{ color: "#c8e6ff" }}
+              >
+                FIND A PLAYER
+              </label>
+              <div className="flex items-center gap-2 w-full">
+                <input
+                  id="table-search"
+                  type="search"
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  placeholder="ALIAS, KEY PREFIX (GABC…) OR TABLE ID"
+                  aria-describedby="table-search-status"
+                  className="flex-1 text-center text-[11px]"
+                  style={{ padding: "8px 10px" }}
+                  data-testid="table-search-input"
+                />
+                {tableSearch && (
+                  <button
+                    onClick={() => setTableSearch("")}
+                    aria-label="Clear search"
+                    className="pixel-btn text-[9px]"
+                    style={{ padding: "6px 10px" }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {/* Announced to screen readers as the result count settles. */}
+              <p
+                id="table-search-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="text-[8px] text-center"
+                style={{ color: "#8a9ab0" }}
+              >
+                {searchSummary}
+              </p>
               <div className="flex gap-2 justify-center flex-wrap">
                 <button
                   onClick={() => setFilterSeatsOpen((v) => !v)}
@@ -835,29 +1123,89 @@ export default function Home() {
                 </p>
               )}
               {!loadingTables &&
-                filteredOpenTables.map((t) => (
+                filteredOpenTables.map(({ table: t, match }) => (
                   <div
                     key={t.table_id}
-                    className="flex items-center justify-between gap-2 text-[10px]"
+                    className="flex flex-col gap-1"
                     style={{
                       padding: "8px 10px",
                       background: "rgba(0,0,0,0.25)",
                       border: "2px solid #2a4a6a",
                     }}
                   >
-                    <span style={{ color: "#ffc078" }}>#{t.table_id}</span>
-                    <span style={{ color: "#8a9ab0" }}>
-                      {t.max_players - t.open_wallet_slots}/{t.max_players} SEATED
-                      {isMyTable(t) ? " · YOU" : ""}
-                    </span>
-                    <button
-                      onClick={() => handleJoinRow(t)}
-                      disabled={busy || !wallet}
-                      className="pixel-btn pixel-btn-blue text-[9px]"
-                      style={{ padding: "6px 12px" }}
-                    >
-                      JOIN
-                    </button>
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span style={{ color: "#ffc078" }}>#{t.table_id}</span>
+                      <span style={{ color: "#8a9ab0" }}>
+                        {t.max_players - t.open_wallet_slots}/{t.max_players} SEATED
+                        {isMyTable(t) ? " · YOU" : ""}
+                      </span>
+                      <SpectatorCount count={t.spectators ?? 0} hideWhenZero size="sm" />
+                      <div className="flex gap-1">
+                        {/* Spectating needs no wallet (Issue #171). */}
+                        <Link
+                          href={spectateHref(t.table_id)}
+                          className="pixel-btn text-[9px]"
+                          style={{ padding: "6px 10px" }}
+                          data-testid={`spectate-${t.table_id}`}
+                        >
+                          WATCH
+                        </Link>
+                        <button
+                          onClick={() => handleJoinRow(t)}
+                          disabled={busy || !wallet}
+                          className="pixel-btn pixel-btn-blue text-[9px]"
+                          style={{ padding: "6px 12px" }}
+                        >
+                          JOIN
+                        </button>
+                      </div>
+                    </div>
+                    {/* Friend-occupied indicator (#168) */}
+                    {(() => {
+                      const atTable = friendsAtTable(t);
+                      return atTable.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 text-[8px]">
+                          {atTable.map((f) => (
+                            <span
+                              key={f.address}
+                              className="pixel-border-thin px-2 py-[2px]"
+                              style={{
+                                background: "rgba(196,125,46,0.18)",
+                                borderColor: "#c47d2e",
+                                color: "#f1c40f",
+                              }}
+                              title={f.address}
+                              data-testid={`friend-at-table-${t.table_id}`}
+                            >
+                              👥 {displayName(f)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
+                    {/* Why this table matched — the whole point of the search
+                        is knowing which seat your friend is in (#173). */}
+                    {match.seats.length > 0 && (
+                      <div
+                        className="flex flex-wrap gap-1 text-[8px]"
+                        data-testid={`table-${t.table_id}-matches`}
+                      >
+                        {match.seats.map((seat) => (
+                          <span
+                            key={seat.seatIndex}
+                            className="pixel-border-thin px-2 py-[2px]"
+                            style={{
+                              background: "rgba(20, 90, 50, 0.35)",
+                              borderColor: "#27ae60",
+                              color: "#eafaf1",
+                            }}
+                            title={seat.address}
+                          >
+                            {describeSeatMatch(seat)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
             </div>
@@ -931,7 +1279,7 @@ export default function Home() {
           <PixelCat sprite={20} size={96} flipped />
         </div>
 
-        {/* Stats link */}
+        {/* Stats links */}
         <Link
           href="/stats"
           className="fixed top-3 right-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
@@ -943,14 +1291,56 @@ export default function Home() {
         >
           📊 STATS
         </Link>
+        <Link
+          href="/dashboard"
+          className="fixed bottom-3 right-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#27ae60",
+            fontFamily: "'Press Start 2P', monospace",
+            textDecoration: "none",
+          }}
+        >
+          📈 MY DASHBOARD
+        </Link>
+        <Link
+          href="/friends"
+          className="fixed bottom-3 left-3 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#c47d2e",
+            fontFamily: "'Press Start 2P', monospace",
+            textDecoration: "none",
+          }}
+        >
+          👥 FRIENDS
+        </Link>
+
+        {/* Odds calculator tool (Issue #163) */}
+        <button
+          onClick={() => setOddsCalculatorOpen(true)}
+          className="fixed top-3 right-20 z-10 text-[8px] opacity-60 hover:opacity-100 transition-opacity"
+          style={{
+            color: "#c47d2e",
+            fontFamily: "'Press Start 2P', monospace",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          🎲 ODDS
+        </button>
+        <OddsCalculatorModal
+          open={oddsCalculatorOpen}
+          onClose={() => setOddsCalculatorOpen(false)}
+        />
 
         {/* Transaction Simulation */}
         {joinTableSim.showSimulation && joinTableSim.simulation && (
           <TransactionSimulation
             simulation={joinTableSim.simulation}
             loading={joinTableSim.loading}
+            buyInAmount={joinTableSim.params?.buyIn}
             onConfirm={() => {
-              if (pendingTableId) {
+              if (pendingTableId !== null) {
                 const buyIn = parseXlmToStroops(buyInXlm);
                 if (buyIn) {
                   joinTableSim.confirmJoin(pendingTableId, buyIn);

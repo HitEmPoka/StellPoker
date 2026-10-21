@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Póker en Stellar",
+    "title": "Poker on Stellar",
     "back": "← Volver",
     "loading": "Cargando…"
   },
@@ -9,13 +9,13 @@
     "keys": "TECLAS [?]",
     "chat": "CHAT",
     "tables": "MESAS",
-    "stats": "STATS",
+    "stats": "ESTADÍSTICAS",
     "language": "IDIOMA"
   },
   "table": {
     "title": "MESA #{id}",
     "hand": "MANO #{n}",
-    "waitingToJoin": "ESPERANDO UNIRSE...",
+    "waitingToJoin": "ESPERANDO PARA ENTRAR...",
     "connectWallet": "CONECTAR BILLETERA",
     "emptySeat": "ASIENTO VACÍO",
     "mpcStatus": "MPC: 3/3 NODOS | TACEO CO-NOIR REP3",
@@ -33,33 +33,34 @@
     "bet": "APUESTA",
     "folded": "RETIRADO",
     "allIn": "¡ALL IN!",
-    "editAlias": "Cambiar tu alias",
+    "editAlias": "Cambiar alias",
     "edit": "[EDITAR]",
-    "dealer": "[D]"
+    "dealer": "[D]",
+    "editAvatar": "Haz clic para personalizar avatar"
   },
   "stats": {
-    "title": "Estadísticas on-chain",
+    "title": "Estadísticas Onchain",
     "global": "Global",
-    "handsPlayed": "Manos jugadas",
-    "biggestPot": "Bote más grande",
-    "playersJoined": "Jugadores unidos",
+    "handsPlayed": "Manos Jugadas",
+    "biggestPot": "Bote Más Grande",
+    "playersJoined": "Jugadores Unidos",
     "leaderboard": "Clasificación",
-    "ratingLeaderboard": "Ratings ELO",
+    "ratingLeaderboard": "Clasificación ELO",
     "noHands": "Aún no se han jugado manos.",
     "player": "Jugador",
-    "handsWon": "Manos ganadas",
-    "rating": "Rating",
+    "handsWon": "Manos Ganadas",
+    "rating": "Puntuación",
     "rank": "Puesto",
-    "cachedAt": "En caché a las {time} · se actualiza cada 30s",
+    "cachedAt": "Guardado a las {time} · se actualiza cada 30s",
     "vpip": "VPIP",
     "pfr": "PFR",
     "aggression": "AF",
     "hands": "Manos",
     "loadingStats": "Cargando estadísticas…",
-    "minHandsNote": "La clasificación requiere un mínimo de manos jugadas on-chain."
+    "minHandsNote": "La clasificación requiere un mínimo de manos on-chain."
   },
   "minimap": {
-    "title": "VISTA DE MESAS",
+    "title": "VISTA DE LA MESA",
     "collapse": "OCULTAR",
     "expand": "MAPA",
     "seats": "{seated}/{max} asientos",
@@ -74,7 +75,7 @@
     "createTable": "CREAR MESA",
     "joinOpen": "UNIRSE A MESA ABIERTA",
     "playSolo": "SOLO VS IA",
-    "viewStats": "VER STATS"
+    "viewStats": "VER ESTADÍSTICAS"
   },
   "actions": {
     "fold": "RETIRARSE",
@@ -90,6 +91,11 @@
     "language": "IDIOMA",
     "english": "English",
     "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
     "logout": "CERRAR SESIÓN",
     "autoDetect": "Auto (navegador)"
   },
@@ -112,12 +118,84 @@
     "preflop": "Preflop en vivo. Apuesta; el crupier revela la siguiente calle.",
     "flop": "Flop en mesa. Apuesta; el crupier revela el turn.",
     "turn": "Turn en mesa. Apuesta; el crupier revela el river.",
-    "river": "River en mesa. Última ronda; el crupier ejecuta el showdown.",
+    "river": "River en mesa. Última ronda de apuestas; el crupier inicia el showdown.",
     "showdownLive": "Showdown en curso.",
-    "youWin": "Mano completa. ¡GANASTE!",
-    "aiWins": "Mano completa. ¡GANA LA IA!",
-    "winner": "Mano completa. Ganador: {addr}.",
-    "handComplete": "Mano completa. Inicia la siguiente cuando quieras.",
+    "youWin": "Mano completada. ¡GANASTE!",
+    "aiWins": "Mano completada. ¡LA IA GANA!",
+    "winner": "Mano completada. Ganador: {addr}.",
+    "handComplete": "Mano completada. Empieza la siguiente cuando estés listo.",
     "ready": "Listo cuando tú lo estés."
+  },
+  "common": {
+    "cancel": "CANCELAR",
+    "submitting": "ENVIANDO…"
+  },
+  "avatar": {
+    "title": "PERSONALIZAR AVATAR",
+    "connectWallet": "Primero conecta una billetera.",
+    "resetDesc": "Borra el avatar personalizado y vuelve al Identicon de píxeles determinista.",
+    "rawSvg": "SVG sin procesar",
+    "chooseTemplate": "Elegir plantilla",
+    "nftContract": "Dirección del contrato NFT",
+    "nftTokenId": "ID de token NFT",
+    "nftNote": "Solo se aceptan NFTs de contratos aprobados por el administrador.",
+    "saveSvg": "GUARDAR AVATAR SVG",
+    "linkNft": "VINCULAR NFT",
+    "resetConfirm": "VOLVER A IDENTICON"
+  },
+  "diagnostics": {
+    "title": "Diagnóstico de Transacción",
+    "simulationFailed": "Simulación de transacción fallida",
+    "executionFailed": "Ejecución de transacción fallida",
+    "viewDocs": "Ver Documentación de Stellar ↗",
+    "simulationLogs": "Registros de Simulación",
+    "hideLogs": "Ocultar Registros",
+    "commonCauses": "Causas Comunes",
+    "suggestedAction": "Acción Sugerida",
+    "insufficient_balance": {
+      "title": "Saldo Insuficiente",
+      "description": "Tu billetera no tiene suficiente XLM para cubrir el buy-in y la reserva de tarifas de red.",
+      "cause": "El saldo de la cuenta está por debajo de la cantidad requerida más la reserva base de Stellar.",
+      "action": "Deposita XLM adicional en tu billetera para cubrir el buy-in de la mesa y la reserva mínima."
+    },
+    "timeout": {
+      "title": "Tiempo de Espera Agotado",
+      "description": "La transacción o la solicitud RPC excedió el tiempo límite antes de recibir confirmación.",
+      "cause": "La congestión de la red o la latencia del nodo RPC provocó que la solicitud superara el tiempo de espera.",
+      "action": "Comprueba tu conexión y vuelve a intentar la transacción. No se han deducido fondos."
+    },
+    "seq": {
+      "title": "Desajuste del Número de Secuencia",
+      "description": "El número de secuencia de la transacción no coincide con la secuencia actual de la cuenta on-chain.",
+      "cause": "Se envió otra transacción desde esta cuenta al mismo tiempo, avanzando la secuencia.",
+      "action": "Actualiza la mesa para obtener el número de secuencia actualizado y vuelve a intentarlo."
+    },
+    "expired": {
+      "title": "Transacción Caducada",
+      "description": "La transacción alcanzó su límite de tiempo o de libro mayor antes de ser incluida.",
+      "cause": "La transacción permaneció pendiente más allá del límite de caducidad del ledger.",
+      "action": "Envía una nueva transacción con límites de tiempo actualizados."
+    },
+    "budget": {
+      "title": "Presupuesto de Recursos Excedido",
+      "description": "La invocación del contrato excedió el presupuesto de instrucciones de CPU o memoria de Soroban.",
+      "cause": "La ejecución del contrato inteligente consumió más unidades de cómputo o almacenamiento del permitido.",
+      "action": "Revisa los parámetros de la operación o espera a que se ajusten las tarifas antes de reintentar."
+    },
+    "unknown": {
+      "title": "Error de Transacción",
+      "description": "Ocurrió un fallo de transacción inesperado.",
+      "cause": "Se produjo un error desconocido o pánico en el contrato durante la ejecución.",
+      "action": "Revisa los registros técnicos de simulación abajo o reintenta la operación."
+    }
+  },
+  "offline": {
+    "cachedView": "VISTA EN CACHÉ (SOLO LECTURA)",
+    "disconnected": "Billetera desconectada",
+    "lastUpdated": "Última actualización: {time}",
+    "stale": "DESACTUALIZADO",
+    "reconnect": "RECONECTAR BILLETERA",
+    "viewingCached": "Estás viendo datos de mesa almacenados en caché mientras estás desconectado.",
+    "offlineNotice": "Modo sin conexión: mostrando el estado de la sala en caché."
   }
 }

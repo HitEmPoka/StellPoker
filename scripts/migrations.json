@@ -1,0 +1,59 @@
+{
+  "$schema": "informational — no formal JSON schema, see scripts/deploy.sh and scripts/upgrade.sh",
+  "description": "Deploy order, init args, and upgrade paths for Stellar Poker's Soroban contracts. Consumed by scripts/deploy.sh (deploy order + init) and scripts/upgrade.sh (upgrade path).",
+  "contracts": [
+    {
+      "key": "zk-verifier",
+      "package": "zk-verifier",
+      "wasmName": "zk_verifier",
+      "deployOrder": 1,
+      "init": {
+        "function": "initialize",
+        "args": ["--admin ${DEPLOYER}"]
+      },
+      "upgrade": {
+        "supported": false,
+        "note": "No on-chain upgrade path yet — redeploy and migrate verification keys."
+      }
+    },
+    {
+      "key": "committee-registry",
+      "package": "committee-registry",
+      "wasmName": "committee_registry",
+      "deployOrder": 2,
+      "init": {
+        "function": "initialize",
+        "args": ["--admin ${DEPLOYER}"]
+      },
+      "upgrade": {
+        "supported": false,
+        "note": "No on-chain upgrade path yet — redeploy and re-register committee members."
+      }
+    },
+    {
+      "key": "poker-table",
+      "package": "poker-table",
+      "wasmName": "poker_table",
+      "deployOrder": 3,
+      "init": {
+        "function": "initialize",
+        "args": []
+      },
+      "upgrade": {
+        "supported": true,
+        "mechanism": "timelocked-propose-execute",
+        "proposeFunction": "propose_upgrade",
+        "proposeArgs": ["--table-id ${TABLE_ID}", "--new-wasm-hash ${NEW_WASM_HASH}", "--delay-seconds ${DELAY_SECONDS}"],
+        "executeFunction": "execute_upgrade",
+        "executeArgs": ["--table-id ${TABLE_ID}"],
+        "minDelaySeconds": 86400,
+        "rollback": {
+          "function": "revert_last_upgrade",
+          "args": ["--table-id ${TABLE_ID}"],
+          "windowSeconds": 21600,
+          "note": "Only reverts the single most recently *executed* upgrade, and only within windowSeconds of that execution. No timelock on the rollback itself."
+        }
+      }
+    }
+  ]
+}

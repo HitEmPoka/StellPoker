@@ -1,3 +1,4 @@
+/** Game Phase shape. */
 export type GamePhase =
   | "waiting"
   | "dealing"
@@ -12,6 +13,7 @@ export type GamePhase =
   | "showdown_run2"
   | "rit_settlement";
 
+/** Player shape. */
 export interface Player {
   address: string;
   seat: number;
@@ -22,6 +24,7 @@ export interface Player {
   cards?: [number, number];
 }
 
+/** Rit State shape. */
 export interface RitState {
   active: boolean;
   player1Seat: number;
@@ -36,6 +39,10 @@ export interface RitState {
   run2Winner: number;
 }
 
+/** A value per ZK proof phase, keyed the way the proof explorer names them. */
+export type ProofPhaseRecord<T> = Partial<Record<"deal" | "flop" | "turn" | "river" | "showdown", T>>;
+
+/** Game State shape. */
 export interface GameState {
   tableId: number;
   phase: GamePhase;
@@ -48,10 +55,20 @@ export interface GameState {
   handNumber: number;
   lastTxHash?: string;
   proofSize?: number;
+  /** Tx hash per proof phase for the current hand, for the proof explorer (#625). */
+  proofTxHashes?: ProofPhaseRecord<string>;
+  /** Proof size in bytes per phase for the current hand (#625). */
+  proofSizes?: ProofPhaseRecord<number>;
+  /** Public inputs the current hand's deal proof was verified against (#625). */
+  dealPublicInputs?: { deckRoot?: string; handCommitments?: string[] };
   onChainConfirmed: boolean;
   ritState?: RitState;
 }
 
+/** Creates Initial State.
+ * @param tableId - table Id.
+ * @returns GameState.
+ */
 export function createInitialState(tableId: number): GameState {
   return {
     tableId,

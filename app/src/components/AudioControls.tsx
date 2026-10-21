@@ -7,15 +7,21 @@ import {
   setSfxMuted,
   setSfxVolume,
   playSound,
+  getSoundGroupMuted,
+  setSoundGroupMuted,
+  type SoundGroup,
 } from "@/lib/sound-engine";
 
+/** Renders Audio Controls */
 export function AudioControls() {
   const [muted, setMutedState] = useState<boolean>(false);
   const [volume, setVolumeState] = useState<number>(0.55);
+  const [groupMuted, setGroupMuted] = useState<Record<SoundGroup, boolean>>({ cards: false, chips: false, alerts: false });
 
   useEffect(() => {
     setMutedState(getSfxMuted());
     setVolumeState(getSfxVolume());
+    setGroupMuted({ cards: getSoundGroupMuted("cards"), chips: getSoundGroupMuted("chips"), alerts: getSoundGroupMuted("alerts") });
   }, []);
 
   const handleToggleMute = () => {
@@ -25,6 +31,12 @@ export function AudioControls() {
     if (!next) {
       playSound("chip");
     }
+  };
+
+  const toggleGroup = (group: SoundGroup) => {
+    const next = !groupMuted[group];
+    setGroupMuted((current) => ({ ...current, [group]: next }));
+    setSoundGroupMuted(group, next);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,6 +81,14 @@ export function AudioControls() {
         <span className="w-8 text-[10px] text-neutral-400 font-mono">
           {Math.round(volume * 100)}%
         </span>
+      </div>
+      <div className="flex gap-2 text-[9px]" aria-label="Sound groups">
+        {(["cards", "chips", "alerts"] as const).map((group) => (
+          <label key={group} className="flex items-center gap-1 capitalize">
+            <input type="checkbox" checked={!groupMuted[group]} onChange={() => toggleGroup(group)} />
+            {group}
+          </label>
+        ))}
       </div>
     </div>
   );

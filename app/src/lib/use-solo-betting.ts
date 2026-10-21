@@ -9,6 +9,7 @@ function deterministicPercent(seed: string): number {
   return (hash >>> 0) % 100;
 }
 
+/** Solo Bet Result shape. */
 export interface SoloBetResult {
   pot: number;
   userStack: number;
@@ -19,6 +20,15 @@ export interface SoloBetResult {
   aiLine: string;
 }
 
+/** Computes Solo Bet.
+ * @param game - game.
+ * @param tableId - table Id.
+ * @param meAddress - me Address.
+ * @param botAddress - bot Address.
+ * @param action - action.
+ * @param amount - amount.
+ * @returns SoloBetResult.
+ */
 export function computeSoloBet(
   game: GameState,
   tableId: number,

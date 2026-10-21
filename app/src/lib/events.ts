@@ -27,6 +27,7 @@ export interface PokerTableEvent {
   ledger: number;
 }
 
+/** Event Subscription shape. */
 export interface EventSubscription {
   stop: () => void;
 }

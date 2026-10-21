@@ -15,6 +15,7 @@ import { webcrypto } from "node:crypto";
 
 const STORAGE_PREFIX = "stellpoker-encrypted-session-";
 
+/** Encrypted Session Payload shape. */
 export interface EncryptedSessionPayload {
   tableId: number;
   handNumber: number;
@@ -26,6 +27,7 @@ export interface EncryptedSessionPayload {
   updatedAt: number;
 }
 
+/** Restored Hand State shape. */
 export interface RestoredHandState {
   tableId: number;
   handNumber: number;
@@ -47,7 +49,12 @@ function getSubtleCrypto(): SubtleCrypto | null {
   return null;
 }
 
-function getRandomValues(array: Uint8Array): Uint8Array {
+// Pinned to `Uint8Array<ArrayBuffer>`: since TypeScript 5.7 `Uint8Array` is
+// generic over its buffer, and the plain alias admits `SharedArrayBuffer`,
+// which neither `crypto.getRandomValues` nor `BufferSource` accepts.
+function getRandomValues(
+  array: Uint8Array<ArrayBuffer>
+): Uint8Array<ArrayBuffer> {
   if (typeof globalThis !== "undefined" && globalThis.crypto?.getRandomValues) {
     return globalThis.crypto.getRandomValues(array);
   }
@@ -55,7 +62,7 @@ function getRandomValues(array: Uint8Array): Uint8Array {
     return window.crypto.getRandomValues(array);
   }
   if (webcrypto && webcrypto.getRandomValues) {
-    return webcrypto.getRandomValues(array) as unknown as Uint8Array;
+    return webcrypto.getRandomValues(array) as unknown as Uint8Array<ArrayBuffer>;
   }
   return array;
 }

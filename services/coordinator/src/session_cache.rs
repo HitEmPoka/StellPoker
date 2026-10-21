@@ -51,7 +51,13 @@ impl SessionCache {
                 last_checkpoint INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
-            ); COMMIT;",
+            );
+            -- Issue #602: load_all_sessions (ORDER BY updated_at DESC) and
+            -- cleanup_old_sessions (WHERE updated_at < ?) both scanned the
+            -- full table without this index.
+            CREATE INDEX IF NOT EXISTS idx_mpc_sessions_updated_at
+                ON mpc_sessions (updated_at);
+            COMMIT;",
         )?;
 
         Ok(SessionCache { conn })
@@ -66,10 +72,8 @@ impl SessionCache {
         let hand_commitments_json =
             serde_json::to_string(&session.hand_commitments).unwrap_or_default();
         let player_order_json = serde_json::to_string(&session.player_order).unwrap_or_default();
-        let dealt_indices_json =
-            serde_json::to_string(&session.dealt_indices).unwrap_or_default();
-        let board_indices_json =
-            serde_json::to_string(&session.board_indices).unwrap_or_default();
+        let dealt_indices_json = serde_json::to_string(&session.dealt_indices).unwrap_or_default();
+        let board_indices_json = serde_json::to_string(&session.board_indices).unwrap_or_default();
         let reveal_tx_hashes_json =
             serde_json::to_string(&session.reveal_tx_hashes).unwrap_or_default();
 
@@ -191,8 +195,10 @@ impl SessionCache {
     }
 
     pub fn delete_session(&self, session_id: &str) -> SqliteResult<()> {
-        self.conn
-            .execute("DELETE FROM mpc_sessions WHERE session_id = ?", params![session_id])?;
+        self.conn.execute(
+            "DELETE FROM mpc_sessions WHERE session_id = ?",
+            params![session_id],
+        )?;
         Ok(())
     }
 
@@ -213,5 +219,38 @@ pub fn new_store(db_path: &str) -> SessionCacheStore {
                 SessionCache::new(":memory:").expect("in-memory fallback"),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #602: `load_all_sessions` / `cleanup_old_sessions` filter and
+    /// sort on `updated_at`. Confirms the query planner actually uses the
+    /// new index (a `SEARCH`/index step, not a bare `SCAN`) instead of just
+    /// trusting that the `CREATE INDEX` statement ran.
+    #[test]
+    fn updated_at_queries_use_the_index() {
+        let cache = SessionCache::new(":memory:").expect("in-memory cache");
+
+        let plan: String = cache
+            .conn
+            .prepare("EXPLAIN QUERY PLAN SELECT * FROM mpc_sessions WHERE updated_at < ?")
+            .unwrap()
+            .query_map(params![0i64], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<SqliteResult<Vec<_>>>()
+            .unwrap()
+            .join(" ");
+
+        assert!(
+            plan.contains("idx_mpc_sessions_updated_at"),
+            "expected the updated_at index to be used, got plan: {plan}"
+        );
+        assert!(
+            !plan.to_uppercase().contains("SCAN TABLE MPC_SESSIONS"),
+            "query should not fall back to a full table scan, got plan: {plan}"
+        );
     }
 }

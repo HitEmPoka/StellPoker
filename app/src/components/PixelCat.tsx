@@ -27,6 +27,9 @@ interface PixelCatProps {
   isUser?: boolean;
 }
 
+/** Renders Pixel Cat.
+ * @param props(object) - props(object).
+ */
 export function PixelCat({
   sprite = 18,
   size = 48,
@@ -77,6 +80,9 @@ export function PixelCat({
   );
 }
 
+/** Renders Pixel Heart.
+ * @param props(object) - props(object).
+ */
 export function PixelHeart({ size = 4, beating = false }: { size?: number; beating?: boolean }) {
   const px = size;
   return (

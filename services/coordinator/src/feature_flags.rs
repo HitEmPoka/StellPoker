@@ -262,19 +262,31 @@ mod tests {
     #[tokio::test]
     async fn test_is_enabled_unknown_flag_returns_false() {
         let store = FeatureFlagStore::new();
-        assert!(!store.is_enabled("totally_unknown_flag", &FlagScope::Global).await);
+        assert!(
+            !store
+                .is_enabled("totally_unknown_flag", &FlagScope::Global)
+                .await
+        );
     }
 
     #[tokio::test]
     async fn test_per_table_override_wins_over_global() {
         let store = store_with(&[
-            (keys::CHAT_ENABLED, false),             // global: off
-            ("chat_enabled.table.7", true),          // table 7: on
+            (keys::CHAT_ENABLED, false),    // global: off
+            ("chat_enabled.table.7", true), // table 7: on
         ]);
         // Table 7 sees the flag as enabled.
-        assert!(store.is_enabled(keys::CHAT_ENABLED, &FlagScope::PerTable(7)).await);
+        assert!(
+            store
+                .is_enabled(keys::CHAT_ENABLED, &FlagScope::PerTable(7))
+                .await
+        );
         // Table 8 falls back to global (false).
-        assert!(!store.is_enabled(keys::CHAT_ENABLED, &FlagScope::PerTable(8)).await);
+        assert!(
+            !store
+                .is_enabled(keys::CHAT_ENABLED, &FlagScope::PerTable(8))
+                .await
+        );
     }
 
     #[tokio::test]
@@ -286,7 +298,10 @@ mod tests {
         ]);
         assert!(
             store
-                .is_enabled(keys::EXPERIMENTAL_UI, &FlagScope::PerPlayer(player.to_string()))
+                .is_enabled(
+                    keys::EXPERIMENTAL_UI,
+                    &FlagScope::PerPlayer(player.to_string())
+                )
                 .await
         );
         // A different player falls back to global.
@@ -303,20 +318,36 @@ mod tests {
     #[tokio::test]
     async fn test_set_flag_mutates_store() {
         let store = FeatureFlagStore::new();
-        assert!(!store.is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global).await);
+        assert!(
+            !store
+                .is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global)
+                .await
+        );
 
         store.set_flag(keys::NEW_CIRCUITS, true).await;
-        assert!(store.is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global).await);
+        assert!(
+            store
+                .is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global)
+                .await
+        );
 
         store.set_flag(keys::NEW_CIRCUITS, false).await;
-        assert!(!store.is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global).await);
+        assert!(
+            !store
+                .is_enabled(keys::NEW_CIRCUITS, &FlagScope::Global)
+                .await
+        );
     }
 
     #[tokio::test]
     async fn test_set_flag_arbitrary_key() {
         let store = FeatureFlagStore::new();
         store.set_flag("solo_mode.table.42", true).await;
-        assert!(store.is_enabled(keys::SOLO_MODE, &FlagScope::PerTable(42)).await);
+        assert!(
+            store
+                .is_enabled(keys::SOLO_MODE, &FlagScope::PerTable(42))
+                .await
+        );
         // Global still false.
         assert!(!store.is_enabled(keys::SOLO_MODE, &FlagScope::Global).await);
     }

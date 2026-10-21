@@ -10,7 +10,7 @@ x-json-logging: &json-logging
 services:
   # Soroban local network (stellar quickstart)
   soroban:
-    image: stellar/quickstart:latest
+    image: stellar/quickstart:v22.0.1
     command: --local --enable-soroban-rpc
     ports:
       - "8000:8000"
