@@ -4095,6 +4095,7 @@ dependencies = [
 name = "poker-table"
 version = "0.1.0"
 dependencies = [
+ "game-hub",
  "proptest",
  "serde_json",
  "soroban-sdk",

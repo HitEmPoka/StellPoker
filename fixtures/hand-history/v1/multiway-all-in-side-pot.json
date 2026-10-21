@@ -1,0 +1,169 @@
+{
+  "version": "1.0.0",
+  "network": "stellar-mainnet",
+  "exported_at": "2026-10-19T15:00:00Z",
+  "table": {
+    "id": 105,
+    "name": "Stellar 6-Max NL",
+    "variant": "texas_holdem",
+    "betting_structure": "no_limit",
+    "stakes": {
+      "small_blind": 1,
+      "big_blind": 2,
+      "ante": 0,
+      "min_buy_in": 50,
+      "max_buy_in": 200,
+      "currency": "USDC"
+    }
+  },
+  "hand": {
+    "number": 523,
+    "session_id": 14002,
+    "timestamp": "2026-10-19T14:58:30Z",
+    "duration_seconds": 60,
+    "dealer_seat": 2
+  },
+  "players": [
+    {
+      "seat": 0,
+      "address": "GCSHORSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "alias": "Shorty",
+      "starting_stack": 40,
+      "final_stack": 120,
+      "net_payout": 80,
+      "hole_cards": ["7h", "7s"],
+      "folded": false,
+      "all_in": true,
+      "is_hero": false
+    },
+    {
+      "seat": 1,
+      "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "alias": "MidStack",
+      "starting_stack": 100,
+      "final_stack": 118,
+      "net_payout": 18,
+      "hole_cards": ["As", "Qs"],
+      "folded": false,
+      "all_in": false,
+      "is_hero": true
+    },
+    {
+      "seat": 2,
+      "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "alias": "BigStack",
+      "starting_stack": 200,
+      "final_stack": 100,
+      "net_payout": -100,
+      "hole_cards": ["Kd", "Qd"],
+      "folded": false,
+      "all_in": false,
+      "is_hero": false
+    }
+  ],
+  "board": ["7d", "Qc", "2s", "9h", "Jh"],
+  "streets": [
+    {
+      "street": "preflop",
+      "pot_start": 0,
+      "actions": [
+        { "sequence": 1, "seat": 0, "address": "GCSHORSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_sb", "amount": 1, "pot_after": 1 },
+        { "sequence": 2, "seat": 1, "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_bb", "amount": 2, "pot_after": 3 },
+        { "sequence": 3, "seat": 2, "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "raise", "amount": 6, "pot_after": 9 },
+        { "sequence": 4, "seat": 0, "address": "GCSHORSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "all_in", "amount": 39, "pot_after": 48 },
+        { "sequence": 5, "seat": 1, "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 38, "pot_after": 86 },
+        { "sequence": 6, "seat": 2, "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 34, "pot_after": 120 }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards_dealt": ["7d", "Qc", "2s"],
+      "pot_start": 120,
+      "actions": [
+        { "sequence": 7, "seat": 1, "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "bet", "amount": 30, "pot_after": 150 },
+        { "sequence": 8, "seat": 2, "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 30, "pot_after": 180 }
+      ]
+    },
+    {
+      "street": "turn",
+      "cards_dealt": ["9h"],
+      "pot_start": 180,
+      "actions": [
+        { "sequence": 9, "seat": 1, "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "bet", "amount": 30, "pot_after": 210 },
+        { "sequence": 10, "seat": 2, "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 30, "pot_after": 240 }
+      ]
+    },
+    {
+      "street": "river",
+      "cards_dealt": ["Jh"],
+      "pot_start": 240,
+      "actions": [
+        { "sequence": 11, "seat": 1, "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 240 },
+        { "sequence": 12, "seat": 2, "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 240 }
+      ]
+    }
+  ],
+  "showdown": {
+    "occurred": true,
+    "revealed_hands": [
+      {
+        "seat": 0,
+        "address": "GCSHORSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "hole_cards": ["7h", "7s"],
+        "hand_rank_name": "Three of a Kind, Sevens",
+        "hand_category": 4,
+        "best_five_cards": ["7h", "7s", "7d", "Qc", "Jh"]
+      },
+      {
+        "seat": 1,
+        "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "hole_cards": ["As", "Qs"],
+        "hand_rank_name": "One Pair, Queens (Ace Kicker)",
+        "hand_category": 2,
+        "best_five_cards": ["As", "Qc", "Qs", "Jh", "9h"]
+      },
+      {
+        "seat": 2,
+        "address": "GEBIGSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        "hole_cards": ["Kd", "Qd"],
+        "hand_rank_name": "One Pair, Queens (King Kicker)",
+        "hand_category": 2,
+        "best_five_cards": ["Kd", "Qc", "Qd", "Jh", "9h"]
+      }
+    ]
+  },
+  "pots": [
+    {
+      "pot_index": 0,
+      "is_side_pot": false,
+      "total": 120,
+      "rake": 0,
+      "winners": [
+        {
+          "seat": 0,
+          "address": "GCSHORSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "amount": 120
+        }
+      ]
+    },
+    {
+      "pot_index": 1,
+      "is_side_pot": true,
+      "total": 120,
+      "rake": 2,
+      "winners": [
+        {
+          "seat": 1,
+          "address": "GDMIDSTACKPLAYERADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "amount": 118
+        }
+      ]
+    }
+  ],
+  "verifiability": {
+    "deck_root": "0x33334444555566667777888899990000aaaabbbbccccddddeeeeffff00001111",
+    "zk_proof_verified": true,
+    "showdown_proof_hash": "0x555566667777888899990000aaaabbbbccccddddeeeeffff0000111122223333",
+    "settled_ledger": 5421099
+  }
+}
