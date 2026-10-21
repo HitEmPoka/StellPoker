@@ -1,0 +1,87 @@
+name: Coverage Trending
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage-delta:
+    name: Coverage delta analysis
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cov-delta-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run coverage on PR
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path pr-lcov.info
+          cargo llvm-cov report --json --output-path pr-coverage.json
+
+      - name: Checkout base branch
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git checkout origin/${{ github.base_ref }}
+
+      - name: Run coverage on base
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --lcov --output-path base-lcov.info
+          cargo llvm-cov report --json --output-path base-coverage.json
+
+      - name: Calculate delta
+        id: delta
+        run: |
+          PR_COV=$(jq -r '.data[0].totals.lines.percent' pr-coverage.json)
+          BASE_COV=$(jq -r '.data[0].totals.lines.percent' base-coverage.json)
+          DELTA=$(echo "$PR_COV - $BASE_COV" | bc)
+          echo "pr=$PR_COV" >> $GITHUB_OUTPUT
+          echo "base=$BASE_COV" >> $GITHUB_OUTPUT
+          echo "delta=$DELTA" >> $GITHUB_OUTPUT
+
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const delta = parseFloat('${{ steps.delta.outputs.delta }}');
+            const pr = parseFloat('${{ steps.delta.outputs.pr }}');
+            const base = parseFloat('${{ steps.delta.outputs.base }}');
+            const icon = delta >= 0 ? '✅' : '⚠️';
+            const sign = delta >= 0 ? '+' : '';
+            
+            const body = `## ${icon} Coverage Report
+            
+            | Metric | Value |
+            |--------|-------|
+            | Base coverage | ${base.toFixed(2)}% |
+            | PR coverage | ${pr.toFixed(2)}% |
+            | **Delta** | **${sign}${delta.toFixed(2)}%** |
+            
+            ${delta < -1 ? '⚠️ Coverage decreased by more than 1%' : ''}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

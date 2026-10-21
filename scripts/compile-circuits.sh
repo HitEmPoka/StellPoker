@@ -149,24 +149,33 @@ verify_artifact_version() {
     fi
 }
 
-# Return 0 (fresh) if the compiled artifact exists and is newer than every
-# source input for the circuit; return 1 (stale) otherwise. Sources include
-# the circuit's own src/ + Nargo.toml and the shared circuits/lib it depends on.
+# Compute content hash of all circuit source dependencies
+compute_circuit_hash() {
+    local circuit="$1"
+    local hash_input=""
+    
+    hash_input+=$(find "${PROJECT_DIR}/circuits/${circuit}/src" -type f -exec cat {} \;)
+    hash_input+=$(cat "${PROJECT_DIR}/circuits/${circuit}/Nargo.toml")
+    hash_input+=$(find "${PROJECT_DIR}/circuits/lib/src" -type f -exec cat {} \;)
+    hash_input+=$(cat "${PROJECT_DIR}/circuits/lib/Nargo.toml")
+    
+    echo -n "$hash_input" | shasum -a 256 | cut -d' ' -f1
+}
+
+# Return 0 (fresh) if the compiled artifact exists and its cached hash matches
+# current source; return 1 (stale) otherwise.
 artifact_is_fresh() {
     local circuit="$1"
     local artifact="$2"
+    local hash_file="${PROJECT_DIR}/circuits/${circuit}/target/.source_hash"
 
     [ -f "${artifact}" ] || return 1
+    [ -f "${hash_file}" ] || return 1
 
-    local newer
-    newer="$(find \
-        "${PROJECT_DIR}/circuits/${circuit}/src" \
-        "${PROJECT_DIR}/circuits/${circuit}/Nargo.toml" \
-        "${PROJECT_DIR}/circuits/lib/src" \
-        "${PROJECT_DIR}/circuits/lib/Nargo.toml" \
-        -type f -newer "${artifact}" -print -quit 2>/dev/null)"
+    local current_hash=$(compute_circuit_hash "${circuit}")
+    local cached_hash=$(cat "${hash_file}" 2>/dev/null || echo "")
 
-    [ -z "${newer}" ]
+    [ "$current_hash" = "$cached_hash" ]
 }
 
 main() {
@@ -202,6 +211,9 @@ main() {
         HOME="${PROJECT_DIR}/.tmp_nargo_home" \
             "${nargo_bin}" compile --program-dir "${PROJECT_DIR}/circuits/${circuit}"
         verify_artifact_version "${PROJECT_DIR}/circuits/${circuit}/target/${circuit}.json"
+        
+        local hash=$(compute_circuit_hash "${circuit}")
+        echo -n "$hash" > "${PROJECT_DIR}/circuits/${circuit}/target/.source_hash"
     done
 
     echo "Circuit compilation complete."
@@ -246,6 +258,9 @@ TOML
                 PLAYER_COUNT="${npc}" \
                 "${nargo_bin}" compile --program-dir "${variant_dir}"
             verify_artifact_version "${artifact}"
+            
+            local hash=$(compute_circuit_hash "${circuit}")
+            echo -n "$hash" > "${variant_dir}/target/.source_hash"
         done
     done
     echo "Parameterised circuit compilation complete."
