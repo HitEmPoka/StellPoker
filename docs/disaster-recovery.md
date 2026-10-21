@@ -1,5 +1,9 @@
 # Disaster Recovery Plan - StellPoker
 
+> **Severities and paging:** see [`incident-response.md`](incident-response.md)
+> for P0–P3 definitions and who gets paged. This runbook covers the mitigation
+> steps once an incident is declared.
+
 ## Incident Recovery Workflow
 The following steps outline the order of operations for system recovery:
 1. **Contract Pause**: Halt movement.

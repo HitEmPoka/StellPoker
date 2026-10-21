@@ -261,7 +261,7 @@ pub struct PrometheusMetrics {
     pub request_counter: IntCounterVec,
     pub request_errors: IntCounterVec,
     pub request_latency: HistogramVec,
-    pub process_cpu_percent: Gauge,
+    pub process_cpu_ratio: Gauge,
     pub process_memory_bytes: Gauge,
 }
 
@@ -510,9 +510,9 @@ async fn main() {
         &["method", "route"],
     )
     .unwrap();
-    let process_cpu_percent = Gauge::with_opts(Opts::new(
-        "coordinator_process_cpu_percent",
-        "Coordinator process CPU usage percentage.",
+    let process_cpu_ratio = Gauge::with_opts(Opts::new(
+        "coordinator_process_cpu_ratio",
+        "Coordinator process CPU usage as a ratio (0.0 = idle, 1.0 = one full core).",
     ))
     .unwrap();
     let process_memory_bytes = Gauge::with_opts(Opts::new(
@@ -531,7 +531,7 @@ async fn main() {
         .register(Box::new(request_latency.clone()))
         .unwrap();
     prometheus_registry
-        .register(Box::new(process_cpu_percent.clone()))
+        .register(Box::new(process_cpu_ratio.clone()))
         .unwrap();
     prometheus_registry
         .register(Box::new(process_memory_bytes.clone()))
@@ -547,7 +547,7 @@ async fn main() {
             request_counter,
             request_errors,
             request_latency,
-            process_cpu_percent: process_cpu_percent.clone(),
+            process_cpu_ratio: process_cpu_ratio.clone(),
             process_memory_bytes: process_memory_bytes.clone(),
         },
     };
@@ -567,8 +567,8 @@ async fn main() {
                 if let Some(process) = system.process(pid) {
                     metrics_clone
                         .prometheus
-                        .process_cpu_percent
-                        .set(process.cpu_usage() as f64);
+                        .process_cpu_ratio
+                        .set(process.cpu_usage() as f64 / 100.0);
                     metrics_clone
                         .prometheus
                         .process_memory_bytes
