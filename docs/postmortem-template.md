@@ -2,7 +2,7 @@
 
 **Session ID:** <!-- e.g. session-20260626-001 -->
 **Date:** YYYY-MM-DD
-**Severity:** <!-- P1 / P2 / P3 -->
+**Severity:** <!-- P0 / P1 / P2 / P3 — see docs/incident-response.md -->
 **Status:** <!-- Investigating / Resolved -->
 
 ---

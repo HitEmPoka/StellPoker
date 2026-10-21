@@ -2,6 +2,9 @@
 
 Common error codes and solutions for the StellPoker coordinator.
 
+> **Paging:** triage here first; escalate per
+> [`incident-response.md`](incident-response.md) if customer impact warrants.
+
 ---
 
 ## Error Codes
