@@ -6,7 +6,7 @@ This document describes the fuzzing infrastructure for StellPoker coordinator HT
 
 ## Fuzzing Targets
 
-The coordinator fuzzing infrastructure implements schema-aware, coverage-guided fuzzing across 4 target families covering 20+ HTTP endpoints:
+The coordinator fuzzing infrastructure implements schema-aware, coverage-guided fuzzing across 5 target families covering 20+ HTTP endpoints and the wallet signature verifier:
 
 ### 1. Table Lifecycle (`fuzz_table_lifecycle`)
 **Endpoints:**
@@ -48,6 +48,13 @@ The coordinator fuzzing infrastructure implements schema-aware, coverage-guided 
 
 **Coverage:** MPC node registration, health checks, dynamic discovery.
 
+### 5. Signed Payload Verification (`fuzz_signed_payload`)
+
+This target calls the production Stellar Ed25519 verifier with a valid public
+key and mutated messages, signatures, and supported hex/base64/XDR encodings.
+It asserts that malformed input returns the expected unauthorized result and
+never panics.
+
 ## Fuzzing Approach
 
 ### Schema-Aware Generation
@@ -80,7 +87,7 @@ Each fuzz target asserts that handlers:
 
 ### Nightly Fuzzing (`fuzz-coordinator-nightly.yml`)
 - **Schedule**: Daily at 3 AM UTC
-- **Duration**: 10 minutes per target (40 minutes total)
+- **Duration**: 10 minutes per target (50 minutes total)
 - **Purpose**: Deep exploration, regression detection
 - **Timeout**: 90 minutes job limit
 
@@ -102,7 +109,7 @@ cargo install cargo-fuzz
 cargo fuzz run fuzz_table_lifecycle -- -max_total_time=60
 
 # Run all targets in sequence
-for target in fuzz_table_lifecycle fuzz_game_actions fuzz_state_queries fuzz_node_discovery; do
+for target in fuzz_table_lifecycle fuzz_game_actions fuzz_state_queries fuzz_node_discovery fuzz_signed_payload; do
   echo "Running $target..."
   timeout 60 cargo fuzz run $target || true
 done
@@ -174,7 +181,8 @@ services/coordinator/
 │   ├── fuzz_table_lifecycle.rs   # Table creation & lobby
 │   ├── fuzz_game_actions.rs      # Game progression & actions
 │   ├── fuzz_state_queries.rs     # Read-only state access
-│   └── fuzz_node_discovery.rs    # Node registry operations
+│   ├── fuzz_node_discovery.rs    # Node registry operations
+│   └── fuzz_signed_payload.rs    # Stellar signed-payload verification
 ├── Cargo.toml                 # Added arbitrary dependency
 └── src/api/types.rs           # Added Arbitrary derives
 ```
