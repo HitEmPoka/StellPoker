@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **#639** Documented felt/deck CSS variable contract for community themes (`docs/community-themes.md`), added an example `neon-noir` theme, wired card backs to `--card-back-*` variables, and validate all built-in/community themes in CI (`scripts/validate-themes.mjs`)
 - **#622** Seats play an arrival animation when a player sits down (`seat-arrive`, disabled under `prefers-reduced-motion`); e2e test for the join-by-ID flow
 - **#623** Documented repaint-cost and OLED dark-theme tradeoffs in `docs/pixel-art-theme-guide.md` (section 9); no rendering change
 - **#624** In-table rules popover (`RULES`) showing blinds, antes, buy-ins, rake, rebuys and time limits read from `get_table`; re-reads when `get_config_version` changes while open

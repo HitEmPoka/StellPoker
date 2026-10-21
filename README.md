@@ -425,6 +425,8 @@ export function CreateTableButton() {
 
 ### Documentation & Guides
 
+- [Community Theme API](docs/community-themes.md) — felt/deck CSS variables and validation
+- [Pixel Art Theme Guide](docs/pixel-art-theme-guide.md)
 - [Developer Tutorial: Building Card Games with `stellar-zk-cards`](docs/tutorial-card-game.md)
 - [Noir Testing Guide](docs/NOIR_TESTING_GUIDE.md)
 - [Local Committee Development Guide](docs/local-committee-dev-guide.md)
