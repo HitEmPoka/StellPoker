@@ -54,3 +54,7 @@ storybook-static
 
 # Audit log WORM exports (scripts/export_audit_worm.py)
 worm/
+
+# Python cache
+__pycache__/
+*.pyc

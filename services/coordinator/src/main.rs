@@ -1039,7 +1039,338 @@ async fn main() {
         idempotency_store: idempotency::new_store(),
         benchmark_store,
         committee_key_rotation,
-        used_session_ids: Arc::new(RwLock:…3698 tokens truncated…cancel_node_decommission))
+        used_session_ids: Arc::new(RwLock::new(HashSet::new())),
+        archive_store,
+        archive_config,
+        drain: drain_state,
+        vk_rollout,
+        submission_ledger: submission_ledger::new_store(
+            &std::env::var("SUBMISSION_LEDGER_DB_PATH")
+                .unwrap_or_else(|_| "./data/submission_ledger.db".to_string()),
+        ),
+        anti_dumping: Arc::new(std::sync::Mutex::new(
+            anti_dumping::DumpingDetector::with_default_config(),
+        )),
+        isolation_audit: Arc::new(std::sync::Mutex::new(
+            session_isolation::IsolationAudit::default(),
+        )),
+        job_queue: Arc::new(job_queue::JobQueue::new(
+            std::env::var("MPC_JOB_QUEUE_WORKERS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4),
+        )),
+        version_registry,
+        node_benchmark_store,
+        partition_store,
+        committee_registry,
+        mpc_nonce_tracker: mpc_identity::SessionNonceTracker::new(),
+        tournaments: tournament::new_store(),
+        archive_store: archive_store.clone(),
+        archive_config: archive_config.clone(),
+        csp_reports: api::csp::CspReportStore::new(),
+        attestation_store: node_attestation::new_store(),
+        attestation_config: node_attestation::AttestationConfig::from_env(),
+        decommission: Arc::new(RwLock::new(
+            node_decommission::DecommissionManager::from_env(),
+        )),
+        preemption: Arc::new(RwLock::new(
+            session_preemption::PreemptionController::from_env(),
+        )),
+    };
+    idempotency::spawn_gc_task(state.idempotency_store.clone());
+    rate_limit::spawn_rate_alert_task(state.rejection_counter.clone());
+    rate_limit::spawn_bucket_gc_task(state.ip_buckets.clone());
+    key_rotation::spawn_rotation_task(
+        state.committee_key_rotation.clone(),
+        state.soroban_config.clone(),
+    );
+    // Register job queue handlers.
+    let jq = Arc::clone(&state.job_queue);
+    let mpc_client_jq = state.mpc_client.clone();
+    let mpc_config_jq = state.mpc_config.clone();
+    jq.register_handler(
+        "mpc_deal",
+        Arc::new(move |job| {
+            let client = mpc_client_jq.clone();
+            let cfg = mpc_config_jq.clone();
+            tokio::spawn(async move {
+                let table_id = job.table_id;
+                let players: Vec<String> =
+                    serde_json::from_value(job.payload.get("players").cloned().unwrap_or_default())
+                        .unwrap_or_default();
+                let prepared = mpc::prepare_deal_from_nodes(
+                    &client,
+                    &cfg.node_endpoints,
+                    &cfg.circuit_dir,
+                    table_id,
+                    &players,
+                )
+                .await
+                .map_err(|e| format!("deal prepare failed: {}", e))?;
+                let session_id = job.job_id.replace("job-mpc_deal-", "proof-");
+                let deal_circuit = if players.len() >= 2 && players.len() < 6 {
+                    format!("deal_valid_{}p", players.len())
+                } else {
+                    "deal_valid".to_string()
+                };
+                let proof = mpc::generate_proof_from_share_sets(
+                    &client,
+                    table_id,
+                    &prepared.share_set_ids,
+                    &session_id,
+                    &deal_circuit,
+                    &cfg.circuit_dir,
+                    &cfg.node_endpoints,
+                )
+                .await
+                .map_err(|e| format!("deal proof generation failed: {}", e))?;
+                Ok(serde_json::json!({
+                    "proof": proof.proof,
+                    "public_inputs": proof.public_inputs,
+                    "session_id": proof.session_id,
+                }))
+            })
+        }),
+    );
+    let jq2 = Arc::clone(&state.job_queue);
+    let mpc_client_jq2 = state.mpc_client.clone();
+    let mpc_config_jq2 = state.mpc_config.clone();
+    jq2.register_handler(
+        "mpc_reveal",
+        Arc::new(move |job| {
+            let client = mpc_client_jq2.clone();
+            let cfg = mpc_config_jq2.clone();
+            tokio::spawn(async move {
+                let table_id = job.table_id;
+                let phase: String =
+                    serde_json::from_value(job.payload.get("phase").cloned().unwrap_or_default())
+                        .unwrap_or_default();
+                let dealt_indices: Vec<u32> = serde_json::from_value(
+                    job.payload
+                        .get("dealt_indices")
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let deck_root: String = serde_json::from_value(
+                    job.payload.get("deck_root").cloned().unwrap_or_default(),
+                )
+                .unwrap_or_default();
+                let prepared = mpc::prepare_reveal_from_nodes(
+                    &client,
+                    &cfg.node_endpoints,
+                    &cfg.circuit_dir,
+                    table_id,
+                    &phase,
+                    &dealt_indices,
+                    &deck_root,
+                )
+                .await
+                .map_err(|e| format!("reveal prepare failed: {}", e))?;
+                let session_id = job.job_id.replace("job-mpc_reveal-", "proof-");
+                let proof = mpc::generate_proof_from_share_sets(
+                    &client,
+                    table_id,
+                    &prepared.share_set_ids,
+                    &session_id,
+                    "reveal_board_valid",
+                    &cfg.circuit_dir,
+                    &cfg.node_endpoints,
+                )
+                .await
+                .map_err(|e| format!("reveal proof generation failed: {}", e))?;
+                Ok(serde_json::json!({
+                    "proof": proof.proof,
+                    "public_inputs": proof.public_inputs,
+                    "session_id": proof.session_id,
+                }))
+            })
+        }),
+    );
+    state.job_queue.spawn_workers();
+    circuit_pins::spawn_circuit_watcher(state.mpc_config.circuit_dir.clone());
+
+    if let Some(path) = hot_reload_snapshot {
+        hot_reload::spawn_snapshot_task(path, Arc::clone(&tables), Arc::clone(&lobby_assignments));
+    }
+
+    archiver::spawn_archive_task(
+        state.mpc_sessions.clone(),
+        Arc::clone(&state.tables),
+        state.archive_store.clone(),
+        state.archive_config.clone(),
+    );
+
+    // Spawn background node health check task
+    let node_healths = state.metrics.node_healths.clone();
+    let node_draining_gauge = state.metrics.prometheus.node_draining.clone();
+    let soroban_config = state.soroban_config.clone();
+    let default_endpoints = state.mpc_config.node_endpoints.clone();
+    let hc_client = state.mpc_client.clone();
+    // Issue #587: attestation gates health in strict mode.
+    let attestation_store = state.attestation_store.clone();
+    let attestation_config = state.attestation_config.clone();
+    let committee_registry_hc = state.committee_registry.clone();
+    tokio::spawn(async move {
+        loop {
+            // Each entry is (node_id, endpoint). Node ids let the strict
+            // attestation check identify who is claiming to be healthy.
+            let nodes: Vec<(String, String)> = if soroban_config
+                .committee_registry_contract
+                .is_empty()
+            {
+                default_endpoints
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ep)| (i.to_string(), ep.clone()))
+                    .collect()
+            } else {
+                match soroban::fetch_active_nodes_from_registry(&soroban_config).await {
+                    Ok(members) => {
+                        let registry = committee_registry_hc.read().await;
+                        members
+                            .into_iter()
+                            .map(|m| {
+                                let node_id = registry
+                                    .iter()
+                                    .find(|(_, addr)| **addr == m.address)
+                                    .map(|(id, _)| id.clone())
+                                    .unwrap_or_default();
+                                (node_id, m.endpoint)
+                            })
+                            .collect()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to fetch nodes from registry for health check: {}",
+                            e
+                        );
+                        default_endpoints
+                            .iter()
+                            .enumerate()
+                            .map(|(i, ep)| (i.to_string(), ep.clone()))
+                            .collect()
+                    }
+                }
+            };
+
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            for (node_id, endpoint) in nodes {
+                let url = format!("{}/health", endpoint);
+                let reachable = hc_client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+
+                // Strict mode refuses to treat an unattested peer as healthy.
+                let attested = node_attestation::is_attested(
+                    &attestation_store,
+                    &attestation_config,
+                    &node_id,
+                    now,
+                )
+                .await;
+                let is_healthy = reachable && attested;
+                if reachable && !attested {
+                    tracing::warn!(
+                        node_id = %node_id,
+                        endpoint = %endpoint,
+                        "MPC node is reachable but unattested; refusing in strict mode"
+                    );
+                }
+
+                let mut guard = node_healths.lock().await;
+                if let Some(node) = guard.iter_mut().find(|n| n.endpoint == endpoint) {
+                    let prev_connected = node.connected;
+                    let prev_draining = node.draining;
+                    if is_healthy {
+                        node.connected = true;
+                        node.last_heartbeat = Some(chrono::Utc::now());
+                        node.draining = is_draining;
+                        if is_draining && !prev_draining {
+                            tracing::warn!("MPC Node ({}) entered DRAIN mode", endpoint);
+                        }
+                    } else {
+                        if prev_connected {
+                            tracing::warn!("MPC Node ({}) went offline", endpoint);
+                        }
+                        node.connected = false;
+                        node.draining = false;
+                    }
+                    node_draining_gauge
+                        .with_label_values(&[endpoint.as_str()])
+                        .set(if node.draining { 1.0 } else { 0.0 });
+                } else {
+                    // New node discovered
+                    guard.push(MpcNodeHealth {
+                        endpoint: endpoint.clone(),
+                        connected: is_healthy,
+                        last_heartbeat: if is_healthy {
+                            Some(chrono::Utc::now())
+                        } else {
+                            None
+                        },
+                        draining: is_draining,
+                    });
+                    node_draining_gauge
+                        .with_label_values(&[endpoint.as_str()])
+                        .set(if is_draining { 1.0 } else { 0.0 });
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        }
+    });
+
+    // Snapshot drain state + active-session counter for the shutdown task
+    // (the `state` itself is moved into the router below).
+    let shutdown_drain = state.drain.clone();
+    let shutdown_active = state.metrics.active_mpc_sessions.clone();
+
+    let app = Router::new()
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route("/", get(dashboard::dashboard_page))
+        .route("/metrics", get(metrics_endpoint))
+        .route("/api/health", get(health))
+        .route("/api/admin/deprecations", get(api_version::deprecation_report))
+        .route("/api/leader", get(get_leader_status))
+        .route("/api/stats", get(get_stats))
+        .route("/api/benchmarks", get(get_benchmarks))
+        // Dynamic MPC node discovery (active only when neither the committee
+        // registry nor static MPC_NODE_* endpoints are configured).
+        .route("/api/node/register", post(api::register_node))
+        .route("/api/node/:id/heartbeat", post(api::node_heartbeat))
+        .route("/api/node/:id", delete(api::deregister_node))
+        // MPC node version negotiation (Issue #233)
+        .route("/api/mpc/version/register", post(register_node_version))
+        .route("/api/mpc/version/nodes", get(list_node_versions))
+        .route("/api/mpc/version/negotiate", get(negotiate_version))
+        // MPC node benchmarking suite (Issue #234)
+        .route("/api/mpc/benchmark/sample", post(record_node_benchmark))
+        .route("/api/mpc/benchmark/report", get(get_node_benchmark_report))
+        .route("/api/mpc/benchmark/sweep", post(run_node_benchmark_sweep))
+        // MPC network partition detection (Issue #236)
+        .route("/api/mpc/partition/report", post(submit_partition_report))
+        .route("/api/mpc/partition/status", get(get_partition_status))
+        // MPC node identity verification via Stellar addresses (Issue #237)
+        .route("/api/mpc/identity/register", post(register_node_identity))
+        .route("/api/mpc/identity/nodes", get(list_node_identities))
+        .route("/api/mpc/identity/verify", post(verify_node_identity))
+        // Node build-provenance attestation (Issue #587)
+        .route("/api/mpc/attestation", post(submit_node_attestation))
+        .route("/api/mpc/attestation/status", get(get_attestation_status))
+        // Committee node decommission / secure reshuffle (Issue #585)
+        .route("/api/mpc/decommission/status", get(get_decommission_status))
+        .route("/api/mpc/decommission/begin", post(begin_node_decommission))
+        .route("/api/mpc/decommission/plan", post(plan_node_reshuffle))
+        .route("/api/mpc/decommission/enact", post(enact_node_reshuffle))
+        .route("/api/mpc/decommission/cancel", post(cancel_node_decommission))
         // MPC session preemption policy (Issue #588)
         .route("/api/mpc/preemption/status", get(get_preemption_status))
         // CSP violation report ingestion (Issue #136)
