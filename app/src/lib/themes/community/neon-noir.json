@@ -1,0 +1,13 @@
+{
+  "id": "neon-noir",
+  "label": "Neon Noir",
+  "feltDark": "#12021f",
+  "feltMid": "#260646",
+  "feltLight": "#4b0f7a",
+  "feltShadow": "#07000d",
+  "uiBorder": "#ff2e97",
+  "cardBackStart": "#1b0b33",
+  "cardBackEnd": "#08040f",
+  "cardBackBorder": "#00e5ff",
+  "cardBackSymbol": "#ff2e97"
+}

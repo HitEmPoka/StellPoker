@@ -57,7 +57,8 @@ function CardBack({ w, h }: { w: number; h: number }) {
       style={{
         width: `${w}px`,
         height: `${h}px`,
-        background: 'linear-gradient(180deg, #1a3a5c 0%, #0d2137 100%)',
+        background:
+          'linear-gradient(180deg, var(--card-back-start, #1a3a5c) 0%, var(--card-back-end, #0d2137) 100%)',
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -66,15 +67,15 @@ function CardBack({ w, h }: { w: number; h: number }) {
       <div style={{
         position: 'absolute',
         inset: '6px',
-        border: '2px solid #2a5a8c',
+        border: '2px solid var(--card-back-border, #2a5a8c)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
       }}>
         <div style={{
-          color: '#3498db',
+          color: 'var(--card-back-symbol, #3498db)',
           fontSize: '10px',
-          textShadow: '1px 1px 0 #0d2137',
+          textShadow: '1px 1px 0 var(--card-back-end, #0d2137)',
         }}>
           S
         </div>

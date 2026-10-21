@@ -38,9 +38,16 @@
   --pixel-gold: #f1c40f;
   --pixel-blue: #3498db;
   --pixel-green: #27ae60;
+  /* Table felt — part of the public community theme contract. */
   --felt-dark: #1a5c2a;
   --felt-mid: #237a3a;
   --felt-light: #2d9648;
+  --felt-shadow: #0f3b1a;
+  /* Card deck back — part of the public community theme contract. */
+  --card-back-start: #1a3a5c;
+  --card-back-end: #0d2137;
+  --card-back-border: #2a5a8c;
+  --card-back-symbol: #3498db;
   --card-white: #fefefe;
   --card-shadow: #c0c0c0;
   --ui-panel: rgba(20, 12, 8, 0.85);

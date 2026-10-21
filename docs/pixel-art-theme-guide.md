@@ -2,6 +2,9 @@
 
 This guide covers everything you need to customize Stellar Poker's retro pixel-art theme. The theme is built entirely with CSS custom properties, utility classes, and pixel-art CSS techniques — no JavaScript theming library is required.
 
+For the formalized felt/deck contract, its JSON format, and a complete community
+theme example, see [Community Theme API](./community-themes.md).
+
 ---
 
 ## 1. CSS Variable Overrides
@@ -28,6 +31,11 @@ The entire color palette is defined as CSS custom properties in `app/src/app/glo
   --felt-dark: #1a5c2a;
   --felt-mid: #237a3a;
   --felt-light: #2d9648;
+  --felt-shadow: #0f3b1a;
+  --card-back-start: #1a3a5c;
+  --card-back-end: #0d2137;
+  --card-back-border: #2a5a8c;
+  --card-back-symbol: #3498db;
   --card-white: #fefefe;
   --card-shadow: #c0c0c0;
   --ui-panel: rgba(20, 12, 8, 0.85);
@@ -42,7 +50,8 @@ The entire color palette is defined as CSS custom properties in `app/src/app/glo
 | `--pixel-brown` / `--pixel-brown-dark` | `#8b6914` / `#6b4f12` | Borders and UI accents |
 | `--pixel-cream` | `#f5e6c8` | Text and panel backgrounds |
 | `--pixel-red` / `--pixel-gold` / `--pixel-blue` / `--pixel-green` | — | Button and accent colors |
-| `--felt-*` | Three green shades | Poker table felt radial gradient |
+| `--felt-*` | Three green shades + shadow | Poker table felt radial gradient |
+| `--card-back-*` | Blue gradient, border, symbol | Card deck backs |
 | `--card-white` / `--card-shadow` | `#fefefe` / `#c0c0c0` | Playing card faces |
 | `--ui-panel` | `rgba(20, 12, 8, 0.85)` | Semi-transparent overlays |
 | `--ui-border` | `#8b6914` | Modal and panel borders |
@@ -72,21 +81,21 @@ Card backs are rendered in `app/src/components/Card.tsx` in the `CardBack` sub-c
 
 Edit the `CardBack` component styles:
 
-**Change the gradient and border:**
-```tsx
-// Card.tsx — CardBack style prop
-const cardBackStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #2c1a0e 0%, #4a2c0a 50%, #2c1a0e 100%)',
-  border: '3px solid var(--pixel-gold)',
-  // ...
-};
+**Change the gradient and border (CSS variables, no code change):**
+```css
+:root {
+  --card-back-start: #2c1a0e;
+  --card-back-end: #4a2c0a;
+  --card-back-border: #f1c40f;
+  --card-back-symbol: #f1c40f;
+}
 ```
 
 **Replace the center logo:**
 ```tsx
-{/* Replace the "S" logo with a custom symbol */}
+{/* The default "S" is colored by --card-back-symbol. */}
 <span style={{
-  color: 'var(--pixel-gold)',
+  color: 'var(--card-back-symbol, #3498db)',
   fontSize: size === 'lg' ? '24px' : size === 'md' ? '18px' : '14px',
 }}>♠</span>
 ```

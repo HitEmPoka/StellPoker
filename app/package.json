@@ -9,6 +9,8 @@
     "lint": "echo 'lint: build-time validation covers this (next lint requires ESLint setup)'",
     "test": "vitest run",
     "test:i18n": "vitest run src/__tests__/i18n-parity.test.ts",
+    "test:themes": "vitest run src/__tests__/themes.test.ts",
+    "validate:themes": "node ../scripts/validate-themes.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
