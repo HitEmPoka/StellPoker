@@ -19,7 +19,7 @@ opentelemetry_sdk = { version = "0.23", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.16", features = ["grpc-tonic", "trace"] }
 opentelemetry-semantic-conventions = "0.15"
 tonic = { version = "0.11", default-features = false, features = ["transport"] }
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 utoipa = { version = "5.5", features = ["chrono", "uuid"] }
 utoipa-swagger-ui = { version = "7.1.1-rc.0", features = ["axum"] }
