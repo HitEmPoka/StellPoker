@@ -25,7 +25,7 @@ hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
 x509-cert = "0.2"
 sha2 = "0.10"
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 zeroize = { version = "1", features = ["derive"] }
 prometheus = "0.14"
 sysinfo = "0.37"
