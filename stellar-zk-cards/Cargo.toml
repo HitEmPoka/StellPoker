@@ -15,7 +15,7 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-proptest = "=1.5.0"
+proptest = "=1.12.0"
 criterion = "0.5"
 
 [[bench]]
