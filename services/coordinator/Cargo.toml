@@ -26,7 +26,7 @@ utoipa-swagger-ui = { version = "7.1.1-rc.0", features = ["axum"] }
 tempfile = "3"
 base64 = "0.22"
 prometheus = "0.14"
-sysinfo = { version = "0.37", features = ["system"] }
+sysinfo = { version = "0.39", features = ["system"] }
 futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "uuid", "chrono", "migrate"] }
