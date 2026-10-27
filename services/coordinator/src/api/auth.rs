@@ -1,6 +1,4 @@
 use axum::http::{HeaderMap, StatusCode};
-use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -108,71 +106,7 @@ pub(crate) async fn validate_signed_request(
     Ok(AuthContext { address })
 }
 
-pub(crate) fn verify_signature(
-    address: &str,
-    message: &str,
-    signature_raw: &str,
-) -> Result<(), StatusCode> {
-    let stellar_pk = stellar_strkey::ed25519::PublicKey::from_string(address)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let verifying_key =
-        VerifyingKey::from_bytes(&stellar_pk.0).map_err(|_| StatusCode::UNAUTHORIZED)?;
-
-    let signature = decode_signature(signature_raw)?;
-
-    // Backward compatible mode for older signers that sign raw message bytes directly.
-    if verifying_key.verify(message.as_bytes(), &signature).is_ok() {
-        return Ok(());
-    }
-
-    // Freighter modern signMessage follows SEP-53:
-    // signature over SHA256("Stellar Signed Message:\n" + message).
-    let mut hasher = Sha256::new();
-    hasher.update(b"Stellar Signed Message:\n");
-    hasher.update(message.as_bytes());
-    let message_hash: [u8; 32] = hasher.finalize().into();
-
-    verifying_key
-        .verify(&message_hash, &signature)
-        .map_err(|_| StatusCode::UNAUTHORIZED)
-}
-
-fn decode_signature(signature_raw: &str) -> Result<Signature, StatusCode> {
-    let s = signature_raw.trim();
-
-    // Accept 64-byte hex (with or without 0x) and base64 to tolerate wallet format changes.
-    let decoded = if let Some(hex) = s.strip_prefix("0x") {
-        hex::decode(hex).map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if s.len() == 128 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        hex::decode(s).map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else {
-        base64::engine::general_purpose::STANDARD
-            .decode(s)
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    };
-
-    // Accept a few common wrappers around the raw 64-byte Ed25519 signature:
-    // - 64 bytes raw signature
-    // - 68 bytes decorated signature (4-byte hint + 64-byte signature)
-    // - 72 bytes XDR-decorated signature (4-byte hint + 4-byte len + 64-byte signature)
-    let normalized: [u8; 64] = if decoded.len() == 64 {
-        decoded
-            .as_slice()
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if decoded.len() == 68 {
-        decoded[4..68]
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if decoded.len() == 72 && decoded[4..8] == [0, 0, 0, 64] {
-        decoded[8..72]
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    Ok(Signature::from_bytes(&normalized))
-}
+pub use crate::signed_payload::verify_signature;
 
 fn auth_message(address: &str, table_id: u32, action: &str, nonce: u64, timestamp: i64) -> String {
     format!(

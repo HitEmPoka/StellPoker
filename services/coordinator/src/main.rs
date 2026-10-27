@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 23698)
-Total output lines: 2524
-
 //! Stellar Poker MPC Coordinator Service
 //!
 //! This service orchestrates the MPC committee for:
@@ -56,6 +53,7 @@ mod circuit_pins;
 mod committee_scaling;
 mod cors_db;
 pub mod crypto;
+pub mod signed_payload;
 mod dashboard;
 mod db;
 mod discovery;
