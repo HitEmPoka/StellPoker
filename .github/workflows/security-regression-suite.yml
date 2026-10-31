@@ -1,0 +1,143 @@
+name: Security Regression Suite (Required Gate)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: security-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Gate 1: Defense-in-Depth Secret Scanning ──────────────────────────────
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Secret Scanner
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  # ── Gate 2: Supply Chain & License Compliance ─────────────────────────────
+  dependency-audit:
+    name: Dependency Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny binary
+        id: cache-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-0.16
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version "^0.16"
+
+      - name: Run Dependency & Vulnerability Check
+        run: cargo deny check advisories bans licenses sources
+
+  # ── Gate 3: Static Analysis & Unsafe Audit ────────────────────────────────
+  static-analysis:
+    name: Contract Static Analysis & Unsafe Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Verify Unsafe Blocks Have SAFETY Comments
+        run: |
+          python3 - <<'PYEOF'
+          import sys, re
+          from pathlib import Path
+
+          UNSAFE_RE = re.compile(r'\bunsafe\s*(\{|fn\s|impl\s|trait\s)')
+          SAFETY_RE = re.compile(r'//\s*SAFETY:')
+
+          violations = []
+          skip_dirs = {'target', 'vendor', '.cargo-home', '.git'}
+
+          for path in Path('.').rglob('*.rs'):
+              if any(part in skip_dirs for part in path.parts):
+                  continue
+              lines = path.read_text(errors='replace').splitlines()
+              for i, line in enumerate(lines):
+                  if UNSAFE_RE.search(line):
+                      window_start = max(0, i - 5)
+                      window = lines[window_start:i + 1]
+                      if not any(SAFETY_RE.search(l) for l in window):
+                          violations.append(f'{path}:{i+1}: unsafe without SAFETY comment')
+
+          if violations:
+              print('ERROR: unsafe block(s) missing // SAFETY: justification:')
+              for v in violations:
+                  print(f'  {v}')
+              sys.exit(1)
+          else:
+              print('OK: all unsafe blocks have a // SAFETY: comment.')
+          PYEOF
+
+  # ── Aggregated Gate Summary (Branch Protection Ready) ─────────────────────
+  security-gate:
+    name: Security Gate Summary (Branch Protection)
+    runs-on: ubuntu-latest
+    needs: [secret-scan, dependency-audit, static-analysis]
+    if: always()
+    steps:
+      - name: Evaluate Security Gate Results
+        run: |
+          SECRET_STATUS="${{ needs.secret-scan.result }}"
+          DEPENDENCY_STATUS="${{ needs.dependency-audit.result }}"
+          STATIC_STATUS="${{ needs.static-analysis.result }}"
+
+          echo "========================================================"
+          echo "🛡️ Security Regression Suite Gate Evaluation"
+          echo "========================================================"
+          echo "Secret Scan (Gitleaks):        $SECRET_STATUS"
+          echo "Dependency Audit (cargo-deny): $DEPENDENCY_STATUS"
+          echo "Static Analysis & Unsafe:      $STATIC_STATUS"
+          echo "========================================================"
+
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          ## 🛡️ Security Regression Suite — Branch Protection Ready Checklist
+
+          | Security Gate | Status | Required for Merge |
+          |---|---|---|
+          | **Secret Scanning (Gitleaks)** | ${{ needs.secret-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Yes |
+          | **Dependency & License Audit (cargo-deny)** | ${{ needs.dependency-audit.result == 'success' && '✅ Passed' || '❌ Failed' }} | Yes |
+          | **Static Analysis & Unsafe Audit** | ${{ needs.static-analysis.result == 'success' && '✅ Passed' || '❌ Failed' }} | Yes |
+
+          ### Branch Protection Rule Configuration
+          To enforce this aggregated suite in GitHub repository settings:
+          1. Go to **Settings** > **Branches** > **Branch protection rules**.
+          2. Enable **Require status checks to pass before merging**.
+          3. Search and select: `Security Gate Summary (Branch Protection)`.
+          EOF
+
+          if [ "$SECRET_STATUS" != "success" ] || [ "$DEPENDENCY_STATUS" != "success" ] || [ "$STATIC_STATUS" != "success" ]; then
+            echo "❌ One or more required security gates failed!"
+            exit 1
+          fi
+
+          echo "✅ All security gates passed successfully!"
