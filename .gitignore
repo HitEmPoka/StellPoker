@@ -3,8 +3,6 @@ node_modules/
 .soroban/
 *.wasm
 !contracts/zk-verifier/ultrahonk_verifier.wasm
-.env
-.env.local
 app/.next/
 circuits/*/target/
 circuits/*/proofs/
@@ -58,3 +56,4 @@ worm/
 # Python cache
 __pycache__/
 *.pyc
+config.bat

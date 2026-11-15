@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node init && next dev",
+    "build": "node init && next build",
+    "start": "node init && next start",
     "lint": "echo 'lint: build-time validation covers this (next lint requires ESLint setup)'",
     "test": "vitest run",
     "test:i18n": "vitest run src/__tests__/i18n-parity.test.ts",
@@ -19,7 +19,7 @@
     "test:visual": "playwright test --config=e2e/playwright.config.ts --project=chromium tests/visual-regression.spec.ts",
     "test:visual:update": "playwright test --config=e2e/playwright.config.ts --project=chromium --update-snapshots tests/visual-regression.spec.ts",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build-storybook": "node init && storybook build"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
