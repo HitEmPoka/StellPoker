@@ -12,8 +12,9 @@ import pathlib
 import datetime
 import argparse
 import subprocess
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 QUARANTINE_FILE = REPO_ROOT / "tests" / "quarantined_tests.json"
@@ -213,8 +214,12 @@ def render_markdown_dashboard(dashboard: dict, quarantine: dict):
         f.write("\n".join(lines) + "\n")
 
 
-def auto_quarantine(flaky_tests: list[dict], threshold: float = 0.0) -> list[dict]:
-    """Auto-quarantine flaky tests exceeding threshold into quarantine registry."""
+def auto_quarantine(flaky_tests: list[dict], threshold: float = 0.0, persist: bool = True) -> list[dict]:
+    """Auto-quarantine flaky tests exceeding threshold into quarantine registry.
+
+    When ``persist`` is False (dry run, e.g. ``--simulate-sample``) the entries
+    are computed and returned but the registry file is left untouched.
+    """
     quarantine = load_json(QUARANTINE_FILE, {
         "version": "1.0.0",
         "updated_at": "",
@@ -249,11 +254,50 @@ def auto_quarantine(flaky_tests: list[dict], threshold: float = 0.0) -> list[dic
                 newly_quarantined.append(entry)
                 print(f"[QUARANTINE] Auto-quarantined flaky test: {test_id} (flake rate: {t['flake_rate']})")
 
-    if newly_quarantined:
+    if newly_quarantined and persist:
         quarantine["updated_at"] = now_iso
         save_json(QUARANTINE_FILE, quarantine)
 
     return newly_quarantined
+
+
+def issue_title_for(test_id: str) -> str:
+    return f"[Flaky Test Quarantine] {test_id}"
+
+
+def find_existing_issue(repo: str, title: str, token: str | None) -> str | None:
+    """Return the URL of an open issue with exactly ``title``, or None.
+
+    The quarantine registry lives in a fresh checkout on every CI run, so
+    without this check the same flaky test would get a new issue each run.
+    """
+    try:
+        cmd = ["gh", "issue", "list", "--repo", repo, "--state", "open",
+               "--search", f'"{title}" in:title', "--json", "title,url", "--limit", "50"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            for issue in json.loads(res.stdout or "[]"):
+                if issue.get("title") == title:
+                    return issue.get("url")
+            return None
+    except Exception:
+        pass
+
+    if token:
+        query = urllib.parse.quote(f'repo:{repo} is:issue is:open in:title "{title}"')
+        req = urllib.request.Request(
+            f"https://api.github.com/search/issues?q={query}&per_page=50",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for issue in data.get("items", []):
+                if issue.get("title") == title:
+                    return issue.get("html_url")
+        except Exception as e:
+            print(f"[WARN] Failed to search existing issues: {e}", file=sys.stderr)
+    return None
 
 
 def create_github_issues_for_quarantined(newly_quarantined: list[dict]):
@@ -262,7 +306,12 @@ def create_github_issues_for_quarantined(newly_quarantined: list[dict]):
     repo = os.environ.get("GITHUB_REPOSITORY", "HitEmPoka/StellPoker")
 
     for q in newly_quarantined:
-        title = f"[Flaky Test Quarantine] {q['id']}"
+        title = issue_title_for(q["id"])
+        existing_url = find_existing_issue(repo, title, token)
+        if existing_url:
+            q["issue_url"] = existing_url
+            print(f"[ISSUE] Open issue already tracks {q['id']}: {existing_url}")
+            continue
         body = f"""### Flaky Test Detection Report
 
 **Test ID:** `{q['id']}`
@@ -350,10 +399,12 @@ def main() -> int:
         return 0
 
     runs_data = []
+    simulated = False
     if args.input_results and pathlib.Path(args.input_results).exists():
         with open(args.input_results, "r", encoding="utf-8") as f:
             runs_data = json.load(f)
     elif args.simulate_sample:
+        simulated = True
         # Sample simulated run data with 1 flaky rerun-only failure and 4 clean tests
         runs_data = [
             {"test_id": "tests.test_circuit.test_proof_generation", "file": "tests/test_circuit.py", "attempt": 1, "passed": True, "duration": 1.2},
@@ -377,9 +428,14 @@ def main() -> int:
     print(f"Rerun-Only Failures: {analysis['rerun_only_count']}")
 
     if args.auto_quarantine:
-        newly_quarantined = auto_quarantine(analysis["flaky_tests"])
+        # Simulated data is a self-check of the pipeline, not real CI results:
+        # never write it to the registry or file issues for it.
+        newly_quarantined = auto_quarantine(analysis["flaky_tests"], persist=not simulated)
         if args.create_issues and newly_quarantined:
-            create_github_issues_for_quarantined(newly_quarantined)
+            if simulated:
+                print("[INFO] --simulate-sample is a dry run; skipping GitHub issue creation.")
+            else:
+                create_github_issues_for_quarantined(newly_quarantined)
 
     return 0
 
