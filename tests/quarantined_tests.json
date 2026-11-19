@@ -16,9 +16,14 @@
       "flake_rate": 0.5,
       "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
       "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/814",
+      "related_issues": [
+        "https://github.com/HitEmPoka/StellPoker/issues/776",
+        "https://github.com/HitEmPoka/StellPoker/issues/778",
+        "https://github.com/HitEmPoka/StellPoker/issues/779"
+      ],
       "consecutive_passes": 10,
       "status": "dequarantined",
-      "fix_commit_notes": "Restored boundary assertion and deterministic stress test from e19dda9; fixed tearDown regression introduced in afa813b (spurious peer._lock acquisition after _stop.set() and accidental removal of test_peer_heartbeat_timeout_is_deterministic); reset_heartbeat now also sets is_alive=True under lock so recovery path avoids the bare attribute write race."
+      "fix_commit_notes": "Root cause: test_peer_heartbeat_timeout read the wall clock (time.time()) and used time.sleep() margins to judge timeout — a scheduler stall on a loaded CI runner could push elapsed time past or below the timeout boundary, causing a 50% flake rate (issues #776, #778, #779 each caught a re-detection). Fix: MockPeer now accepts an injectable clock parameter (default time.monotonic); tests use FakeClock, a manually-advanced, thread-safe clock that only moves when the test calls clock.advance(). The boundary assertion verifies strict greater-than (>) semantics at exactly the timeout value and one step past it. test_peer_heartbeat_timeout_is_deterministic repeats the scenario 200 times in a single test run, making any residual timing dependency immediately visible. reset_heartbeat sets is_alive=True under the lock to close the bare-attribute-write race on the recovery path."
     }
   ]
 }
