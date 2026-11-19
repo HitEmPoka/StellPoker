@@ -39,8 +39,6 @@ class MockPeer:
         self.peer_id = peer_id
         self.heartbeat_interval = heartbeat_interval
         self._clock = clock or time.monotonic
-        self.last_heartbeat = self._clock()
-        self.is_alive = True
         self._lock = threading.Lock()
         self.last_heartbeat = self._clock()
         self.is_alive = True
@@ -79,6 +77,8 @@ class TestPeerHeartbeat(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test resources."""
+        # Signal all heartbeat threads to stop before joining.
+        self._stop.set()
         for peer in self.peers.values():
             with peer._lock:
                 peer.is_alive = False
@@ -117,20 +117,20 @@ class TestPeerHeartbeat(unittest.TestCase):
         """
         Test that peer is marked as dead when heartbeat times out.
 
-        This test has historically been flaky due to timing issues.
-        The fix ensures proper synchronization and state management.
+        Uses FakeClock so the test is fully deterministic regardless of
+        scheduler load or wall-clock adjustments on CI runners.
         """
-        now = [100.0]
-        peer = MockPeer(peer_id=2, heartbeat_interval=0.1, clock=lambda: now[0])
+        clock = FakeClock(start=100.0)
+        peer = MockPeer(peer_id=2, heartbeat_interval=0.1, clock=clock)
         self.peers[2] = peer
 
         peer.reset_heartbeat()
         self.assertTrue(peer.check_heartbeat(timeout=0.3))
 
-        # Simulate no heartbeat by advancing beyond the timeout
-        now[0] += 0.5
+        # Simulate no heartbeat by advancing beyond the timeout.
+        clock.advance(0.5)
 
-        # Peer should now be dead due to timeout
+        # Peer should now be dead due to timeout.
         is_alive = peer.check_heartbeat(timeout=0.3)
         self.assertFalse(is_alive, "Peer should be marked as dead after heartbeat timeout")
 
