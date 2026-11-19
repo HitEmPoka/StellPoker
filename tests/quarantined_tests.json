@@ -1,10 +1,24 @@
 {
   "version": "1.0.0",
-  "updated_at": "2026-10-20T00:00:00Z",
+  "updated_at": "2026-11-19T00:00:00Z",
   "policy": {
     "auto_quarantine_threshold": 1,
     "dequarantine_consecutive_passes": 10,
     "max_quarantined_ratio": 0.05
   },
-  "quarantined_tests": []
+  "quarantined_tests": [
+    {
+      "id": "tests.test_mpc.test_peer_heartbeat_timeout",
+      "file": "tests/test_mpc.py",
+      "test_name": "test_peer_heartbeat_timeout",
+      "quarantined_at": "2026-10-20T00:00:00Z",
+      "reason": "Rerun-only failure detected across multiple runs",
+      "flake_rate": 0.5,
+      "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
+      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/814",
+      "consecutive_passes": 0,
+      "status": "fix_pending_verification",
+      "fix_commit_notes": "Restored boundary assertion and deterministic stress test from e19dda9; fixed tearDown regression introduced in afa813b (spurious peer._lock acquisition after _stop.set() and accidental removal of test_peer_heartbeat_timeout_is_deterministic); reset_heartbeat now also sets is_alive=True under lock so recovery path avoids the bare attribute write race."
+    }
+  ]
 }
