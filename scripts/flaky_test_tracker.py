@@ -405,13 +405,20 @@ def main() -> int:
             runs_data = json.load(f)
     elif args.simulate_sample:
         simulated = True
-        # Sample simulated run data with 1 flaky rerun-only failure and 4 clean tests
+        # Sample simulated run data used to self-check the detection pipeline.
+        # IMPORTANT: use a synthetic, clearly-fake test ID for the flaky entry.
+        # Using a real test ID here caused duplicate GitHub issues (#811, #813):
+        # the quarantine registry is empty on every fresh CI checkout, so the
+        # dedup guard in create_github_issues_for_quarantined only helps when
+        # the existing open issue is still findable via the GitHub API — any
+        # transient API failure or closed issue produces a duplicate. A fake ID
+        # can never collide with a real quarantine entry or a real open issue.
         runs_data = [
             {"test_id": "tests.test_circuit.test_proof_generation", "file": "tests/test_circuit.py", "attempt": 1, "passed": True, "duration": 1.2},
             {"test_id": "tests.test_contracts.test_table_settlement", "file": "tests/test_contracts.py", "attempt": 1, "passed": True, "duration": 0.5},
             {"test_id": "tests.test_api.test_status_endpoint", "file": "tests/test_api.py", "attempt": 1, "passed": True, "duration": 0.1},
-            {"test_id": "tests.test_mpc.test_peer_heartbeat_timeout", "file": "tests/test_mpc.py", "attempt": 1, "passed": False, "duration": 2.5, "error": "ConnectionResetError: Peer 2 heartbeat timed out"},
-            {"test_id": "tests.test_mpc.test_peer_heartbeat_timeout", "file": "tests/test_mpc.py", "attempt": 2, "passed": True, "duration": 1.1}
+            {"test_id": "tests._simulate_.test_flaky_pipeline_canary", "file": "tests/_simulate_/test_canary.py", "attempt": 1, "passed": False, "duration": 2.5, "error": "SimulatedError: pipeline self-check canary failure"},
+            {"test_id": "tests._simulate_.test_flaky_pipeline_canary", "file": "tests/_simulate_/test_canary.py", "attempt": 2, "passed": True, "duration": 1.1}
         ]
     else:
         print("[INFO] No input results provided; rendering existing dashboard state.")
