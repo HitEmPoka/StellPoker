@@ -35,10 +35,10 @@ class FakeClock:
 class MockPeer:
     """Mock peer for testing heartbeat timeout scenarios."""
 
-    def __init__(self, peer_id, heartbeat_interval=0.1, clock=None):
+    def __init__(self, peer_id, heartbeat_interval=0.1, clock=time.monotonic):
         self.peer_id = peer_id
         self.heartbeat_interval = heartbeat_interval
-        self._clock = clock or time.monotonic
+        self._clock = clock
         self._lock = threading.Lock()
         self.last_heartbeat = self._clock()
         self.is_alive = True
@@ -64,6 +64,7 @@ class MockPeer:
         """Reset the heartbeat timer."""
         with self._lock:
             self.last_heartbeat = self._clock()
+            self.is_alive = True
 
 
 class TestPeerHeartbeat(unittest.TestCase):
@@ -76,12 +77,8 @@ class TestPeerHeartbeat(unittest.TestCase):
         self._stop = threading.Event()
 
     def tearDown(self):
-        """Clean up test resources."""
-        # Signal all heartbeat threads to stop before joining.
+        """Stop and join every heartbeat thread so none leak into later tests."""
         self._stop.set()
-        for peer in self.peers.values():
-            with peer._lock:
-                peer.is_alive = False
         for thread in self.heartbeat_threads.values():
             thread.join(timeout=2.0)
             self.assertFalse(thread.is_alive(), "heartbeat thread did not stop")
@@ -114,25 +111,36 @@ class TestPeerHeartbeat(unittest.TestCase):
         self.assertTrue(peer.check_heartbeat(timeout=5.0))
 
     def test_peer_heartbeat_timeout(self):
-        """
-        Test that peer is marked as dead when heartbeat times out.
-
-        Uses FakeClock so the test is fully deterministic regardless of
-        scheduler load or wall-clock adjustments on CI runners.
-        """
-        clock = FakeClock(start=100.0)
-        peer = MockPeer(peer_id=2, heartbeat_interval=0.1, clock=clock)
+        """A peer is marked dead once its heartbeat is older than the timeout."""
+        clock = FakeClock()
+        peer = MockPeer(peer_id=2, clock=clock)
         self.peers[2] = peer
 
         peer.reset_heartbeat()
         self.assertTrue(peer.check_heartbeat(timeout=0.3))
 
-        # Simulate no heartbeat by advancing beyond the timeout.
-        clock.advance(0.5)
+        # Exactly at the timeout boundary the peer is still considered alive
+        # because check_heartbeat uses strict greater-than (>), not >=.
+        clock.advance(0.3)
+        self.assertTrue(peer.check_heartbeat(timeout=0.3))
+        self.assertTrue(peer.is_alive)
 
-        # Peer should now be dead due to timeout.
-        is_alive = peer.check_heartbeat(timeout=0.3)
-        self.assertFalse(is_alive, "Peer should be marked as dead after heartbeat timeout")
+        # One step past the timeout with no heartbeat: the peer is dead.
+        clock.advance(0.2)
+        self.assertFalse(
+            peer.check_heartbeat(timeout=0.3),
+            "Peer should be marked as dead after heartbeat timeout",
+        )
+        self.assertFalse(peer.is_alive)
+
+    def test_peer_heartbeat_timeout_is_deterministic(self):
+        """Repeating the timeout scenario 200 times always gives the same result."""
+        for _ in range(200):
+            clock = FakeClock()
+            peer = MockPeer(peer_id=2, clock=clock)
+            self.assertTrue(peer.check_heartbeat(timeout=0.3))
+            clock.advance(0.5)
+            self.assertFalse(peer.check_heartbeat(timeout=0.3))
 
     def test_peer_heartbeat_recovery(self):
         """A peer can recover from a timeout with a new heartbeat."""
@@ -145,7 +153,7 @@ class TestPeerHeartbeat(unittest.TestCase):
         self.assertFalse(peer.check_heartbeat(timeout=0.1))
         self.assertFalse(peer.is_alive)
 
-        peer.is_alive = True
+        # send_heartbeat resets both last_heartbeat and is_alive under the lock.
         peer.send_heartbeat()
         self.assertTrue(peer.check_heartbeat(timeout=0.5))
         self.assertTrue(peer.is_alive)
