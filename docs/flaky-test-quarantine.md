@@ -134,6 +134,11 @@ for i in {1..50}; do cargo test -p poker-table -- test_name || break; done
 - **Port / Resource Contention:** Hardcoding socket ports or local RPC endpoints across parallel tests.
 - **Shared Static State:** Mutating static singletons, database files, or mock registries without resetting between runs.
 - **Timeouts in Proof Generation:** Cold-start CRS loading or Noir proving exceeding default test timeouts under CPU load.
+- **Wall-clock timing assertions:** Asserting on `time.time()` deltas around `sleep()` calls. Inject a clock and advance it manually instead (see `FakeClock` in `tests/test_mpc.py`), and use `time.monotonic()` for real elapsed time.
+
+### Simulated runs and duplicate issues
+- `scripts/flaky_test_tracker.py --simulate-sample` feeds a built-in sample (including a synthetic `tests.test_mpc.test_peer_heartbeat_timeout` rerun-only failure) to self-check the pipeline. It is a **dry run**: it updates the dashboard but never writes to `tests/quarantined_tests.json` and never opens GitHub issues, even with `--create-issues`.
+- For real results (`--input-results`), the tracker first looks for an open issue with the same `[Flaky Test Quarantine] <test id>` title and reuses it instead of filing a duplicate.
 
 ---
 
