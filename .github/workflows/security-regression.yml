@@ -1,0 +1,136 @@
+# Security Regression Suite (#648)
+#
+# Aggregates the three existing security gates — static analysis (cargo deny /
+# clippy), dependency vulnerability check (cargo deny advisories), and secret
+# scan (gitleaks) — into a single required workflow.
+#
+# Branch protection: set "security-gate" as the required status check.
+# Every gate must pass for the job to succeed; individual job names are
+# also available for per-gate override if needed.
+
+name: Security Regression Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly run to catch newly disclosed CVEs between PRs.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: security-regression-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Gate 1: Dependency vulnerability and license check ─────────────────────
+  # Uses cargo-deny against the RustSec advisory DB and the allow-list in
+  # deny.toml. Catches CVEs, banned crates, and license violations before
+  # any code runs.
+  dependency-scan:
+    name: Dependency scan (cargo deny)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny
+        id: cache-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny-0.16
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version "^0.16"
+
+      - name: Run cargo deny check
+        run: cargo deny check
+
+  # ── Gate 2: Static analysis ─────────────────────────────────────────────────
+  # Runs clippy in deny-warnings mode and checks for unsafe blocks that fall
+  # outside the audited allowlist (unsafe-audit workflow uses a stricter
+  # grep-based check; here we confirm the codebase compiles cleanly under
+  # #![deny(unsafe_code)] where applicable).
+  static-analysis:
+    name: Static analysis (clippy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Gate 3: Secret scan ─────────────────────────────────────────────────────
+  # Scans the full commit range on PRs (or HEAD on push/schedule) for
+  # accidentally committed secrets using gitleaks and the project's tuned
+  # .gitleaks.toml config.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ── Aggregator: required branch-protection check ────────────────────────────
+  # This is the single job name to register in branch protection rules.
+  # All three gates must green before this job runs; if any gate fails,
+  # this job is skipped (and therefore not green), blocking the merge.
+  security-gate:
+    name: Security gate
+    needs: [dependency-scan, static-analysis, secret-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions: {}
+
+    steps:
+      - name: Verify all gates passed
+        run: |
+          dep="${{ needs.dependency-scan.result }}"
+          sa="${{ needs.static-analysis.result }}"
+          ss="${{ needs.secret-scan.result }}"
+          echo "dependency-scan : $dep"
+          echo "static-analysis : $sa"
+          echo "secret-scan     : $ss"
+          if [[ "$dep" != "success" || "$sa" != "success" || "$ss" != "success" ]]; then
+            echo "::error::One or more security gates failed — merge is blocked."
+            exit 1
+          fi
+          echo "All security gates passed."
