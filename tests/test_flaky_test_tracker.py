@@ -133,6 +133,84 @@ class TestFlakyTestTracker(unittest.TestCase):
         with mock.patch.object(self.module.subprocess, "run", return_value=completed):
             self.assertIsNone(self.module.find_existing_issue("HitEmPoka/StellPoker", title, None))
 
+    def test_render_dashboard_excludes_dequarantined_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = pathlib.Path(tmpdir)
+            originals = self.module.DASHBOARD_FILE, self.module.DASHBOARD_MD_FILE
+            try:
+                self.module.DASHBOARD_FILE = tmp / "flaky_dashboard.json"
+                self.module.DASHBOARD_MD_FILE = tmp / "flaky_dashboard.md"
+                dashboard = {
+                    "last_updated": "2026-11-19T00:00:00Z",
+                    "summary": {
+                        "total_tests_monitored": 20,
+                        "flaky_tests_count": 0,
+                        "quarantined_count": 0,
+                        "rerun_only_failures_count": 0,
+                        "overall_flake_rate": 0.0,
+                    },
+                    "flaky_tests": [],
+                    "history": [],
+                }
+                quarantine = {
+                    "quarantined_tests": [
+                        {
+                            "id": "tests.test_active.test_flaky",
+                            "status": "quarantined",
+                            "quarantined_at": "2026-11-18T00:00:00Z",
+                            "reason": "under investigation",
+                            "flake_rate": 0.5,
+                            "issue_url": "https://example.invalid/1",
+                        },
+                        {
+                            "id": "tests.test_mpc.test_peer_heartbeat_timeout",
+                            "status": "dequarantined",
+                            "quarantined_at": "2026-10-20T00:00:00Z",
+                            "reason": "fixed",
+                            "flake_rate": 0.5,
+                            "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/762",
+                        },
+                    ]
+                }
+                self.module.render_markdown_dashboard(dashboard, quarantine)
+                rendered = self.module.DASHBOARD_MD_FILE.read_text(encoding="utf-8")
+                self.assertIn("tests.test_active.test_flaky", rendered)
+                self.assertNotIn("tests.test_mpc.test_peer_heartbeat_timeout", rendered)
+            finally:
+                self.module.DASHBOARD_FILE, self.module.DASHBOARD_MD_FILE = originals
+
+    def test_dequarantined_entry_can_be_quarantined_again(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_q_path = pathlib.Path(tmpdir) / "quarantined_tests.json"
+            original = self.module.QUARANTINE_FILE
+            try:
+                self.module.QUARANTINE_FILE = temp_q_path
+                test_id = "tests.test_mpc.test_peer_heartbeat_timeout"
+                temp_q_path.write_text(
+                    json.dumps({
+                        "quarantined_tests": [{
+                            "id": test_id,
+                            "file": "tests/test_mpc.py",
+                            "status": "dequarantined",
+                            "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/762",
+                        }]
+                    }),
+                    encoding="utf-8",
+                )
+                newly = self.module.auto_quarantine([{
+                    "id": test_id,
+                    "file": "tests/test_mpc.py",
+                    "flake_rate": 0.5,
+                    "rerun_only_failure": True,
+                    "errors": ["TimeoutError"],
+                }], threshold=0.0)
+                self.assertEqual(len(newly), 1)
+                data = json.loads(temp_q_path.read_text(encoding="utf-8"))
+                self.assertEqual(len(data["quarantined_tests"]), 2)
+                self.assertEqual(data["quarantined_tests"][-1]["status"], "quarantined")
+            finally:
+                self.module.QUARANTINE_FILE = original
+
 
 if __name__ == "__main__":
     unittest.main()

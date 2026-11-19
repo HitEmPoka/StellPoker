@@ -10,7 +10,7 @@ mod upgrade_test {
         contract, contractimpl,
         testutils::{Address as _, Ledger as _},
         token::StellarAssetClient,
-        Address, BytesN, Env,
+        Address, Bytes, BytesN, Env,
     };
 
     #[contract]
@@ -54,6 +54,7 @@ mod upgrade_test {
     fn setup() -> Setup<'static> {
         let env = Env::default();
         env.mock_all_auths();
+        env.cost_estimate().budget().reset_unlimited();
 
         let contract_id = env.register(PokerTableContract, ());
         let client = PokerTableContractClient::new(&env, &contract_id);
@@ -102,8 +103,16 @@ mod upgrade_test {
         BytesN::from_array(env, &[seed; 32])
     }
 
+    fn uploaded_hash(env: &Env) -> BytesN<32> {
+        env.deployer()
+            .upload_contract_wasm(Bytes::from_slice(
+                env,
+                include_bytes!("../tests/fixtures/poker_table.wasm"),
+            ))
+    }
+
     #[test]
-    #[should_panic(expected = "Error(Contract, #49)")] // UpgradeDelayTooShort
+    #[should_panic(expected = "Error(Contract, #61)")] // UpgradeDelayTooShort
     fn propose_upgrade_rejects_delay_below_minimum() {
         let s = setup();
         let hash = fake_hash(&s.env, 7);
@@ -112,21 +121,21 @@ mod upgrade_test {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #47)")] // NoUpgradeProposal
+    #[should_panic(expected = "Error(Contract, #59)")] // NoUpgradeProposal
     fn execute_upgrade_rejects_without_proposal() {
         let s = setup();
         s.client.execute_upgrade(&s.table_id);
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #47)")] // NoUpgradeProposal
+    #[should_panic(expected = "Error(Contract, #59)")] // NoUpgradeProposal
     fn cancel_upgrade_rejects_without_proposal() {
         let s = setup();
         s.client.cancel_upgrade(&s.table_id);
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #48)")] // UpgradeDelayNotElapsed
+    #[should_panic(expected = "Error(Contract, #60)")] // UpgradeDelayNotElapsed
     fn execute_upgrade_rejects_before_delay_elapses() {
         let s = setup();
         let hash = fake_hash(&s.env, 7);
@@ -164,8 +173,8 @@ mod upgrade_test {
     #[test]
     fn a_new_proposal_replaces_the_previous_one() {
         let s = setup();
-        let hash_a = fake_hash(&s.env, 1);
-        let hash_b = fake_hash(&s.env, 2);
+        let hash_a = uploaded_hash(&s.env);
+        let hash_b = uploaded_hash(&s.env);
 
         s.client.propose_upgrade(&s.table_id, &hash_a, &90_000);
         s.client.propose_upgrade(&s.table_id, &hash_b, &100_000);
@@ -194,20 +203,20 @@ mod upgrade_test {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    #[should_panic(expected = "Error(Contract, #100)")] // NoUpgradeToRevert
     fn revert_rejects_when_no_upgrade_has_ever_executed() {
         let s = setup();
         s.client.revert_last_upgrade(&s.table_id);
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    #[should_panic(expected = "Error(Contract, #100)")] // NoUpgradeToRevert
     fn revert_rejects_after_the_first_ever_executed_upgrade() {
         // The very first upgrade tracked by this mechanism has no recorded
         // "previous" hash to revert to — its genesis wasm was never
         // recorded on-chain.
         let s = setup();
-        let hash = fake_hash(&s.env, 1);
+        let hash = uploaded_hash(&s.env);
         propose_and_execute(&s, &hash);
 
         s.client.revert_last_upgrade(&s.table_id);
@@ -216,8 +225,8 @@ mod upgrade_test {
     #[test]
     fn revert_restores_the_hash_from_before_the_most_recent_upgrade() {
         let s = setup();
-        let hash_a = fake_hash(&s.env, 1);
-        let hash_b = fake_hash(&s.env, 2);
+        let hash_a = uploaded_hash(&s.env);
+        let hash_b = uploaded_hash(&s.env);
 
         propose_and_execute(&s, &hash_a);
 
@@ -240,11 +249,11 @@ mod upgrade_test {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #70)")] // NoUpgradeToRevert
+    #[should_panic(expected = "Error(Contract, #100)")] // NoUpgradeToRevert
     fn reverting_twice_in_a_row_fails_the_second_time() {
         let s = setup();
-        let hash_a = fake_hash(&s.env, 1);
-        let hash_b = fake_hash(&s.env, 2);
+        let hash_a = uploaded_hash(&s.env);
+        let hash_b = uploaded_hash(&s.env);
 
         propose_and_execute(&s, &hash_a);
         s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
@@ -260,8 +269,8 @@ mod upgrade_test {
     #[test]
     fn revert_succeeds_right_up_until_the_rollback_window_boundary() {
         let s = setup();
-        let hash_a = fake_hash(&s.env, 1);
-        let hash_b = fake_hash(&s.env, 2);
+        let hash_a = uploaded_hash(&s.env);
+        let hash_b = uploaded_hash(&s.env);
 
         propose_and_execute(&s, &hash_a);
         s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);
@@ -279,11 +288,11 @@ mod upgrade_test {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #71)")] // RollbackWindowExpired
+    #[should_panic(expected = "Error(Contract, #101)")] // RollbackWindowExpired
     fn revert_rejects_once_the_rollback_window_has_passed() {
         let s = setup();
-        let hash_a = fake_hash(&s.env, 1);
-        let hash_b = fake_hash(&s.env, 2);
+        let hash_a = uploaded_hash(&s.env);
+        let hash_b = uploaded_hash(&s.env);
 
         propose_and_execute(&s, &hash_a);
         s.client.propose_upgrade(&s.table_id, &hash_b, &86_400);

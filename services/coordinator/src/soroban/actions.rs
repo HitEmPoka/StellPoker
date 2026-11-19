@@ -564,7 +564,7 @@ pub async fn get_table_state(config: &SorobanConfig, table_id: u32) -> Result<St
             "contract",
             "invoke",
             "--id",
-            &config.poker_table_contract,
+            &config.contract_for_table(table_id),
             "--source",
             &config.secret_key,
             "--rpc-url",
