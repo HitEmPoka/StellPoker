@@ -69,11 +69,11 @@ class TestFlakyTestTracker(unittest.TestCase):
             try:
                 self.module.QUARANTINE_FILE = temp_q_path
                 flaky_tests = [{
-                    "id": "tests.test_mpc.test_peer_heartbeat_timeout",
-                    "file": "tests/test_mpc.py",
+                    "id": "tests._simulate_.test_flaky_pipeline_canary",
+                    "file": "tests/_simulate_/test_canary.py",
                     "flake_rate": 0.5,
                     "rerun_only_failure": True,
-                    "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
+                    "errors": ["SimulatedError: pipeline self-check canary failure"],
                 }]
                 newly = self.module.auto_quarantine(flaky_tests, persist=False)
                 self.assertEqual(len(newly), 1)

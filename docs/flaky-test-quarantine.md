@@ -137,7 +137,8 @@ for i in {1..50}; do cargo test -p poker-table -- test_name || break; done
 - **Wall-clock timing assertions:** Asserting on `time.time()` deltas around `sleep()` calls. Inject a clock and advance it manually instead (see `FakeClock` in `tests/test_mpc.py`), and use `time.monotonic()` for real elapsed time.
 
 ### Simulated runs and duplicate issues
-- `scripts/flaky_test_tracker.py --simulate-sample` feeds a built-in sample (including a synthetic `tests.test_mpc.test_peer_heartbeat_timeout` rerun-only failure) to self-check the pipeline. It is a **dry run**: it updates the dashboard but never writes to `tests/quarantined_tests.json` and never opens GitHub issues, even with `--create-issues`.
+- `scripts/flaky_test_tracker.py --simulate-sample` feeds a built-in canary sample to self-check the pipeline. It is a **dry run**: it never writes to `tests/quarantined_tests.json` and never opens GitHub issues. Do **not** pass `--auto-quarantine` or `--create-issues` alongside it; the CI workflow runs it as a separate step without those flags.
+- The simulated flaky entry uses the synthetic test ID `tests._simulate_.test_flaky_pipeline_canary` — a name that cannot match any real test or open issue. Earlier versions used the real ID `tests.test_mpc.test_peer_heartbeat_timeout`, which caused duplicate GitHub issues (#811, #813): the quarantine registry is empty on every fresh CI checkout, so the dedup guard only worked when the previous issue remained open and the GitHub API call succeeded. A synthetic ID eliminates that dependency entirely.
 - For real results (`--input-results`), the tracker first looks for an open issue with the same `[Flaky Test Quarantine] <test id>` title and reuses it instead of filing a duplicate.
 
 ---
