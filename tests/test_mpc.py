@@ -11,22 +11,26 @@ from unittest.mock import Mock, patch, MagicMock
 class MockPeer:
     """Mock peer for testing heartbeat timeout scenarios."""
 
-    def __init__(self, peer_id, heartbeat_interval=0.1):
+    def __init__(self, peer_id, heartbeat_interval=0.1, clock=None):
         self.peer_id = peer_id
         self.heartbeat_interval = heartbeat_interval
-        self.last_heartbeat = time.time()
+        self._clock = clock or time.monotonic
+        self.last_heartbeat = self._clock()
         self.is_alive = True
         self._lock = threading.Lock()
 
     def send_heartbeat(self):
         """Send a heartbeat to keep the peer alive."""
         with self._lock:
-            self.last_heartbeat = time.time()
+            self.last_heartbeat = self._clock()
+            self.is_alive = True
 
     def check_heartbeat(self, timeout=0.5):
         """Check if peer is still alive based on heartbeat timeout."""
         with self._lock:
-            elapsed = time.time() - self.last_heartbeat
+            if not self.is_alive:
+                return False
+            elapsed = self._clock() - self.last_heartbeat
             if elapsed > timeout:
                 self.is_alive = False
                 return False
@@ -35,7 +39,7 @@ class MockPeer:
     def reset_heartbeat(self):
         """Reset the heartbeat timer."""
         with self._lock:
-            self.last_heartbeat = time.time()
+            self.last_heartbeat = self._clock()
 
 
 class TestPeerHeartbeat(unittest.TestCase):
@@ -48,6 +52,9 @@ class TestPeerHeartbeat(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test resources."""
+        for peer in self.peers.values():
+            with peer._lock:
+                peer.is_alive = False
         for thread in self.heartbeat_threads.values():
             if thread.is_alive():
                 thread.join(timeout=1.0)
@@ -85,7 +92,8 @@ class TestPeerHeartbeat(unittest.TestCase):
         This test has historically been flaky due to timing issues.
         The fix ensures proper synchronization and state management.
         """
-        peer = MockPeer(peer_id=2, heartbeat_interval=0.1)
+        now = [100.0]
+        peer = MockPeer(peer_id=2, heartbeat_interval=0.1, clock=lambda: now[0])
         self.peers[2] = peer
 
         # Initialize heartbeat
@@ -94,9 +102,8 @@ class TestPeerHeartbeat(unittest.TestCase):
         # Verify peer is initially alive
         self.assertTrue(peer.check_heartbeat(timeout=0.3))
 
-        # Simulate no heartbeat by sleeping beyond timeout
-        # Use adequate buffer to avoid timing-related flakiness
-        time.sleep(0.5)
+        # Simulate no heartbeat by advancing beyond the timeout
+        now[0] += 0.5
 
         # Peer should now be dead due to timeout
         is_alive = peer.check_heartbeat(timeout=0.3)
