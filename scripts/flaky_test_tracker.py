@@ -266,7 +266,11 @@ def issue_title_for(test_id: str) -> str:
 
 
 def find_existing_issue(repo: str, title: str, token: str | None) -> str | None:
-    """Return the URL of an open issue with exactly ``title``, or None.
+    """Return the URL of an open issue with exactly ``title``, or None if the
+    lookup succeeded and no such issue exists.
+
+    Raise ``LookupError`` when neither the gh CLI nor the GitHub API could be
+    consulted, so callers can refuse to file a blind duplicate instead.
 
     The quarantine registry lives in a fresh checkout on every CI run, so
     without this check the same flaky test would get a new issue each run.
@@ -295,9 +299,10 @@ def find_existing_issue(repo: str, title: str, token: str | None) -> str | None:
             for issue in data.get("items", []):
                 if issue.get("title") == title:
                     return issue.get("html_url")
+            return None
         except Exception as e:
             print(f"[WARN] Failed to search existing issues: {e}", file=sys.stderr)
-    return None
+    raise LookupError(f"could not verify existing issues for {title!r}")
 
 
 def create_github_issues_for_quarantined(newly_quarantined: list[dict]):
@@ -305,9 +310,22 @@ def create_github_issues_for_quarantined(newly_quarantined: list[dict]):
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY", "HitEmPoka/StellPoker")
 
+    # Reuse issue URLs already recorded in the registry before filing, so a
+    # failed gh/API lookup can never spam a new duplicate (see #811, #813).
+    recorded_urls = {
+        t["id"]: t.get("issue_url", "")
+        for t in load_json(QUARANTINE_FILE, {"quarantined_tests": []}).get("quarantined_tests", [])
+    }
+
     for q in newly_quarantined:
         title = issue_title_for(q["id"])
-        existing_url = find_existing_issue(repo, title, token)
+        try:
+            existing_url = find_existing_issue(repo, title, token) or recorded_urls.get(q["id"])
+        except LookupError:
+            existing_url = recorded_urls.get(q["id"])
+            if not existing_url:
+                print(f"[WARN] Could not verify existing issues for {q['id']}; skipping issue creation.", file=sys.stderr)
+                continue
         if existing_url:
             q["issue_url"] = existing_url
             print(f"[ISSUE] Open issue already tracks {q['id']}: {existing_url}")
