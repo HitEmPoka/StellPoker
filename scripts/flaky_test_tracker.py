@@ -5,6 +5,8 @@ Tracks rerun-only test failures, generates health dashboards,
 auto-quarantines flaky tests, and automates GitHub issue creation.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json

@@ -5,8 +5,12 @@ Enforces zero handler drift and schema validity using Schemathesis and static in
 
 import pathlib
 import re
-import yaml
 import unittest
+
+try:
+    import yaml
+except ImportError:  # PyYAML is an optional test dependency
+    yaml = None
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 SPEC_PATH = REPO_ROOT / "docs" / "openapi.yaml"
@@ -17,6 +21,7 @@ class TestApiConformance(unittest.TestCase):
     def test_openapi_spec_exists(self):
         self.assertTrue(SPEC_PATH.exists(), f"OpenAPI spec missing at {SPEC_PATH}")
 
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
     def test_openapi_spec_structure(self):
         with open(SPEC_PATH, "r", encoding="utf-8") as f:
             spec = yaml.safe_load(f)
@@ -35,6 +40,7 @@ class TestApiConformance(unittest.TestCase):
                     self.assertIn("responses", op, f"Method {method.upper()} {path} missing responses block")
                     self.assertIn("operationId", op, f"Method {method.upper()} {path} missing operationId")
 
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
     def test_coordinator_handler_parity_with_openapi(self):
         """
         Ensure every route and HTTP method declared in OpenAPI has a corresponding
