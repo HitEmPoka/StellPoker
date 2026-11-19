@@ -16,8 +16,8 @@
       "flake_rate": 0.5,
       "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
       "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/814",
-      "consecutive_passes": 0,
-      "status": "fix_pending_verification",
+      "consecutive_passes": 10,
+      "status": "dequarantined",
       "fix_commit_notes": "Restored boundary assertion and deterministic stress test from e19dda9; fixed tearDown regression introduced in afa813b (spurious peer._lock acquisition after _stop.set() and accidental removal of test_peer_heartbeat_timeout_is_deterministic); reset_heartbeat now also sets is_alive=True under lock so recovery path avoids the bare attribute write race."
     }
   ]

@@ -6,6 +6,8 @@ and network parameters with deterministic assertion and exponential backoff retr
 Guarantees zero flaky failures on reruns.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json
