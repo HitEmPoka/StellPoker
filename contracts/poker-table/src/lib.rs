@@ -1213,15 +1213,20 @@ impl PokerTableContract {
         } else {
             table.current_turn = (table.dealer_seat + 3) % num_players;
         }
-        // Set action deadline for the first player to act (with optional time bank base)
-        let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
-        // Allow time-bank extension to apply at the very start if player has auto-extension enabled
-        table.action_deadline = crate::time_bank::apply_initial_deadline(
-            &env,
-            table.id,
-            table.current_turn,
-            base_deadline,
-        );
+        // Blinds or antes can leave no one able to bet (run out the board) or
+        // the first seat to act all in (pass the turn on).
+        betting::skip_round_if_all_in(&env, &mut table)?;
+        if table.phase == GamePhase::Preflop {
+            // Set action deadline for the first player to act (with optional time bank base)
+            let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
+            // Allow time-bank extension to apply at the very start if player has auto-extension enabled
+            table.action_deadline = crate::time_bank::apply_initial_deadline(
+                &env,
+                table.id,
+                table.current_turn,
+                base_deadline,
+            );
+        }
 
         save_table(&env, &table);
 

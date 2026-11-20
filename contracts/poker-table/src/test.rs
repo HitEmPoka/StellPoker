@@ -1790,4 +1790,151 @@ mod test {
         assert_eq!(s.client.get_hand_history(&table_a, &0).len(), 2);
         assert_eq!(s.client.get_hand_history(&table_b, &0).len(), 1);
     }
+
+    // ---------------------------------------------------------------------------
+    // All-in run-out (#855)
+    // ---------------------------------------------------------------------------
+
+    /// Committee reveal of the next street from fresh deck indices.
+    fn reveal_next_street(s: &TestSetup, table_id: u32) {
+        let table = s.client.get_table(&table_id);
+        let count = if table.phase == GamePhase::DealingFlop {
+            3
+        } else {
+            1
+        };
+        let first = table.dealt_indices.len();
+        let mut cards: Vec<u32> = Vec::new(&s.env);
+        let mut indices: Vec<u32> = Vec::new(&s.env);
+        for i in first..first + count {
+            cards.push_back(i);
+            indices.push_back(i);
+        }
+        let empty = soroban_sdk::Bytes::new(&s.env);
+        s.client
+            .reveal_board(&table_id, &s.committee, &cards, &indices, &empty, &empty);
+    }
+
+    /// Drive the hand to `Showdown`: on `shove_street` players with at most 200
+    /// behind go all in, everyone else calls or checks, and every street is
+    /// revealed. Fails if a betting round opens after the shove round.
+    /// Returns how many streets were revealed.
+    fn play_to_showdown(
+        s: &TestSetup,
+        table_id: u32,
+        seqs: &mut [u32; 6],
+        shove_street: Option<GamePhase>,
+    ) -> u32 {
+        let (mut shoving, mut shoved, mut reveals) = (false, false, 0);
+        loop {
+            let table = s.client.get_table(&table_id);
+            match table.phase {
+                GamePhase::Preflop | GamePhase::Flop | GamePhase::Turn | GamePhase::River => {
+                    assert!(!shoved, "{:?} opened betting after the all-in", table.phase);
+                    shoving = shove_street.as_ref() == Some(&table.phase);
+                    let mut max_bet = 0;
+                    for p in table.players.iter() {
+                        max_bet = max_bet.max(p.bet_this_round);
+                    }
+                    let seat = table.current_turn;
+                    let p = table.players.get(seat).unwrap();
+                    let action = if shoving && p.stack <= 200 {
+                        Action::AllIn
+                    } else if p.bet_this_round < max_bet {
+                        Action::Call
+                    } else {
+                        Action::Check
+                    };
+                    seqs[seat as usize] += 1;
+                    s.client
+                        .player_action(&table_id, &p.address, &seqs[seat as usize], &action);
+                }
+                GamePhase::DealingFlop | GamePhase::DealingTurn | GamePhase::DealingRiver => {
+                    shoved |= shoving;
+                    reveal_next_street(s, table_id);
+                    reveals += 1;
+                }
+                GamePhase::Showdown => return reveals,
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+    }
+
+    /// Three-handed: the two 200-chip stacks shove on `shove_street` and the
+    /// 1,000-chip stack calls. No one can bet after that, so the remaining
+    /// streets are only revealed, each with its own reveal proof.
+    fn assert_all_in_runs_out(shove_street: GamePhase) {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [1_000, 200, 200] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 3);
+
+        let reveals = play_to_showdown(&s, table_id, &mut [0; 6], Some(shove_street));
+
+        let table = s.client.get_table(&table_id);
+        assert_eq!(reveals, 3, "flop, turn and river each need a reveal");
+        assert_eq!(table.board_cards.len(), 5);
+        assert_eq!(table.players.iter().filter(|p| p.all_in).count(), 2);
+        assert_eq!(table.action_deadline, 0, "no player timer left running");
+    }
+
+    #[test]
+    fn test_all_in_preflop_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Preflop);
+    }
+
+    #[test]
+    fn test_all_in_on_flop_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Flop);
+    }
+
+    #[test]
+    fn test_all_in_on_turn_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Turn);
+    }
+
+    #[test]
+    fn test_deal_runs_out_the_board_when_blinds_leave_no_one_to_act() {
+        let s = setup();
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 0);
+        let table_id = s.client.create_table(&s.admin, &config);
+        // Blinds 100/200. Seat 0 is the big blind and all in for 100; seat 1
+        // (button, small blind 100) has already matched it.
+        join_player(&s, table_id, &Address::generate(&s.env), 100);
+        join_player(&s, table_id, &Address::generate(&s.env), 1_000);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::DealingFlop);
+
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+        assert_eq!(s.client.get_table(&table_id).board_cards.len(), 5);
+    }
+
+    #[test]
+    fn test_deal_passes_the_turn_past_an_all_in_big_blind() {
+        let s = setup();
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 0);
+        let table_id = s.client.create_table(&s.admin, &config);
+        // Blinds 100/200. Seat 0 is the big blind, all in for 150: more than
+        // the small blind's 100, so seat 1 still has to call or fold.
+        join_player(&s, table_id, &Address::generate(&s.env), 150);
+        let small_blind = Address::generate(&s.env);
+        join_player(&s, table_id, &small_blind, 1_000);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::Preflop);
+        assert_eq!(table.current_turn, 1);
+        assert!(table.action_deadline > 0);
+
+        s.client
+            .player_action(&table_id, &small_blind, &1, &Action::Call);
+        assert_eq!(
+            play_to_showdown(&s, table_id, &mut [0, 1, 0, 0, 0, 0], None),
+            3
+        );
+    }
 }

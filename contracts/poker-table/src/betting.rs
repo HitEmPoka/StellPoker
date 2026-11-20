@@ -257,11 +257,46 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
 
     if let Some(first) = first_to_act {
         table.current_turn = first;
-        return Ok(());
     }
+    skip_round_if_all_in(env, table)
+}
 
-    // All players are all-in or folded — skip to next deal phase
-    advance_to_next_phase(env, table)
+/// Run out the board when no bet can be made: at most one player can still
+/// act and they have already matched the highest bet, so everyone else is
+/// all in or folded. Moves on to the next reveal (or showdown) phase, so each
+/// remaining street is still dealt with its own reveal proof.
+///
+/// Otherwise the turn moves to the first player from `current_turn` on who
+/// can act, so a seat that is already all in is never left holding it.
+pub(crate) fn skip_round_if_all_in(
+    env: &Env,
+    table: &mut TableState,
+) -> Result<(), PokerTableError> {
+    let num_players = table.players.len();
+    let mut max_bet: i128 = 0;
+    let mut can_act: u32 = 0;
+    let mut actor_bet: i128 = 0;
+    let mut first_actor: Option<u32> = None;
+    for k in 0..num_players {
+        let seat = (table.current_turn + k) % num_players;
+        let p = table
+            .players
+            .get(seat)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        max_bet = core::cmp::max(max_bet, p.bet_this_round);
+        if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+            can_act += 1;
+            actor_bet = p.bet_this_round;
+            first_actor.get_or_insert(seat);
+        }
+    }
+    if can_act == 0 || (can_act == 1 && actor_bet >= max_bet) {
+        return advance_to_next_phase(env, table);
+    }
+    if let Some(seat) = first_actor {
+        table.current_turn = seat;
+    }
+    Ok(())
 }
 
 /// Advance to the next player's turn, or end the betting round.
