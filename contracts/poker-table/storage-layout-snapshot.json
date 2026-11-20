@@ -57,6 +57,12 @@
       "description": "Per-table betting pause (blocks new betting actions, allows settlement)."
     },
     {
+      "name": "BombPotConfig",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Bomb-pot (interval, ante) per table; interval 0 disables (#857)."
+    },
+    {
       "name": "ChipDumpingReport",
       "arity": 1,
       "domain": "persistent",

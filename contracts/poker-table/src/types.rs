@@ -585,6 +585,9 @@ pub enum PokerTableError {
     // --- Seven-deuce bounty (#856) ---
     /// A bounty deposit must be positive.
     InvalidBountyAmount = 123,
+    // --- Bomb pots (#857) ---
+    /// A bomb-pot interval needs a positive ante.
+    InvalidBombPotConfig = 124,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -1180,6 +1183,8 @@ pub enum DataKey {
     ContractMigration(u32),
     /// Unclaimed seven-deuce bounty, escrowed outside the pot (#856).
     SevenDeuceBounty(u32),
+    /// Bomb-pot `(interval, ante)`: every `interval`-th hand is a bomb pot (#857).
+    BombPotConfig(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

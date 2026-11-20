@@ -62,6 +62,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     }
 
     let level = current_blind_level(table)?;
+    let bomb_ante = bomb_pot_ante(env, table);
 
     let num_players = table.players.len() as u32;
 
@@ -79,15 +80,9 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         }
         AnteMode::None => 0,
     };
-
-    if ante_amount > 0 {
-        for i in 0..table.players.len() {
-            if let Some(p) = table.players.get(i) {
-                if !p.sitting_out && p.stack > 0 {
-                    post_ante(table, p.seat_index, ante_amount)?;
-                }
-            }
-        }
+    // A bomb pot takes its own ante in place of the blinds (below), not this one.
+    if bomb_ante.is_none() {
+        post_antes(table, ante_amount)?;
     }
 
     // Post blinds
@@ -108,8 +103,14 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         bb_seat = next_active_seat(table, sb_seat).unwrap();
     }
 
-    post_blind(table, sb_seat, level.small_blind)?;
-    post_blind(table, bb_seat, level.big_blind)?;
+    match bomb_ante {
+        // Bomb pot: every player antes instead of posting blinds, and no straddle.
+        Some(ante) => post_antes(table, ante)?,
+        None => {
+            post_blind(table, sb_seat, level.small_blind)?;
+            post_blind(table, bb_seat, level.big_blind)?;
+        }
+    }
 
     env.storage()
         .instance()
@@ -125,7 +126,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         .instance()
         .get::<DataKey, StraddleConfig>(&DataKey::StraddleConfig(table.id))
     {
-        if straddle.multiplier != 0 {
+        if straddle.multiplier != 0 && bomb_ante.is_none() {
             // Resolve seat and raw amount based on position
             let resolved: Option<(u32, i128, bool)> = match straddle.position.clone() {
                 StraddlePosition::BigBlind => Some((
@@ -242,6 +243,16 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     Ok(())
 }
 
+/// The bomb-pot ante when the current hand is a bomb pot (#857): every
+/// `interval`-th hand set by `configure_bomb_pot`. `None` otherwise.
+pub(crate) fn bomb_pot_ante(env: &Env, table: &TableState) -> Option<i128> {
+    let (interval, ante): (u32, i128) = env
+        .storage()
+        .instance()
+        .get(&DataKey::BombPotConfig(table.id))?;
+    (interval > 0 && table.hand_number.is_multiple_of(interval)).then_some(ante)
+}
+
 /// The blinds/ante level currently active for `table`.
 pub(crate) fn current_blind_level(table: &TableState) -> Result<BlindLevel, PokerTableError> {
     table
@@ -306,6 +317,20 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
     }
 }
 
+/// Collect `amount` as an ante from every player who has chips.
+fn post_antes(table: &mut TableState, amount: i128) -> Result<(), PokerTableError> {
+    if amount > 0 {
+        for i in 0..table.players.len() {
+            if let Some(p) = table.players.get(i) {
+                if !p.sitting_out && p.stack > 0 {
+                    post_ante(table, p.seat_index, amount)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Collect an ante from a seat: deducted from stack straight into the pot,
 /// without affecting `bet_this_round` (see call site for why).
 fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), PokerTableError> {
@@ -313,7 +338,8 @@ fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Poke
         .players
         .get(seat)
         .ok_or(PokerTableError::InvalidPlayerIndex)?;
-    let actual = if player.stack < amount {
+    // An ante that empties the stack is all in, so side pots cap this player.
+    let actual = if player.stack <= amount {
         player.all_in = true;
         player.stack
     } else {

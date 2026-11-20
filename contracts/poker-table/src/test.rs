@@ -2138,4 +2138,172 @@ mod test {
         assert_eq!(s.token.balance(&s.admin), 300);
         assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
     }
+
+    // ---------------------------------------------------------------------------
+    // Bomb pots (#857)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_bomb_pot_collects_antes_and_skips_preflop() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for _ in 0..3 {
+            join_player(&s, table_id, &Address::generate(&s.env), 500);
+        }
+        s.client.configure_bomb_pot(&table_id, &2, &50);
+        let mut seqs = [0u32; 6];
+
+        // Hand 1 is a normal hand: blinds 5/10 and preflop betting.
+        s.client.start_hand(&table_id);
+        assert_eq!(s.client.get_table(&table_id).pot, 15);
+        commit_mock_deal(&s, table_id, 3);
+        for _ in 0..2 {
+            let table = s.client.get_table(&table_id);
+            assert_eq!(table.phase, GamePhase::Preflop);
+            let seat = table.current_turn;
+            seqs[seat as usize] += 1;
+            let folder = table.players.get(seat).unwrap().address;
+            s.client
+                .player_action(&table_id, &folder, &seqs[seat as usize], &Action::Fold);
+        }
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
+
+        // Hand 2 is a bomb pot: three antes, no blinds, no preflop betting.
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.pot, 150);
+        for p in table.players.iter() {
+            assert_eq!(p.committed, 50);
+            assert_eq!(p.bet_this_round, 0);
+        }
+        commit_mock_deal(&s, table_id, 3);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::DealingFlop);
+        let seat = table.current_turn as usize;
+        assert_eq!(
+            s.client.try_player_action(
+                &table_id,
+                &table.players.get(seat as u32).unwrap().address,
+                &(seqs[seat] + 1),
+                &Action::Check
+            ),
+            Err(Ok(PokerTableError::NotInBettingPhase))
+        );
+
+        reveal_next_street(&s, table_id);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Flop);
+    }
+
+    #[test]
+    fn test_bomb_pot_side_pots_add_up_to_the_antes() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [500, 500, 100] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+
+        // Seat 2 can only ante 100 of the 150 and is all in.
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.pot, 400);
+        assert!(table.players.get(2).unwrap().all_in);
+        commit_mock_deal(&s, table_id, 3);
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+        mock_showdown(
+            &s,
+            table_id,
+            2,
+            0,
+            &[
+                (ACE_SPADES, KING_SPADES),
+                (SEVEN_CLUBS, DEUCE_CLUBS),
+                (40, 41),
+            ],
+        );
+
+        // Main pot: 3 x 100 to seat 2. Side pot: 2 x 50 to the next best seat.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.side_pots.len(), 2);
+        assert_eq!(table.side_pots.get(0).unwrap().amount, 300);
+        assert_eq!(table.side_pots.get(1).unwrap().amount, 100);
+        assert_eq!(table.players.get(2).unwrap().stack, 300);
+    }
+
+    #[test]
+    fn test_bomb_pot_starts_when_the_ante_leaves_one_player_with_chips() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 100);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+
+        // Seat 0 is all in on the ante, so seat 1 has no one to bet against.
+        s.client.start_hand(&table_id);
+        assert_eq!(s.client.get_table(&table_id).pot, 250);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+    }
+
+    #[test]
+    fn test_bomb_pot_ante_of_a_whole_stack_is_all_in_and_wins_the_main_pot() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [500, 500, 150] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+        s.client.start_hand(&table_id);
+        assert!(s.client.get_table(&table_id).players.get(2).unwrap().all_in);
+        commit_mock_deal(&s, table_id, 3);
+        reveal_next_street(&s, table_id);
+
+        // The two players with chips put 100 more in on the flop.
+        let mut seqs = [0u32; 6];
+        for action in [Action::Bet(100), Action::Call] {
+            let table = s.client.get_table(&table_id);
+            let seat = table.current_turn;
+            seqs[seat as usize] += 1;
+            let player = table.players.get(seat).unwrap().address;
+            s.client
+                .player_action(&table_id, &player, &seqs[seat as usize], &action);
+        }
+        play_to_showdown(&s, table_id, &mut seqs, None);
+        mock_showdown(
+            &s,
+            table_id,
+            2,
+            0,
+            &[
+                (ACE_SPADES, KING_SPADES),
+                (SEVEN_CLUBS, DEUCE_CLUBS),
+                (40, 41),
+            ],
+        );
+
+        // Seat 2 wins the 3 x 150 main pot; the 2 x 100 side pot is not its.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.players.get(2).unwrap().stack, 450);
+    }
+
+    #[test]
+    fn test_configure_bomb_pot_validates_and_waits_for_the_hand_to_end() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        assert_eq!(
+            s.client.try_configure_bomb_pot(&table_id, &3, &0),
+            Err(Ok(PokerTableError::InvalidBombPotConfig))
+        );
+        assert_eq!(s.client.get_bomb_pot_config(&table_id), (0, 0));
+        s.client.configure_bomb_pot(&table_id, &3, &25);
+        assert_eq!(s.client.get_bomb_pot_config(&table_id), (3, 25));
+
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.start_hand(&table_id);
+        assert_eq!(
+            s.client.try_configure_bomb_pot(&table_id, &0, &0),
+            Err(Ok(PokerTableError::HandAlreadyInProgress))
+        );
+    }
 }

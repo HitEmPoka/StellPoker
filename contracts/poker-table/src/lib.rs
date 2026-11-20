@@ -1213,9 +1213,14 @@ impl PokerTableContract {
         } else {
             table.current_turn = (table.dealer_seat + 3) % num_players;
         }
-        // Blinds or antes can leave no one able to bet (run out the board) or
-        // the first seat to act all in (pass the turn on).
-        betting::skip_round_if_all_in(&env, &mut table)?;
+        if game::bomb_pot_ante(&env, &table).is_some() {
+            // Bomb pot: the antes are in, so skip preflop betting and deal the flop.
+            betting::advance_to_next_phase(&env, &mut table)?;
+        } else {
+            // Blinds or antes can leave no one able to bet (run out the board) or
+            // the first seat to act all in (pass the turn on).
+            betting::skip_round_if_all_in(&env, &mut table)?;
+        }
         if table.phase == GamePhase::Preflop {
             // Set action deadline for the first player to act (with optional time bank base)
             let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
@@ -1898,6 +1903,41 @@ impl PokerTableContract {
         env.storage()
             .instance()
             .get(&DataKey::ActiveStraddleState(table_id))
+    }
+
+    /// Make every `interval`-th hand a bomb pot (#857): each player antes
+    /// `ante`, there are no blinds or straddle, and betting starts on the
+    /// flop. `interval` 0 turns bomb pots off. Admin only, between hands.
+    pub fn configure_bomb_pot(
+        env: Env,
+        table_id: u32,
+        interval: u32,
+        ante: i128,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        if interval > 0 && ante <= 0 {
+            return Err(PokerTableError::InvalidBombPotConfig);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::BombPotConfig(table_id), &(interval, ante));
+        env.events().publish(
+            (Symbol::new(&env, "bomb_pot_configured"), table_id),
+            (interval, ante),
+        );
+        Ok(())
+    }
+
+    /// The table's bomb-pot `(interval, ante)`; `(0, 0)` when never set (view function).
+    pub fn get_bomb_pot_config(env: Env, table_id: u32) -> (u32, i128) {
+        env.storage()
+            .instance()
+            .get(&DataKey::BombPotConfig(table_id))
+            .unwrap_or((0, 0))
     }
 
     /// Approve recovery of every player's own stack and committed chips after
