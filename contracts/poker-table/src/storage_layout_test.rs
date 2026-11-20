@@ -71,6 +71,12 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("TableSunset", 1, true),
     ("RakeHistoryLen", 1, true),
     ("RakeHistory", 2, true),
+    ("ContractVersion", 1, true),
+    ("ContractVersionRecord", 1, true),
+    ("PendingContractVersion", 1, true),
+    ("ContractVersionBeforeUpgrade", 1, true),
+    ("ContractVersionRecordPrev", 1, true),
+    ("ContractMigration", 1, true),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -120,6 +126,12 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::TableSunset(table_id),
         DataKey::RakeHistoryLen(table_id),
         DataKey::RakeHistory(table_id, 0),
+        DataKey::ContractVersion(table_id),
+        DataKey::ContractVersionRecord(table_id),
+        DataKey::PendingContractVersion(table_id),
+        DataKey::ContractVersionBeforeUpgrade(table_id),
+        DataKey::ContractVersionRecordPrev(table_id),
+        DataKey::ContractMigration(table_id),
     ]
 }
 
@@ -168,6 +180,12 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::TableSunset(_) => "TableSunset",
         DataKey::RakeHistoryLen(_) => "RakeHistoryLen",
         DataKey::RakeHistory(_, _) => "RakeHistory",
+        DataKey::ContractVersion(_) => "ContractVersion",
+        DataKey::ContractVersionRecord(_) => "ContractVersionRecord",
+        DataKey::PendingContractVersion(_) => "PendingContractVersion",
+        DataKey::ContractVersionBeforeUpgrade(_) => "ContractVersionBeforeUpgrade",
+        DataKey::ContractVersionRecordPrev(_) => "ContractVersionRecordPrev",
+        DataKey::ContractMigration(_) => "ContractMigration",
     }
 }
 
@@ -204,7 +222,13 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::ConfigVersion(_)
         | DataKey::TableMetrics(_)
         | DataKey::TableSunset(_)
-        | DataKey::RakeHistoryLen(_) => 1,
+        | DataKey::RakeHistoryLen(_)
+        | DataKey::ContractVersion(_)
+        | DataKey::ContractVersionRecord(_)
+        | DataKey::PendingContractVersion(_)
+        | DataKey::ContractVersionBeforeUpgrade(_)
+        | DataKey::ContractVersionRecordPrev(_)
+        | DataKey::ContractMigration(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)

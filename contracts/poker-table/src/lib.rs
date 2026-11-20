@@ -20,8 +20,11 @@ mod budget_ceilings_test;
 mod button_test;
 #[cfg(test)]
 mod chip_math_test;
+#[cfg(test)]
+mod contract_version_test;
 mod commit_reveal;
 mod config_versioning;
+mod contract_version;
 mod constant_time;
 #[cfg(test)]
 mod event_schema;
@@ -2474,6 +2477,39 @@ impl PokerTableContract {
         Ok(())
     }
 
+    pub fn propose_versioned_upgrade(
+        env: Env,
+        table_id: u32,
+        new_wasm_hash: BytesN<32>,
+        target_version: u32,
+        delay_seconds: u64,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        if delay_seconds < MIN_UPGRADE_DELAY_SECONDS {
+            return Err(PokerTableError::UpgradeDelayTooShort);
+        }
+        contract_version::set_pending_target_version(&env, table_id, target_version)?;
+
+        let execute_after = env.ledger().timestamp() + delay_seconds;
+        let proposal = UpgradeProposal {
+            new_wasm_hash: new_wasm_hash.clone(),
+            execute_after,
+        };
+        let proposal_key = DataKey::UpgradeProposal(table_id);
+        env.storage().persistent().set(&proposal_key, &proposal);
+        env.storage()
+            .persistent()
+            .extend_ttl(&proposal_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+        env.events().publish(
+            (Symbol::new(&env, "versioned_upgrade_proposed"), table_id),
+            (new_wasm_hash, target_version, execute_after),
+        );
+        Ok(())
+    }
+
     /// Execute a previously proposed upgrade (admin only), once its delay
     /// has elapsed. Always upgrades to the hash committed at proposal time —
     /// there is no way to swap in a different hash at execution time.
@@ -2514,6 +2550,13 @@ impl PokerTableContract {
         env.storage()
             .persistent()
             .extend_ttl(&last_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+        let _migration_window = contract_version::complete_upgrade(
+            &env,
+            table_id,
+            proposal.new_wasm_hash.clone(),
+            contract_version::DEFAULT_MIGRATION_WINDOW_SECONDS,
+        )?;
 
         env.deployer()
             .update_current_contract_wasm(proposal.new_wasm_hash.clone());
@@ -2614,6 +2657,7 @@ impl PokerTableContract {
         }
 
         env.storage().persistent().remove(&key);
+        contract_version::rollback(&env, table_id)?;
         env.deployer()
             .update_current_contract_wasm(previous_hash.clone());
 
@@ -2658,6 +2702,39 @@ impl PokerTableContract {
         env.storage()
             .persistent()
             .get(&DataKey::UpgradeProposal(table_id))
+    }
+
+    pub fn get_contract_version(env: Env, table_id: u32) -> u32 {
+        contract_version::get_contract_version(&env, table_id)
+    }
+
+    pub fn get_contract_version_record(
+        env: Env,
+        table_id: u32,
+    ) -> Option<contract_version::ContractVersionRecord> {
+        contract_version::get_contract_version_record(&env, table_id)
+    }
+
+    pub fn get_pending_contract_version(env: Env, table_id: u32) -> Option<u32> {
+        contract_version::get_pending_target_version(&env, table_id)
+    }
+
+    pub fn get_contract_migration_window(
+        env: Env,
+        table_id: u32,
+    ) -> Option<ContractMigrationWindow> {
+        contract_version::get_migration_window(&env, table_id)
+    }
+
+    pub fn close_contract_migration_window(env: Env, table_id: u32) -> Result<bool, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        let closed = contract_version::close_migration_window(&env, table_id);
+        env.events().publish(
+            (Symbol::new(&env, "contract_migration_closed"), table_id),
+            (),
+        );
+        Ok(closed)
     }
 
     /// Update the rake (admin only). Capped at `MAX_RAKE_BPS` (5%).

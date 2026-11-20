@@ -238,6 +238,10 @@ pub async fn get_chain_config(
         rpc_url: state.soroban_config.rpc_url.clone(),
         network_passphrase: state.soroban_config.network_passphrase.clone(),
         poker_table_contract: state.soroban_config.poker_table_contract.clone(),
+        active_contract_version: state
+            .soroban_config
+            .contract_version_for_table(state.soroban_config.onchain_table_id.unwrap_or(0)),
+        configured_contract_versions: state.soroban_config.active_contract_versions(),
     }))
 }
 

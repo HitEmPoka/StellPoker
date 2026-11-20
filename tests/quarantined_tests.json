@@ -15,7 +15,7 @@
       "reason": "Rerun-only failure detected across multiple runs",
       "flake_rate": 0.5,
       "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
-      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/814",
+      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/762",
       "related_issues": [
         "https://github.com/HitEmPoka/StellPoker/issues/776",
         "https://github.com/HitEmPoka/StellPoker/issues/778",
@@ -23,7 +23,8 @@
       ],
       "consecutive_passes": 10,
       "status": "dequarantined",
-      "fix_commit_notes": "Root cause: test_peer_heartbeat_timeout read the wall clock (time.time()) and used time.sleep() margins to judge timeout — a scheduler stall on a loaded CI runner could push elapsed time past or below the timeout boundary, causing a 50% flake rate (issues #776, #778, #779 each caught a re-detection). Fix: MockPeer now accepts an injectable clock parameter (default time.monotonic); tests use FakeClock, a manually-advanced, thread-safe clock that only moves when the test calls clock.advance(). The boundary assertion verifies strict greater-than (>) semantics at exactly the timeout value and one step past it. test_peer_heartbeat_timeout_is_deterministic repeats the scenario 200 times in a single test run, making any residual timing dependency immediately visible. reset_heartbeat sets is_alive=True under the lock to close the bare-attribute-write race on the recovery path."
+      "dequarantined_at": "2026-11-19T18:51:06Z",
+      "fix_commit_notes": "Root cause: test_peer_heartbeat_timeout read the wall clock (time.time()) and used time.sleep() margins to judge timeout — a scheduler stall on a loaded CI runner could push elapsed time past or below the timeout boundary, causing a 50% flake rate (issues #776, #778, #779 each caught a re-detection). Fix: MockPeer now accepts an injectable clock parameter (default time.monotonic); tests use FakeClock, a manually-advanced, thread-safe clock that only moves when the test calls clock.advance(). The boundary assertion verifies strict greater-than (>) semantics at exactly the timeout value and one step past it. test_peer_heartbeat_timeout_is_deterministic repeats the scenario 200 times in a single test run, making any residual timing dependency immediately visible. reset_heartbeat sets is_alive=True under the lock to close the bare-attribute-write race on the recovery path. PR #845 merged 2026-11-19; entry retained as a dequarantined audit record with 10 consecutive clean passes."
     }
   ]
 }

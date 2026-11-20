@@ -114,7 +114,7 @@ The system consists of three integrated components:
    - Stack trace and observed failure rate.
    - Runbook link and triage checklist.
 4. **Triage SLA:** Flaky test issues must be acknowledged within 24 business hours and fixed or permanently retired within 7 days.
-5. **De-quarantine:** Once a patch is merged and the test logs 10 consecutive clean passes in the quarantine job without retries, it is automatically eligible for promotion back to the blocking test suite.
+5. **De-quarantine:** Once a patch is merged and the test logs 10 consecutive clean passes in the quarantine job without retries, it is automatically eligible for promotion back to the blocking test suite. The registry keeps the entry with `status: "dequarantined"` for audit, but the dashboard excludes it from active quarantined counts. A recurrence adds a fresh active entry and issue.
 
 ---
 
