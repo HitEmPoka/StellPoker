@@ -205,6 +205,17 @@ class TestPeerHeartbeat(unittest.TestCase):
         self.assertEqual(len(results), 150)
         self.assertTrue(all(results), "All concurrent heartbeat checks should pass")
 
+    def test_peer_heartbeat_timeout_50_runs_no_flake(self):
+        """Verify peer 2 heartbeat timeout behaves deterministically over 50 runs (#797, #799, #802, #803)."""
+        for i in range(50):
+            clock = FakeClock(start=200.0 + i)
+            peer = MockPeer(peer_id=2, clock=clock)
+            peer.reset_heartbeat()
+            self.assertTrue(peer.check_heartbeat(timeout=0.3))
+            clock.advance(0.5)
+            self.assertFalse(peer.check_heartbeat(timeout=0.3))
+            self.assertFalse(peer.is_alive)
+
 
 if __name__ == "__main__":
     unittest.main()
