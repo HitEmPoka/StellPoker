@@ -15,8 +15,11 @@
       "reason": "Rerun-only failure detected across multiple runs",
       "flake_rate": 0.5,
       "errors": ["ConnectionResetError: Peer 2 heartbeat timed out"],
-      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/814",
+      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/763",
       "related_issues": [
+        "https://github.com/HitEmPoka/StellPoker/issues/764",
+        "https://github.com/HitEmPoka/StellPoker/issues/765",
+        "https://github.com/HitEmPoka/StellPoker/issues/766",
         "https://github.com/HitEmPoka/StellPoker/issues/776",
         "https://github.com/HitEmPoka/StellPoker/issues/778",
         "https://github.com/HitEmPoka/StellPoker/issues/779"
