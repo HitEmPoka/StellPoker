@@ -1197,31 +1197,51 @@ impl PokerTableContract {
         if num_players < 2 {
             return Err(PokerTableError::NotEnoughPlayers);
         }
-        // If a Mississippi/live straddle is active, first to act is after the straddler
-        if let Some(active) = env
+        // If a Mississippi/live straddle is active, first to act is after the straddler.
+        let nominal_first = if let Some(active) = env
             .storage()
             .instance()
             .get::<DataKey, ActiveStraddle>(&DataKey::ActiveStraddleState(table.id))
         {
-            table.current_turn = (active.seat + 1) % num_players;
+            (active.seat + 1) % num_players
         } else if let Some(seat) = env
             .storage()
             .instance()
             .get::<DataKey, u32>(&DataKey::ActiveStraddleSeat(table.id))
         {
-            table.current_turn = (seat + 1) % num_players;
+            (seat + 1) % num_players
         } else {
-            table.current_turn = (table.dealer_seat + 3) % num_players;
+            (table.dealer_seat + 3) % num_players
+        };
+
+        // Skip players who are already all-in (e.g. from posting an ante or blind),
+        // folded, sitting out, or have zero remaining chips.
+        let mut first_to_act: Option<u32> = None;
+        for i in 0..num_players {
+            let seat = (nominal_first + i) % num_players;
+            if let Some(p) = table.players.get(seat) {
+                if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+                    first_to_act = Some(seat);
+                    break;
+                }
+            }
         }
-        // Set action deadline for the first player to act (with optional time bank base)
-        let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
-        // Allow time-bank extension to apply at the very start if player has auto-extension enabled
-        table.action_deadline = crate::time_bank::apply_initial_deadline(
-            &env,
-            table.id,
-            table.current_turn,
-            base_deadline,
-        );
+
+        if let Some(first) = first_to_act {
+            table.current_turn = first;
+            // Set action deadline for the first player to act (with optional time bank base)
+            let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
+            // Allow time-bank extension to apply at the very start if player has auto-extension enabled
+            table.action_deadline = crate::time_bank::apply_initial_deadline(
+                &env,
+                table.id,
+                table.current_turn,
+                base_deadline,
+            );
+        } else {
+            // Everyone is all-in (e.g. from antes/blinds) — skip preflop betting.
+            betting::advance_to_next_phase(&env, &mut table)?;
+        }
 
         save_table(&env, &table);
 

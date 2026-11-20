@@ -321,7 +321,7 @@ fn is_heads_up_all_in(table: &TableState) -> bool {
 }
 
 /// Advance to the next game phase, checking for Run-It-Twice condition.
-fn advance_to_next_phase(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
+pub(crate) fn advance_to_next_phase(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     // If only one player left, settle immediately
     if game::active_player_count(table) == 1 {
         game::settle_fold_win(env, table)?;

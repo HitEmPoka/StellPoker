@@ -367,4 +367,83 @@ mod blinds_schedule_test {
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         s.client.create_table(&s.admin, &config);
     }
+
+    #[test]
+    fn ante_only_all_in_clamps_stack_marks_all_in_and_skips_preflop_turn() {
+        let s = setup();
+        let mut levels = Vec::new(&s.env);
+        levels.push_back(BlindLevel {
+            small_blind: 50,
+            big_blind: 100,
+            ante: crate::types::AnteMode::Fixed(150),
+            duration_seconds: 0,
+            break_seconds: 0,
+        });
+        let config = config_with_schedule(&s, BlindsSchedule { levels });
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        // Seat 0: micro-stack (100 < ante 150) — goes all-in from partial ante.
+        // Seat 1 & 2: deep stacks (10_000).
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 100);
+        join(&s, table_id, &p1, 10_000);
+        join(&s, table_id, &p2, 10_000);
+
+        s.client.start_hand(&table_id);
+
+        let table = s.client.get_table(&table_id);
+        let s0 = table.players.get(0).unwrap();
+        assert_eq!(s0.stack, 0);
+        assert!(s0.all_in, "player exhausted by ante must be marked all-in");
+        assert_eq!(s0.committed, 100, "committed must equal partial ante only");
+
+        // Total pot = partial ante (100) + 2 full antes (300) + SB (50) + BB (100) = 550.
+        assert_eq!(table.pot, 550);
+
+        // Commit deal and verify preflop turn skips any all-in seat.
+        commit_mock_deal(&s, table_id, 3);
+        let after_deal = s.client.get_table(&table_id);
+        assert_eq!(after_deal.phase, GamePhase::Preflop);
+        let turn_player = after_deal.players.get(after_deal.current_turn).unwrap();
+        assert!(
+            !turn_player.all_in && turn_player.stack > 0,
+            "preflop current_turn must skip ante-all-in player"
+        );
+    }
+
+    #[test]
+    fn exact_ante_all_in_marks_player_all_in_without_underflow() {
+        let s = setup();
+        let mut levels = Vec::new(&s.env);
+        levels.push_back(BlindLevel {
+            small_blind: 50,
+            big_blind: 100,
+            ante: crate::types::AnteMode::Fixed(100),
+            duration_seconds: 0,
+            break_seconds: 0,
+        });
+        let config = config_with_schedule(&s, BlindsSchedule { levels });
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        // Seat 0 has stack == ante (100), Seat 1 and Seat 2 have 10_000.
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 100);
+        join(&s, table_id, &p1, 10_000);
+        join(&s, table_id, &p2, 10_000);
+
+        s.client.start_hand(&table_id);
+
+        let table = s.client.get_table(&table_id);
+        let s0 = table.players.get(0).unwrap();
+        assert_eq!(s0.stack, 0);
+        assert!(s0.all_in, "player with stack == ante must be marked all-in");
+        assert_eq!(s0.committed, 100);
+        assert_eq!(s0.bet_this_round, 0);
+        // Pot = 3 * 100 (antes) + 50 (SB) + 100 (BB) = 450.
+        assert_eq!(table.pot, 450);
+    }
 }
