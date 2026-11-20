@@ -282,3 +282,77 @@ fn bet_sets_last_raise_size() {
     act(&env, &poker, &mut table, &p0, &Action::Bet(bet_amount)).expect("bet");
     assert_eq!(table.last_raise_size, bet_amount);
 }
+
+/// Opening bet on a bet-less street: one below 1 BB is rejected, exactly 1 BB is accepted.
+#[test]
+fn opening_bet_boundary_around_big_blind() {
+    let (env, poker, hub) = make_env();
+    let big_blind = 20i128;
+    let (mut table, p0, _p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
+
+    // Simulate a bet-less post-flop street where last_raise_size was larger from an earlier street.
+    for i in 0..table.players.len() {
+        let mut p = table.players.get(i).unwrap();
+        p.bet_this_round = 0;
+        table.players.set(i, p);
+    }
+    table.phase = GamePhase::Flop;
+    table.last_raise_size = 100;
+    table.current_turn = 0;
+
+    let err = act(&env, &poker, &mut table, &p0, &Action::Bet(big_blind - 1)).unwrap_err();
+    assert_eq!(err, PokerTableError::BetTooSmall);
+
+    act(&env, &poker, &mut table, &p0, &Action::Bet(big_blind))
+        .expect("opening bet of exactly 1 BB must succeed");
+    assert_eq!(table.last_raise_size, big_blind);
+}
+
+/// Even if `Action::Raise` is invoked on a bet-less street while `last_raise_size > big_blind`,
+/// validation branches on `current_bet == 0` so 1 BB is the minimum (and `big_blind - 1` is rejected).
+#[test]
+fn raise_on_betless_street_uses_big_blind_not_last_raise_size() {
+    let (env, poker, hub) = make_env();
+    let big_blind = 20i128;
+    let (mut table, p0, _p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
+
+    for i in 0..table.players.len() {
+        let mut p = table.players.get(i).unwrap();
+        p.bet_this_round = 0;
+        table.players.set(i, p);
+    }
+    table.phase = GamePhase::Flop;
+    table.last_raise_size = 100;
+    table.current_turn = 0;
+
+    let err = act(&env, &poker, &mut table, &p0, &Action::Raise(big_blind - 1)).unwrap_err();
+    assert_eq!(err, PokerTableError::RaiseTooSmall);
+
+    act(&env, &poker, &mut table, &p0, &Action::Raise(big_blind))
+        .expect("opening action of exactly 1 BB on a bet-less street must succeed");
+}
+
+/// After an opening bet of size R > big_blind, the minimum raise is R (R - 1 is rejected, R is accepted).
+#[test]
+fn min_raise_after_bet_boundary() {
+    let (env, poker, hub) = make_env();
+    let big_blind = 10i128;
+    let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
+
+    for i in 0..table.players.len() {
+        let mut p = table.players.get(i).unwrap();
+        p.bet_this_round = 0;
+        table.players.set(i, p);
+    }
+    table.phase = GamePhase::Flop;
+    table.current_turn = 0;
+
+    let opening_bet = 50i128;
+    act(&env, &poker, &mut table, &p0, &Action::Bet(opening_bet)).expect("opening bet");
+
+    let err = act(&env, &poker, &mut table, &p1, &Action::Raise(opening_bet - 1)).unwrap_err();
+    assert_eq!(err, PokerTableError::RaiseTooSmall);
+
+    act(&env, &poker, &mut table, &p1, &Action::Raise(opening_bet))
+        .expect("raise equal to opening bet must succeed");
+}

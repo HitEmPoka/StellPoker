@@ -131,11 +131,16 @@ pub fn process_action(
             let total_needed = to_call
                 .checked_add(*amount)
                 .ok_or(PokerTableError::NotEnoughChips)?;
-            // Standard poker minimum-raise rule: the raise increment must be at
-            // least as large as the previous bet or raise in this round, or the
-            // current blind level's big blind if no raise has happened yet.
+            // Branch validation on whether the current street has an outstanding bet:
+            // on a bet-less street the minimum opening bet is one big blind,
+            // whereas a raise over an existing bet must be at least the last
+            // full raise size (or one big blind if no raise has happened yet).
             let current_big_blind = game::current_blind_level(table)?.big_blind;
-            let min_raise = core::cmp::max(table.last_raise_size, current_big_blind);
+            let min_raise = if current_bet == 0 {
+                current_big_blind
+            } else {
+                core::cmp::max(table.last_raise_size, current_big_blind)
+            };
             if *amount < min_raise {
                 return Err(PokerTableError::RaiseTooSmall);
             }
