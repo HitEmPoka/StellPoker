@@ -20,6 +20,7 @@ state the next one accepts.
 | Waiting-list buy-ins | `Queue(table_id)`, escrowed in the contract | `leave_queue`, or `finalize_sunset` |
 | House rake | `TableState.rake_balance` | `withdraw_rake`, or `finalize_sunset` |
 | Jackpot pool | `TableState.jackpot_balance` | `finalize_sunset` (no other admin path) |
+| Seven-deuce bounty | `SevenDeuceBounty(table_id)`, escrowed in the contract | a 7-2 offsuit showdown win, or `finalize_sunset` |
 | Swept dead chips | Treasury contract | `reclaim_dead_chips` within the reclaim period |
 
 Not covered: tokens sent to the contract outside these paths, and currency tokens
@@ -74,7 +75,8 @@ Requires the table to be between hands with no chips in any seat (otherwise
 `SunsetNotReady`). In one call it:
 
 1. refunds every waiting-list buy-in to its owner,
-2. pays the house rake and the jackpot pool to the table admin,
+2. pays the house rake, the jackpot pool and any unclaimed seven-deuce bounty to the
+   table admin,
 3. clears the seats and the wallet-to-table index,
 4. cancels any closure notice that is still pending, and
 5. writes the `SunsetRecord` and emits `table_sunset`.
@@ -86,11 +88,13 @@ From then on `join_table`, `buy_in_with_currency`, `rebuy` and `start_hand` fail
 ### 6. Verify
 
 - `get_sunset_record(table_id)` shows what was swept and refunded.
-- `get_rake_balance` and `get_jackpot_balance` are zero.
+- `get_rake_balance`, `get_jackpot_balance` and `get_seven_deuce_bounty` are zero.
+  The `SunsetRecord` has no bounty field, so read `get_seven_deuce_bounty` before
+  finalizing to account for it below.
 - The contract's token balance has dropped by exactly the sum of the refunds and
   payouts. If other tables remain, it should equal their liabilities (stacks + pots +
-  rake + jackpot + queue escrow) and nothing more. If it does not, investigate before
-  moving on.
+  rake + jackpot + queue escrow + seven-deuce bounties) and nothing more. If it does
+  not, investigate before moving on.
 
 ### 7. Retire a contract version
 

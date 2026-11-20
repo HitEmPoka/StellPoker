@@ -77,6 +77,7 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ContractVersionBeforeUpgrade", 1, true),
     ("ContractVersionRecordPrev", 1, true),
     ("ContractMigration", 1, true),
+    ("SevenDeuceBounty", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -132,6 +133,7 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ContractVersionBeforeUpgrade(table_id),
         DataKey::ContractVersionRecordPrev(table_id),
         DataKey::ContractMigration(table_id),
+        DataKey::SevenDeuceBounty(table_id),
     ]
 }
 
@@ -186,6 +188,7 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ContractVersionBeforeUpgrade(_) => "ContractVersionBeforeUpgrade",
         DataKey::ContractVersionRecordPrev(_) => "ContractVersionRecordPrev",
         DataKey::ContractMigration(_) => "ContractMigration",
+        DataKey::SevenDeuceBounty(_) => "SevenDeuceBounty",
     }
 }
 
@@ -228,7 +231,8 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::PendingContractVersion(_)
         | DataKey::ContractVersionBeforeUpgrade(_)
         | DataKey::ContractVersionRecordPrev(_)
-        | DataKey::ContractMigration(_) => 1,
+        | DataKey::ContractMigration(_)
+        | DataKey::SevenDeuceBounty(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)

@@ -1937,4 +1937,205 @@ mod test {
             3
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // Seven-deuce bounty (#856)
+    // ---------------------------------------------------------------------------
+
+    // Card values are `suit * 13 + rank`, rank 0 = deuce.
+    const SEVEN_CLUBS: u32 = 5;
+    const DEUCE_CLUBS: u32 = 0;
+    const DEUCE_DIAMONDS: u32 = 13;
+    const KING_SPADES: u32 = 50;
+    const ACE_SPADES: u32 = 51;
+
+    /// Write `value` into BN254 field `field_index` of a proof's public inputs.
+    fn write_field(bytes: &mut soroban_sdk::Bytes, field_index: u32, value: u32) {
+        let start = field_index * 32 + 28;
+        for (i, b) in value.to_be_bytes().iter().enumerate() {
+            bytes.set(start + i as u32, *b);
+        }
+    }
+
+    /// Showdown arguments in which seat `winner` (plus every seat in
+    /// `tie_mask`) wins, with `holes[seat]` as each seat's proved hole cards.
+    fn showdown_inputs(
+        s: &TestSetup,
+        winner: u32,
+        tie_mask: u32,
+        holes: &[(u32, u32)],
+    ) -> (
+        Vec<(u32, u32)>,
+        Vec<(BytesN<32>, BytesN<32>)>,
+        soroban_sdk::Bytes,
+    ) {
+        let mut public_inputs = soroban_sdk::Bytes::new(&s.env);
+        for _ in 0..(27 * 32) {
+            public_inputs.push_back(0);
+        }
+        let mut hole_cards: Vec<(u32, u32)> = Vec::new(&s.env);
+        let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&s.env);
+        for (seat, &(c1, c2)) in holes.iter().enumerate() {
+            write_field(&mut public_inputs, 13 + seat as u32, c1);
+            write_field(&mut public_inputs, 19 + seat as u32, c2);
+            hole_cards.push_back((c1, c2));
+            let salt = BytesN::from_array(&s.env, &[0u8; 32]);
+            salts.push_back((salt.clone(), salt));
+        }
+        write_field(&mut public_inputs, 25, winner);
+        write_field(&mut public_inputs, 26, tie_mask);
+        (hole_cards, salts, public_inputs)
+    }
+
+    /// Submit a committee showdown built by [`showdown_inputs`].
+    fn mock_showdown(
+        s: &TestSetup,
+        table_id: u32,
+        winner: u32,
+        tie_mask: u32,
+        holes: &[(u32, u32)],
+    ) {
+        let (hole_cards, salts, public_inputs) = showdown_inputs(s, winner, tie_mask, holes);
+        s.client.submit_showdown(
+            &table_id,
+            &s.committee,
+            &hole_cards,
+            &salts,
+            &soroban_sdk::Bytes::new(&s.env),
+            &public_inputs,
+            &Vec::new(&s.env),
+        );
+    }
+
+    /// Heads-up table (blinds 100/200, 5% rake) with `bounty` funded by the
+    /// admin and a hand checked down to the showdown.
+    fn bounty_hand_at_showdown(s: &TestSetup, bounty: i128) -> u32 {
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 500);
+        let table_id = s.client.create_table(&s.admin, &config);
+        for _ in 0..2 {
+            join_player(s, table_id, &Address::generate(&s.env), 1_000);
+        }
+        s.token_admin_client.mint(&s.admin, &bounty);
+        assert_eq!(s.client.fund_seven_deuce_bounty(&table_id, &bounty), bounty);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(s, table_id, 2);
+        play_to_showdown(s, table_id, &mut [0; 6], None);
+        table_id
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_paid_to_outright_winner_and_not_raked() {
+        let s = setup();
+        let table_id = bounty_hand_at_showdown(&s, 300);
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+        assert_eq!(s.token.balance(&s.admin), 0);
+
+        let before = s.client.get_table(&table_id);
+        let stack = before.players.get(0).unwrap().stack;
+        mock_showdown(
+            &s,
+            table_id,
+            0,
+            0,
+            &[(SEVEN_CLUBS, DEUCE_DIAMONDS), (ACE_SPADES, KING_SPADES)],
+        );
+
+        let after = s.client.get_table(&table_id);
+        let rake = after.rake_balance + after.jackpot_balance;
+        assert_eq!(
+            rake,
+            before.pot * 500 / 10_000,
+            "rake comes from the pot only"
+        );
+        assert_eq!(
+            after.players.get(0).unwrap().stack,
+            stack + before.pot - rake + 300
+        );
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_needs_an_outright_offsuit_seven_deuce_win() {
+        let seven_deuce = (SEVEN_CLUBS, DEUCE_DIAMONDS);
+        let ace_king = (ACE_SPADES, KING_SPADES);
+        // (winner, tie mask, hole cards by seat)
+        let cases = [
+            (0, 0, [(SEVEN_CLUBS, DEUCE_CLUBS), ace_king]), // suited
+            (1, 0, [seven_deuce, ace_king]),                // 7-2 loses
+            (0, 0b10, [seven_deuce, ace_king]),             // 7-2 only chops
+        ];
+        for (winner, tie_mask, holes) in cases {
+            let s = setup();
+            let table_id = bounty_hand_at_showdown(&s, 300);
+            mock_showdown(&s, table_id, winner, tie_mask, &holes);
+            assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+        }
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_not_paid_on_a_fold_win() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+
+        play_fold_hand(&s, table_id);
+
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_cannot_be_claimed_twice_for_one_hand() {
+        let s = setup();
+        let table_id = bounty_hand_at_showdown(&s, 300);
+        let holes = [(SEVEN_CLUBS, DEUCE_DIAMONDS), (ACE_SPADES, KING_SPADES)];
+        mock_showdown(&s, table_id, 0, 0, &holes);
+
+        // Refund the bounty before the next hand and replay the showdown.
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+        let (hole_cards, salts, public_inputs) = showdown_inputs(&s, 0, 0, &holes);
+        assert_eq!(
+            s.client.try_submit_showdown(
+                &table_id,
+                &s.committee,
+                &hole_cards,
+                &salts,
+                &soroban_sdk::Bytes::new(&s.env),
+                &public_inputs,
+                &Vec::new(&s.env),
+            ),
+            Err(Ok(PokerTableError::NotInShowdownPhase))
+        );
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+    }
+
+    #[test]
+    fn test_fund_seven_deuce_bounty_rejects_non_positive_amounts() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for amount in [0, -1] {
+            assert_eq!(
+                s.client.try_fund_seven_deuce_bounty(&table_id, &amount),
+                Err(Ok(PokerTableError::InvalidBountyAmount))
+            );
+        }
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
+
+    #[test]
+    fn test_finalize_sunset_returns_unclaimed_bounty_to_admin() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+        assert_eq!(s.token.balance(&s.admin), 0);
+
+        s.client.finalize_sunset(&table_id);
+
+        assert_eq!(s.token.balance(&s.admin), 300);
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
 }

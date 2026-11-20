@@ -97,6 +97,16 @@
           ],
           "auth_model": "table_admin_require_auth",
           "admin_multisig_required": true
+        },
+        "DataKey::SevenDeuceBounty": {
+          "authorized_functions": [
+            "fund_seven_deuce_bounty",
+            "submit_showdown",
+            "finalize_sunset",
+            "get_seven_deuce_bounty"
+          ],
+          "auth_model": "table_admin_funds_paid_on_committee_showdown",
+          "admin_multisig_required": true
         }
       }
     },

@@ -225,6 +225,12 @@
       "description": "Per-table settlement pause (blocks hand settlement)."
     },
     {
+      "name": "SevenDeuceBounty",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Unclaimed seven-deuce bounty per table, escrowed outside the pot (#856)."
+    },
+    {
       "name": "StraddleConfig",
       "arity": 1,
       "domain": "instance",

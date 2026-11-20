@@ -1649,6 +1649,12 @@ impl PokerTableContract {
         } else {
             // Normal showdown
             game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
+            // settle_showdown has checked winner_index is a seat; its proved hole cards:
+            let winner_cards = (
+                extract_u32_from_public_inputs(&public_inputs, 13 + winner_index),
+                extract_u32_from_public_inputs(&public_inputs, 19 + winner_index),
+            );
+            game::pay_seven_deuce_bounty(&env, &mut table, winner_index, tie_mask, winner_cards)?;
             save_table(&env, &table);
             Ok(())
         }
@@ -2266,7 +2272,11 @@ impl PokerTableContract {
 
         let rake_swept = table.rake_balance;
         let jackpot_swept = table.jackpot_balance;
-        let payout = rake_swept + jackpot_swept;
+        // An unclaimed seven-deuce bounty goes back to the admin who funded it.
+        let bounty_key = DataKey::SevenDeuceBounty(table_id);
+        let bounty_swept: i128 = env.storage().instance().get(&bounty_key).unwrap_or(0);
+        env.storage().instance().remove(&bounty_key);
+        let payout = rake_swept + jackpot_swept + bounty_swept;
         if payout > 0 {
             token.transfer(&env.current_contract_address(), &table.admin, &payout);
         }
@@ -2859,6 +2869,50 @@ impl PokerTableContract {
     pub fn get_jackpot_balance(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
         let table = load_table(&env, table_id)?;
         Ok(table.jackpot_balance)
+    }
+
+    /// Add `amount` to the table's seven-deuce bounty (#856). The table admin
+    /// funds it; the chips are escrowed outside the pot and paid to the next
+    /// player who wins a showdown outright with 7-2 offsuit. Returns the new
+    /// balance.
+    pub fn fund_seven_deuce_bounty(
+        env: Env,
+        table_id: u32,
+        amount: i128,
+    ) -> Result<i128, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        sunset::require_not_sunset(&env, table_id)?;
+        if amount <= 0 {
+            return Err(PokerTableError::InvalidBountyAmount);
+        }
+        let key = DataKey::SevenDeuceBounty(table_id);
+        let balance = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&key)
+            .unwrap_or(0)
+            .checked_add(amount)
+            .ok_or(PokerTableError::InvalidBountyAmount)?;
+        token::Client::new(&env, &table.config.token).transfer(
+            &table.admin,
+            env.current_contract_address(),
+            &amount,
+        );
+        env.storage().instance().set(&key, &balance);
+        env.events().publish(
+            (Symbol::new(&env, "seven_deuce_bounty_funded"), table_id),
+            (amount, balance),
+        );
+        Ok(balance)
+    }
+
+    /// The table's unclaimed seven-deuce bounty (view function).
+    pub fn get_seven_deuce_bounty(env: Env, table_id: u32) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SevenDeuceBounty(table_id))
+            .unwrap_or(0)
     }
 
     /// Read the jackpot configuration parameters for a table (view function).

@@ -582,6 +582,9 @@ pub enum PokerTableError {
     // --- Versioned upgrades (Issue #111) ---
     /// A versioned upgrade must target a version newer than the active one.
     InvalidContractVersion = 122,
+    // --- Seven-deuce bounty (#856) ---
+    /// A bounty deposit must be positive.
+    InvalidBountyAmount = 123,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -1175,6 +1178,8 @@ pub enum DataKey {
     ContractVersionRecordPrev(u32),
     /// Active dual-version routing window for a table (Issue #111).
     ContractMigration(u32),
+    /// Unclaimed seven-deuce bounty, escrowed outside the pot (#856).
+    SevenDeuceBounty(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

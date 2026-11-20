@@ -1,7 +1,20 @@
 use soroban_sdk::{Env, Vec};
+use stellar_zk_cards::Card;
 
 use crate::constant_time;
 use crate::types::*;
+
+/// True for 7-2 offsuit (#856). Card values are `suit * 13 + rank`, with
+/// rank 0 = deuce and 5 = seven.
+pub fn is_seven_deuce_offsuit(c1: u32, c2: u32) -> bool {
+    const DEUCE: u32 = 0;
+    const SEVEN: u32 = 5;
+    let (a, b) = (Card { value: c1 }, Card { value: c2 });
+    a.is_valid()
+        && b.is_valid()
+        && a.suit() != b.suit()
+        && ((a.rank() == SEVEN && b.rank() == DEUCE) || (a.rank() == DEUCE && b.rank() == SEVEN))
+}
 
 /// Maximum allowed rake, in basis points (5%). Enforced at table creation.
 pub const MAX_RAKE_BPS: u32 = 500;

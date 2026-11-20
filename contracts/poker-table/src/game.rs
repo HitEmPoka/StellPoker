@@ -617,6 +617,38 @@ fn process_bad_beat_jackpot(
     Ok(())
 }
 
+/// Pay the table's seven-deuce bounty (#856) to `winner_seat` when it won the
+/// showdown outright (no other seat in `tie_mask`) holding 7-2 offsuit.
+///
+/// The bounty is escrowed outside the pot, so rake never touches it. It is
+/// paid once, from the hand's single settlement, and the balance is cleared.
+pub fn pay_seven_deuce_bounty(
+    env: &Env,
+    table: &mut TableState,
+    winner_seat: u32,
+    tie_mask: u32,
+    winner_cards: (u32, u32),
+) -> Result<(), PokerTableError> {
+    let key = DataKey::SevenDeuceBounty(table.id);
+    let bounty: i128 = env.storage().instance().get(&key).unwrap_or(0);
+    let outright = (tie_mask & !(1u32 << winner_seat)) == 0;
+    if bounty <= 0 || !outright || !pot::is_seven_deuce_offsuit(winner_cards.0, winner_cards.1) {
+        return Ok(());
+    }
+
+    env.storage().instance().remove(&key);
+    credit_player_by_seat(table, winner_seat, bounty)?;
+    let winner = table
+        .players
+        .get(winner_seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
+    env.events().publish(
+        (Symbol::new(env, "seven_deuce_bounty_paid"), table.id),
+        (table.hand_number, winner.address, bounty),
+    );
+    Ok(())
+}
+
 fn credit_player_by_seat(
     table: &mut TableState,
     seat: u32,
