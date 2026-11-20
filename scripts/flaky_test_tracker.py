@@ -41,6 +41,17 @@ def save_json(path: pathlib.Path, data: dict):
         f.write("\n")
 
 
+DEQUARANTINED_STATUSES = {"dequarantined", "resolved", "closed"}
+
+
+def active_quarantined_entries(quarantine: dict) -> list[dict]:
+    return [
+        entry
+        for entry in quarantine.get("quarantined_tests", [])
+        if str(entry.get("status", "quarantined")).lower() not in DEQUARANTINED_STATUSES
+    ]
+
+
 def analyze_test_runs(runs_data: list[dict]) -> dict:
     """
     Analyze multiple test runs or multi-attempt results.
@@ -131,7 +142,7 @@ def update_dashboard(analysis: dict) -> dict:
     })
 
     quarantine = load_json(QUARANTINE_FILE, {"quarantined_tests": []})
-    quarantined_ids = {t["id"] for t in quarantine.get("quarantined_tests", [])}
+    quarantined_ids = {t["id"] for t in active_quarantined_entries(quarantine)}
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     flaky_list = analysis["flaky_tests"]
@@ -165,7 +176,7 @@ def update_dashboard(analysis: dict) -> dict:
 
 def render_markdown_dashboard(dashboard: dict, quarantine: dict):
     s = dashboard.get("summary", {})
-    quarantined_tests = quarantine.get("quarantined_tests", [])
+    quarantined_tests = active_quarantined_entries(quarantine)
 
     lines = [
         "# Flaky Test Detection & Quarantine Dashboard",
@@ -232,7 +243,7 @@ def auto_quarantine(flaky_tests: list[dict], threshold: float = 0.0, persist: bo
         "quarantined_tests": []
     })
 
-    existing_ids = {t["id"]: t for t in quarantine.get("quarantined_tests", [])}
+    existing_ids = {t["id"]: t for t in active_quarantined_entries(quarantine)}
     newly_quarantined = []
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -316,7 +327,7 @@ def create_github_issues_for_quarantined(newly_quarantined: list[dict]):
     # failed gh/API lookup can never spam a new duplicate (see #811, #813).
     recorded_urls = {
         t["id"]: t.get("issue_url", "")
-        for t in load_json(QUARANTINE_FILE, {"quarantined_tests": []}).get("quarantined_tests", [])
+        for t in active_quarantined_entries(load_json(QUARANTINE_FILE, {"quarantined_tests": []}))
     }
 
     for q in newly_quarantined:

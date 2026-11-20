@@ -20,7 +20,7 @@ use axum::{
     http::Request,
     middleware,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -106,7 +106,6 @@ mod tournament;
 mod transcript_log;
 
 use api::admin::{AdminConfig, AdminState};
-use api::MpcNodeProgress;
 
 #[derive(Serialize, Clone, Debug, utoipa::ToSchema)]
 pub struct LatencyHistogram {
@@ -604,9 +603,6 @@ struct AppState {
     mpc_nonce_tracker: mpc_identity::SessionNonceTracker,
     /// In-memory sit-and-go tournament state.
     tournaments: tournament::TournamentStore,
-    /// Session archive index and retention config (restore/purge admin endpoints).
-    archive_store: archiver::ArchiveStore,
-    archive_config: archiver::ArchiveConfig,
     /// Validated CSP violation reports for frontend `report-uri` /
     /// `report-to` ingestion (Issue #136).
     csp_reports: api::csp::CspReportStore,
@@ -1064,8 +1060,6 @@ async fn main() {
         committee_registry,
         mpc_nonce_tracker: mpc_identity::SessionNonceTracker::new(),
         tournaments: tournament::new_store(),
-        archive_store: archive_store.clone(),
-        archive_config: archive_config.clone(),
         csp_reports: api::csp::CspReportStore::new(),
         attestation_store: node_attestation::new_store(),
         attestation_config: node_attestation::AttestationConfig::from_env(),
@@ -1210,6 +1204,7 @@ async fn main() {
     let attestation_store = state.attestation_store.clone();
     let attestation_config = state.attestation_config.clone();
     let committee_registry_hc = state.committee_registry.clone();
+    let drain_state = state.drain.clone();
     tokio::spawn(async move {
         loop {
             // Each entry is (node_id, endpoint). Node ids let the strict
@@ -1257,6 +1252,7 @@ async fn main() {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
+            let is_draining = drain_state.is_draining();
 
             for (node_id, endpoint) in nodes {
                 let url = format!("{}/health", endpoint);

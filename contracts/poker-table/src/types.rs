@@ -579,6 +579,9 @@ pub enum PokerTableError {
     // --- Batched reads ---
     /// A batched read was given more table ids than `MAX_POSITIONS_BATCH`.
     BatchTooLarge = 121,
+    // --- Versioned upgrades (Issue #111) ---
+    /// A versioned upgrade must target a version newer than the active one.
+    InvalidContractVersion = 122,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -823,6 +826,17 @@ pub struct PendingUpgrade {
     pub approvals: Vec<Address>,
     /// Ledger sequence the proposal was first opened on.
     pub started_ledger: u32,
+}
+
+/// Window during which the coordinator may route a table to either the old or
+/// the new contract instance (Issue #111).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractMigrationWindow {
+    pub from_version: u32,
+    pub to_version: u32,
+    pub started_at: u64,
+    pub ends_at: u64,
 }
 
 /// Cumulative winner distribution used to detect unusually concentrated table
@@ -1149,6 +1163,18 @@ pub enum DataKey {
     RakeHistoryLen(u32),
     /// Rake history entry: (table_id, index) -> RakeChange (Issue #559).
     RakeHistory(u32, u32),
+    /// Deployed contract schema version for a table (Issue #111).
+    ContractVersion(u32),
+    /// Activated version details for a table (Issue #111).
+    ContractVersionRecord(u32),
+    /// Target version recorded when a versioned upgrade is proposed (Issue #111).
+    PendingContractVersion(u32),
+    /// Version before the most recent executed upgrade, used for rollback (Issue #111).
+    ContractVersionBeforeUpgrade(u32),
+    /// Details of the version active before the most recent executed upgrade (Issue #111).
+    ContractVersionRecordPrev(u32),
+    /// Active dual-version routing window for a table (Issue #111).
+    ContractMigration(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.
