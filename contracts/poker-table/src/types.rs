@@ -582,6 +582,15 @@ pub enum PokerTableError {
     // --- Versioned upgrades (Issue #111) ---
     /// A versioned upgrade must target a version newer than the active one.
     InvalidContractVersion = 122,
+    // --- Voluntary show-one-card at showdown (Issue #867) ---
+    /// Table must be in Settlement (or RitSettlement) to show a card.
+    NotInSettlementPhase = 123,
+    /// Card index must be 0 or 1, and card value must be in 0..52.
+    InvalidCardIndex = 124,
+    /// Only a winning player for the settled hand may voluntarily show a card.
+    NotHandWinner = 125,
+    /// Only one card may be disclosed per player per hand.
+    CardAlreadyShown = 126,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -773,6 +782,15 @@ pub struct Payout {
     pub seat: u32,
     pub address: Address,
     pub amount: i128,
+}
+
+/// Voluntary single-card reveal by a winning player after settlement (Issue #867).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShownCardRecord {
+    pub seat: u32,
+    pub card_index: u32,
+    pub card: u32,
 }
 
 /// An immutable record of one completed hand, retained in the table's circular
@@ -1175,6 +1193,8 @@ pub enum DataKey {
     ContractVersionRecordPrev(u32),
     /// Active dual-version routing window for a table (Issue #111).
     ContractMigration(u32),
+    /// Voluntarily disclosed single card(s) at showdown: (table_id, hand_number) -> Vec<ShownCardRecord> (Issue #867).
+    ShownCards(u32, u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

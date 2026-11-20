@@ -58,6 +58,8 @@ mod rake_proptest;
 #[cfg(test)]
 mod queue_test;
 #[cfg(test)]
+mod show_one_test;
+#[cfg(test)]
 mod state_machine_test;
 #[cfg(test)]
 mod storage_layout_test;
@@ -1669,6 +1671,72 @@ impl PokerTableContract {
         }
     }
 
+    /// Voluntarily reveal one hole card after settlement (Issue #867).
+    ///
+    /// Valid only for a winning player of the just-settled hand. Discloses
+    /// exactly one card (`card_index` 0 or 1, `card` in 0..52), emits a
+    /// `card_shown_one` event, and stores it in hand history while keeping
+    /// the other card private.
+    pub fn show_one(
+        env: Env,
+        table_id: u32,
+        seat: u32,
+        card_index: u32,
+        card: u32,
+    ) -> Result<(), PokerTableError> {
+        require_not_paused(&env, table_id)?;
+        let table = load_table(&env, table_id)?;
+
+        if !matches!(
+            table.phase,
+            GamePhase::Settlement | GamePhase::RitSettlement
+        ) {
+            return Err(PokerTableError::NotInSettlementPhase);
+        }
+        if card_index >= 2 || card >= 52 {
+            return Err(PokerTableError::InvalidCardIndex);
+        }
+
+        let player = table
+            .players
+            .get(seat)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        player.address.require_auth();
+
+        let record = history::get_hand(&env, table_id, table.hand_number)
+            .ok_or(PokerTableError::NotHandWinner)?;
+        let mut is_winner = false;
+        for i in 0..record.payouts.len() {
+            if let Some(p) = record.payouts.get(i) {
+                if p.seat == seat && p.amount > 0 {
+                    is_winner = true;
+                    break;
+                }
+            }
+        }
+        if !is_winner {
+            return Err(PokerTableError::NotHandWinner);
+        }
+
+        history::record_shown_card(
+            &env,
+            table_id,
+            table.hand_number,
+            ShownCardRecord {
+                seat,
+                card_index,
+                card,
+            },
+        )?;
+
+        env.events().publish(
+            (Symbol::new(&env, "card_shown_one"), table_id),
+            (table.hand_number, seat, card_index, card),
+        );
+
+        Ok(())
+    }
+
     /// Claim timeout when opponent or committee is stalling.
     pub fn claim_timeout(env: Env, table_id: u32, claimer: Address) -> Result<(), PokerTableError> {
         claimer.require_auth();
@@ -1991,6 +2059,11 @@ impl PokerTableContract {
     /// retained right now and how many hands have been archived in total.
     pub fn get_hand_history_meta(env: Env, table_id: u32) -> HandHistoryMeta {
         history::load_meta(&env, table_id)
+    }
+
+    /// Read any single hole cards voluntarily disclosed after settlement for a hand.
+    pub fn get_shown_cards(env: Env, table_id: u32, hand_number: u32) -> Vec<ShownCardRecord> {
+        history::get_shown_cards(&env, table_id, hand_number)
     }
 
     /// Number of hands the history buffer can hold before it starts evicting.

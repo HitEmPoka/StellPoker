@@ -225,6 +225,12 @@
       "description": "Per-table settlement pause (blocks hand settlement)."
     },
     {
+      "name": "ShownCards",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Voluntarily disclosed single card(s) at showdown: (table_id, hand_number)."
+    },
+    {
       "name": "StraddleConfig",
       "arity": 1,
       "domain": "instance",
