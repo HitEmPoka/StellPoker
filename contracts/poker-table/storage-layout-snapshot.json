@@ -207,6 +207,12 @@
       "description": "Waiting-list queue for a full table."
     },
     {
+      "name": "RabbitHunt",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Rabbit-hunt progress (hand_number, cards_revealed) per table (#858)."
+    },
+    {
       "name": "RakeHistory",
       "arity": 2,
       "domain": "persistent",

@@ -79,6 +79,7 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ContractMigration", 1, true),
     ("SevenDeuceBounty", 1, false),
     ("BombPotConfig", 1, false),
+    ("RabbitHunt", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -136,6 +137,7 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ContractMigration(table_id),
         DataKey::SevenDeuceBounty(table_id),
         DataKey::BombPotConfig(table_id),
+        DataKey::RabbitHunt(table_id),
     ]
 }
 
@@ -192,6 +194,7 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ContractMigration(_) => "ContractMigration",
         DataKey::SevenDeuceBounty(_) => "SevenDeuceBounty",
         DataKey::BombPotConfig(_) => "BombPotConfig",
+        DataKey::RabbitHunt(_) => "RabbitHunt",
     }
 }
 
@@ -236,7 +239,8 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::ContractVersionRecordPrev(_)
         | DataKey::ContractMigration(_)
         | DataKey::SevenDeuceBounty(_)
-        | DataKey::BombPotConfig(_) => 1,
+        | DataKey::BombPotConfig(_)
+        | DataKey::RabbitHunt(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)

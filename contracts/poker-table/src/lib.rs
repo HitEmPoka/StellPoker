@@ -524,6 +524,26 @@ fn compute_rit_board_indices(
     Ok(())
 }
 
+/// The `count` deck indices after the first `skip` that `dealt` has not used,
+/// in ascending order: how `reveal_board_valid` picks the next board cards.
+fn next_unused_indices(env: &Env, dealt: &Vec<u32>, skip: u32, count: u32) -> Vec<u32> {
+    let mut used = [false; 52];
+    for idx in dealt.iter() {
+        if idx < 52 {
+            used[idx as usize] = true;
+        }
+    }
+    let mut out = Vec::new(env);
+    for idx in (0..52u32)
+        .filter(|&i| !used[i as usize])
+        .skip(skip as usize)
+        .take(count as usize)
+    {
+        out.push_back(idx);
+    }
+    out
+}
+
 fn emit_queue_positions(env: &Env, table_id: u32, queue: &Vec<QueueEntry>) {
     for i in 0..queue.len() {
         if let Some(entry) = queue.get(i) {
@@ -1513,6 +1533,76 @@ impl PokerTableContract {
             (cards, indices),
         );
 
+        Ok(())
+    }
+
+    /// Rabbit hunt (#858): after a hand settles without a showdown, the
+    /// committee may reveal the board cards it would have dealt, with the
+    /// same reveal proof as a real street. Cards come in deal order (the next
+    /// unused deck indices, as `reveal_board_valid` picks them), over one or
+    /// more calls, up to the rest of the five-card board. Hole cards are never
+    /// revealed. The table state is not touched, so the cards cannot reach a
+    /// later hand, which is dealt from a new deck. Emits `rabbit_hunt`, not
+    /// `board_revealed`.
+    pub fn rabbit_hunt(
+        env: Env,
+        table_id: u32,
+        committee: Address,
+        cards: Vec<u32>,
+        indices: Vec<u32>,
+        proof: Bytes,
+        public_inputs: Bytes,
+    ) -> Result<(), PokerTableError> {
+        committee.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let table = load_table(&env, table_id)?;
+        if constant_time::address_ne(&env, &committee, &table.committee) {
+            return Err(PokerTableError::NotAuthorizedCommittee);
+        }
+
+        // The newest archived hand must be this one, settled without a showdown.
+        let settled_without_showdown = history::get_history(&env, table_id, 1)
+            .get(0)
+            .map(|r| r.hand_number == table.hand_number && !r.showdown)
+            .unwrap_or(false);
+        let key = DataKey::RabbitHunt(table_id);
+        let (hunted_hand, hunted): (u32, u32) =
+            env.storage().instance().get(&key).unwrap_or((0, 0));
+        let hunted = if hunted_hand == table.hand_number {
+            hunted
+        } else {
+            0
+        };
+        let remaining = BOARD_INDICES_COUNT.saturating_sub(table.board_cards.len() + hunted);
+        if !settled_without_showdown || remaining == 0 {
+            return Err(PokerTableError::RabbitHuntNotAvailable);
+        }
+        if cards.is_empty() || cards.len() != indices.len() || cards.len() > remaining {
+            return Err(PokerTableError::WrongCardCount);
+        }
+        if indices != next_unused_indices(&env, &table.dealt_indices, hunted, cards.len()) {
+            return Err(PokerTableError::InvalidRabbitHuntIndices);
+        }
+
+        let verifier_client = verifier::ZkVerifierClient::new(&env, &table.config.verifier);
+        if !verifier_client.verify_reveal(
+            &proof,
+            &public_inputs,
+            &table.deck_root,
+            &cards,
+            &indices,
+        ) {
+            return Err(PokerTableError::RevealProofVerificationFailed);
+        }
+
+        env.storage()
+            .instance()
+            .set(&key, &(table.hand_number, hunted + cards.len()));
+        env.events().publish(
+            (Symbol::new(&env, "rabbit_hunt"), table_id),
+            (table.hand_number, cards, indices),
+        );
         Ok(())
     }
 

@@ -284,6 +284,18 @@ fn emitted_events_match_their_schemas() {
     t.act(|_| Action::Fold);
     assert_eq!(t.phase(), GamePhase::Settlement);
 
+    // Rabbit hunt the flop that hand 2 never dealt (hole cards used 0..6).
+    let flop: Vec<u32> = Vec::from_array(&t.env, [6, 7, 8]);
+    t.client.rabbit_hunt(
+        &t.table_id,
+        &t.committee,
+        &flop,
+        &flop,
+        &Bytes::new(&t.env),
+        &Bytes::new(&t.env),
+    );
+    t.capture();
+
     let leaver = t.players[0].clone();
     t.client.leave_table(&t.table_id, &leaver);
     t.capture();

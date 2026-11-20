@@ -588,6 +588,12 @@ pub enum PokerTableError {
     // --- Bomb pots (#857) ---
     /// A bomb-pot interval needs a positive ante.
     InvalidBombPotConfig = 124,
+    // --- Rabbit hunt (#858) ---
+    /// The current hand has not settled without a showdown, or its board is
+    /// already complete.
+    RabbitHuntNotAvailable = 125,
+    /// Rabbit-hunt cards must be the next unused deck indices, in order.
+    InvalidRabbitHuntIndices = 126,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -1185,6 +1191,8 @@ pub enum DataKey {
     SevenDeuceBounty(u32),
     /// Bomb-pot `(interval, ante)`: every `interval`-th hand is a bomb pot (#857).
     BombPotConfig(u32),
+    /// Rabbit-hunt progress `(hand_number, cards_revealed)` for a table (#858).
+    RabbitHunt(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

@@ -2306,4 +2306,113 @@ mod test {
             Err(Ok(PokerTableError::HandAlreadyInProgress))
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // Rabbit hunt (#858)
+    // ---------------------------------------------------------------------------
+
+    /// Committee rabbit hunt of the given deck indices (card value = index).
+    fn try_rabbit_hunt(
+        s: &TestSetup,
+        table_id: u32,
+        deck_indices: &[u32],
+    ) -> Result<(), PokerTableError> {
+        let mut cards: Vec<u32> = Vec::new(&s.env);
+        for &i in deck_indices {
+            cards.push_back(i);
+        }
+        let empty = soroban_sdk::Bytes::new(&s.env);
+        match s
+            .client
+            .try_rabbit_hunt(&table_id, &s.committee, &cards, &cards, &empty, &empty)
+        {
+            Ok(_) => Ok(()),
+            Err(Ok(e)) => Err(e),
+            Err(Err(e)) => panic!("rabbit_hunt failed to invoke: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_rabbit_hunt_reveals_the_rest_of_the_board_after_a_fold() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        // Preflop fold: hole cards used deck indices 0..4, no board.
+        play_fold_hand(&s, table_id);
+        let settled = s.client.get_table(&table_id);
+
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6, 7, 8, 9]),
+            Err(PokerTableError::WrongCardCount)
+        );
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[4, 5, 6]), Ok(()));
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[8]),
+            Err(PokerTableError::InvalidRabbitHuntIndices),
+            "the turn card comes before the river card"
+        );
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[0]),
+            Err(PokerTableError::InvalidRabbitHuntIndices),
+            "hole cards are never revealed"
+        );
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[7]), Ok(()));
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[8]), Ok(()));
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[9]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "five board cards at most"
+        );
+
+        // The settled hand and the next one are untouched.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.board_cards, settled.board_cards);
+        assert_eq!(table.dealt_indices, settled.dealt_indices);
+        let record = s.client.get_hand(&table_id, &table.hand_number).unwrap();
+        assert_eq!(record.board.len(), 0);
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.board_cards.len(), 0);
+        assert_eq!(table.dealt_indices.len(), 0);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6]),
+            Err(PokerTableError::RabbitHuntNotAvailable)
+        );
+    }
+
+    #[test]
+    fn test_rabbit_hunt_only_after_a_hand_settles_without_showdown() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[0, 1, 2]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "no hand played yet"
+        );
+
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "hand still live"
+        );
+
+        play_to_showdown(&s, table_id, &mut [0; 6], None);
+        mock_showdown(
+            &s,
+            table_id,
+            0,
+            0,
+            &[(ACE_SPADES, KING_SPADES), (SEVEN_CLUBS, DEUCE_CLUBS)],
+        );
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[9]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "showdown hands have a full board"
+        );
+    }
 }

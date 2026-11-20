@@ -49,6 +49,8 @@ export interface PokerTableEventMap {
     data: [StrKey, I128];
   };
   board_revealed: { topics: ["board_revealed", number]; data: [number[], number[]] };
+  /** Cards a settled hand would have dealt; never part of that hand's board. */
+  rabbit_hunt: { topics: ["rabbit_hunt", number]; data: [number, number[], number[]] };
   phase_change: { topics: ["phase_change", number]; data: GamePhase };
   hand_settled: {
     topics: ["hand_settled", number];
@@ -77,6 +79,7 @@ const SHAPES: Record<PokerTableEventName, { topics: number; data?: number[] }> =
   deal_committed: { topics: 2, data: [2] },
   player_action: { topics: 3, data: [2] },
   board_revealed: { topics: 2, data: [2] },
+  rabbit_hunt: { topics: 2, data: [3] },
   phase_change: { topics: 2 },
   hand_settled: { topics: 2, data: [3] },
   fold_win: { topics: 2, data: [2] },

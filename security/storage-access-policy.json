@@ -117,6 +117,13 @@
           ],
           "auth_model": "table_admin_require_auth",
           "admin_multisig_required": true
+        },
+        "DataKey::RabbitHunt": {
+          "authorized_functions": [
+            "rabbit_hunt"
+          ],
+          "auth_model": "committee_require_auth",
+          "admin_multisig_required": false
         }
       }
     },
