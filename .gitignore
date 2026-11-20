@@ -3,6 +3,7 @@ node_modules/
 .soroban/
 *.wasm
 !contracts/zk-verifier/ultrahonk_verifier.wasm
+!contracts/poker-table/tests/fixtures/poker_table.wasm
 .env
 .env.local
 app/.next/

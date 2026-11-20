@@ -1,0 +1,68 @@
+name: MPC Node Kill Chaos (Staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      table_id:
+        description: "Isolated staging table id"
+        required: true
+      node_service:
+        description: "MPC node compose service to kill"
+        required: false
+        default: "mpc-node-1"
+      duration:
+        description: "Active-load duration"
+        required: false
+        default: "2m"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mpc-node-kill-chaos-staging
+  cancel-in-progress: false
+
+jobs:
+  kill-under-load:
+    name: Kill one MPC node during deal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    env:
+      COORDINATOR_URL: ${{ vars.STAGING_COORDINATOR_URL }}
+      TABLE_ID: ${{ inputs.table_id }}
+      MPC_NODE_SERVICE: ${{ inputs.node_service }}
+      COMPOSE_FILE: docker-compose.staging.yml
+      DURATION: ${{ inputs.duration }}
+      AUTH_HEADERS_JSON: ${{ secrets.STAGING_CHAOS_AUTH_HEADERS_JSON || vars.STAGING_CHAOS_AUTH_HEADERS_JSON || '{}' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run MPC node-kill chaos test
+        run: |
+          chmod +x scripts/run-mpc-node-kill-chaos.sh
+          ./scripts/run-mpc-node-kill-chaos.sh
+
+      - name: Publish chaos summary
+        if: always()
+        run: |
+          if [ -f load-testing/results/mpc-node-kill-chaos-summary.json ]; then
+            {
+              echo "## MPC node-kill chaos"
+              echo
+              cat load-testing/results/mpc-node-kill-chaos-summary.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload chaos evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpc-node-kill-chaos-${{ github.run_id }}
+          path: |
+            load-testing/results/mpc-node-kill-*
+            load-testing/results/mpc-node-kill-chaos-*
+          if-no-files-found: warn
+          retention-days: 30

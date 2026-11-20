@@ -141,6 +141,8 @@ pub struct ChainConfigResponse {
     pub rpc_url: String,
     pub network_passphrase: String,
     pub poker_table_contract: String,
+    pub active_contract_version: u32,
+    pub configured_contract_versions: Vec<u32>,
 }
 
 #[derive(Deserialize, ToSchema)]
