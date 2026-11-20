@@ -57,6 +57,10 @@ pub const SCHEMAS: &[(&str, &str)] = &[
         include_str!("../../../docs/events/player_left.schema.json"),
     ),
     (
+        "rabbit_hunt",
+        include_str!("../../../docs/events/rabbit_hunt.schema.json"),
+    ),
+    (
         "rake_collected",
         include_str!("../../../docs/events/rake_collected.schema.json"),
     ),
