@@ -47,7 +47,7 @@ graph TD
 State is partitioned across three storage domains depending on its requirements for persistence, security, and consensus.
 
 ### React State (Ephemeral & Interactive)
-The core game engine is managed through React component state (declared primarily in [Table.tsx](file:///c:/Users/DELL/Desktop/StellPoker/app/src/components/Table.tsx) and packaged inside [use-poker-actions.ts](file:///c:/Users/DELL/Desktop/StellPoker/app/src/lib/use-poker-actions.ts)):
+The core game engine is managed through React component state (declared primarily in [Table.tsx](../app/src/components/Table.tsx) and packaged inside [use-poker-actions.ts](../app/src/lib/use-poker-actions.ts)):
 * **`game` (`GameState`)**: Represents the active table model including the player list (stacks, bets, folded/all-in flags), board cards, dealer seat index, active turn indicator, and pot totals.
 * **`lobby` (`TableLobbyResponse`)**: Tracks the seats reserved in the coordinator lobby prior to game start.
 * **`loading` / `activeRequest`**: Orchestrates UI spinner displays and blocks redundant action submission.
@@ -80,7 +80,7 @@ To mask network latency and cryptographic proof generation delays, Stellar Poker
 
 ### Solo Mode (vs. AI)
 In solo mode, state transitions are **100% optimistic and local**:
-* When a player submits a bet, call, or fold, the app calls `computeSoloBet()` in [use-solo-betting.ts](file:///c:/Users/DELL/Desktop/StellPoker/app/src/lib/use-solo-betting.ts).
+* When a player submits a bet, call, or fold, the app calls `computeSoloBet()` in [use-solo-betting.ts](../app/src/lib/use-solo-betting.ts).
 * The algorithm deterministically calculates the AI's action based on pot pressure and a seed, updates the stacks, chips, and pots locally, and immediately advances the game state.
 * The frontend immediately initiates the next phase (e.g., calling the coordinator to trigger a community card reveal) without blocking the user on transaction submission or consensus rounds.
 
@@ -97,7 +97,7 @@ To ensure the client UI is identical to the canonical blockchain status, the app
 
 ### Event-Driven Sync (Primary)
 The Soroban contracts emit specific events for every state transition (join table, hand start, action, reveal, settlement).
-1. The app subscribes to these events via `subscribePokerTableEvents()` in [events.ts](file:///c:/Users/DELL/Desktop/StellPoker/app/src/lib/events.ts).
+1. The app subscribes to these events via `subscribePokerTableEvents()` in [events.ts](../app/src/lib/events.ts).
 2. It polls the Soroban RPC `getEvents` endpoint every **2 seconds** starting from the current ledger sequence.
 3. Upon receiving any event from the table contract, the listener triggers an **immediate** `syncOnChainState()`. This provides real-time updates as soon as transactions are sealed on-chain.
 
@@ -127,6 +127,6 @@ Robust try-catch blocks and graceful fallbacks shield the application from crash
 
 Although Texas Hold'em is fundamentally a multi-party game, Stellar Poker provides offline resilience mechanisms to preserve user experience:
 
-1. **Fully Standalone Solo Play**: Since the solo game's dealer logic and AI betting decisions are computed locally in [use-solo-betting.ts](file:///c:/Users/DELL/Desktop/StellPoker/app/src/lib/use-solo-betting.ts), a player who loses network connectivity can continue executing solo hands (using locally stored card details if loaded).
+1. **Fully Standalone Solo Play**: Since the solo game's dealer logic and AI betting decisions are computed locally in [use-solo-betting.ts](../app/src/lib/use-solo-betting.ts), a player who loses network connectivity can continue executing solo hands (using locally stored card details if loaded).
 2. **Offline Local State**: Important non-consensus data (Aliases, Hand History, sound options) are stored in Local Storage. If the network goes offline, the hand history panel is still fully queryable and past ledger transaction links remain readable.
 3. **Freighter Auto-Recovery**: If the user's internet connection drops and returns, the Freighter integration silently recovers. The `trySilentReconnect()` hook runs on initialization to check for active wallet sessions, avoiding repeated "Connect Wallet" prompts.

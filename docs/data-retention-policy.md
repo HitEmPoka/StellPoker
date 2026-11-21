@@ -182,6 +182,6 @@ DATABASE_URL=postgres://... ./scripts/export_audit_worm.py --output-dir /var/lib
   hash-chain logic and append-only behaviour without a database.
 
 ## References
-- [Rust coordinator cache module](../../coordinator/src/cache.rs)
+- [Rust coordinator cache module](../coordinator/src/cache.rs)
 - [GDPR Article 17: Right to erasure](https://gdpr-info.eu/articles/right-to-erasure/)
 - [CCPA §1798.100: Consumer Privacy Rights](https://leginfo.legislature.ca.gov/faces/codes_displayText.xhtml?division=3.&part=4.&lawCode=CC&title=1.2)
