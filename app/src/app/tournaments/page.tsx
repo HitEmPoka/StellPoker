@@ -907,8 +907,8 @@ export default function TournamentsPage() {
             }}
           >
             <span style={{ color: "#c47d2e" }}>ESCROW &amp; SETTLEMENT — </span>
-            Buy-ins are held in each table's Soroban contract until the
-            tournament concludes. Eliminated players' tokens are released in
+            Buy-ins are held in each table&apos;s Soroban contract until the
+            tournament concludes. Eliminated players&apos; tokens are released in
             finish order. No single party — including the coordinator — can
             move funds without on-chain proof verification.
           </div>
