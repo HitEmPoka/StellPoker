@@ -36,6 +36,7 @@ import re
 import json
 
 SPEC_PATH = pathlib.Path(__file__).parent.parent / "docs" / "openapi.yaml"
+PUBLISHED_SPEC_PATH = pathlib.Path(__file__).parent.parent / "docs" / "api" / "openapi.yaml"
 COORDINATOR_URL = os.environ.get("COORDINATOR_URL", "")
 
 # ---------------------------------------------------------------------------
@@ -189,6 +190,138 @@ def validate_handler_parity(spec: dict) -> bool:
     return True
 
 
+HTTP_METHODS = ("get", "post", "put", "patch", "delete")
+
+
+def spec_route_keys(spec: dict) -> set:
+    """Return (method, axum-style-path) tuples declared in the spec."""
+    keys = set()
+    for path, path_item in spec.get("paths", {}).items():
+        axum_path = re.sub(r"\{([^}]+)\}", r":\1", path)
+        for method, op in path_item.items():
+            if method.lower() in HTTP_METHODS:
+                keys.add((method.lower(), axum_path))
+    return keys
+
+
+def route_exclusions(spec: dict) -> list:
+    """Validate and return the documented route exclusions from the spec.
+
+    Each rule must carry a `reason` so that an exclusion is always a written
+    decision rather than a silent way to make the drift check pass.
+    """
+    rules = spec.get("x-route-exclusions", [])
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("reason"):
+            print(
+                "[SPEC ERROR] Every x-route-exclusions entry needs a 'reason'.",
+                file=sys.stderr,
+            )
+            return []
+        if not any(key in rule for key in ("exact", "prefix", "suffix")):
+            print(
+                "[SPEC ERROR] Every x-route-exclusions entry needs one of "
+                "'exact', 'prefix' or 'suffix'.",
+                file=sys.stderr,
+            )
+            return []
+    return rules
+
+
+def _as_list(value) -> list:
+    """Accept either a scalar or a list in the exclusion YAML."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def is_excluded(method: str, path: str, rules: list) -> bool:
+    key = f"{method.upper()} {path}"
+    for rule in rules:
+        if key in _as_list(rule.get("exact")):
+            return True
+        if path.startswith(tuple(_as_list(rule.get("prefix")))):
+            return True
+        if path.endswith(tuple(_as_list(rule.get("suffix")))):
+            return True
+    return False
+
+
+def validate_route_coverage(spec: dict) -> bool:
+    """Fail when a registered coordinator route is absent from the spec.
+
+    `validate_handler_parity` only catches spec -> router drift. This check
+    catches the opposite (and much more common) direction: a new route being
+    added to the Axum router without an OpenAPI operation or a documented
+    exclusion. Issue #1011.
+    """
+    if not MAIN_RS_PATH.exists():
+        print(f"[WARN] Coordinator main.rs not found at {MAIN_RS_PATH}; skipping coverage check.")
+        return True
+
+    with open(MAIN_RS_PATH, encoding="utf-8") as f:
+        impl_routes = set(parse_coordinator_routes(f.read()).keys())
+
+    documented = spec_route_keys(spec)
+    rules = route_exclusions(spec)
+    undocumented = sorted(
+        (method, path)
+        for method, path in impl_routes
+        if (method, path) not in documented and not is_excluded(method, path, rules)
+    )
+
+    if undocumented:
+        print(
+            "[FAIL] Coordinator routes missing from the OpenAPI spec "
+            "(add an operation or a documented x-route-exclusions rule):",
+            file=sys.stderr,
+        )
+        for method, path in undocumented:
+            print(f"  - {method.upper()} {path}", file=sys.stderr)
+        return False
+
+    excluded_count = sum(
+        1
+        for method, path in impl_routes
+        if (method, path) not in documented and is_excluded(method, path, rules)
+    )
+    print(
+        f"[OK] Route coverage validated: {len(impl_routes)} registered routes, "
+        f"{len(documented & impl_routes)} documented, {excluded_count} documented exclusions."
+    )
+    return True
+
+
+def validate_published_spec(spec: dict) -> bool:
+    """Ensure the published docs/api spec is regenerated from the canonical spec."""
+    import yaml  # PyYAML; load_spec() already verified availability
+
+    if not PUBLISHED_SPEC_PATH.exists():
+        print(f"[FAIL] Published API spec missing at {PUBLISHED_SPEC_PATH}", file=sys.stderr)
+        return False
+    with open(PUBLISHED_SPEC_PATH, encoding="utf-8") as f:
+        published = yaml.safe_load(f)
+    canonical_ops = spec_route_keys(spec)
+    published_ops = spec_route_keys(published)
+    if canonical_ops != published_ops:
+        missing = sorted(canonical_ops - published_ops)
+        stale = sorted(published_ops - canonical_ops)
+        print("[FAIL] docs/api/openapi.yaml is out of sync with docs/openapi.yaml.", file=sys.stderr)
+        for method, path in missing:
+            print(f"  - missing in published spec: {method.upper()} {path}", file=sys.stderr)
+        for method, path in stale:
+            print(f"  - stale in published spec: {method.upper()} {path}", file=sys.stderr)
+        print(
+            "  Regenerate it with: cp docs/openapi.yaml docs/api/openapi.yaml",
+            file=sys.stderr,
+        )
+        return False
+    print("[OK] Published API spec matches the canonical spec.")
+    return True
+
+
 def run_schemathesis_offline() -> bool:
     """
     Use the schemathesis Python API to load the spec and confirm it parses
@@ -316,6 +449,8 @@ def main() -> int:
     spec = load_spec()
     ok = validate_spec_structure(spec)
     ok = validate_handler_parity(spec) and ok
+    ok = validate_route_coverage(spec) and ok
+    ok = validate_published_spec(spec) and ok
 
     ok = run_schemathesis_offline() and ok
 

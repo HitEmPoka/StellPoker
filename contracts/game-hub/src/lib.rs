@@ -102,6 +102,8 @@ pub struct PlayerLinked {
 pub struct GameStarted {
     pub session_id: u32,
     pub game_id: Address,
+    /// The authenticated game contract that reported the session.
+    pub caller: Address,
     pub player1: Address,
     pub player2: Address,
     pub player1_points: i128,
@@ -111,6 +113,8 @@ pub struct GameStarted {
 #[contractevent]
 pub struct GameEnded {
     pub session_id: u32,
+    /// The authenticated game contract that reported the result.
+    pub caller: Address,
     pub player1_won: bool,
 }
 
@@ -144,6 +148,8 @@ impl MockGameHub {
     }
 
     /// Register a game in the Stellar Game Studio catalog for cross-promotion.
+    /// Admin only: registration grants the game contract the right to report
+    /// sessions, so an untrusted account must not be able to self-register.
     pub fn register_game(
         env: Env,
         caller: Address,
@@ -152,6 +158,7 @@ impl MockGameHub {
         metadata_uri: String,
     ) -> Result<(), GameHubError> {
         caller.require_auth();
+        Self::require_admin(&env, &caller)?;
         let ledger = env.ledger().sequence();
         let game_info = GameInfo {
             game_id: game_id.clone(),
@@ -341,6 +348,11 @@ impl MockGameHub {
     }
 
     /// Start game session (compatible with Stellar Game Studio standard).
+    ///
+    /// Only a game contract registered by the hub admin may report a session.
+    /// A direct contract-to-contract call from that game automatically
+    /// authorizes its own address, while arbitrary accounts cannot authorize
+    /// as a contract address.
     pub fn start_game(
         env: Env,
         game_id: Address,
@@ -349,7 +361,28 @@ impl MockGameHub {
         player2: Address,
         player1_points: i128,
         player2_points: i128,
-    ) {
+    ) -> Result<(), GameHubError> {
+        game_id.require_auth();
+        let game: GameInfo = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Game(game_id.clone()))
+            .ok_or(GameHubError::GameNotFound)?;
+        if !game.active {
+            return Err(GameHubError::GameInactive);
+        }
+
+        let key = DataKey::Session(session_id);
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, GameSession>(&key)
+        {
+            if existing.active {
+                return Err(GameHubError::SessionAlreadyActive);
+            }
+        }
+
         let ledger = env.ledger().sequence();
         let session = GameSession {
             session_id,
@@ -363,7 +396,6 @@ impl MockGameHub {
             player1_won: None,
         };
 
-        let key = DataKey::Session(session_id);
         env.storage().persistent().set(&key, &session);
         env.storage()
             .persistent()
@@ -375,7 +407,8 @@ impl MockGameHub {
 
         GameStarted {
             session_id,
-            game_id,
+            caller: game_id,
+            game_id: game.game_id,
             player1,
             player2,
             player1_points,
@@ -386,38 +419,61 @@ impl MockGameHub {
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
+        Ok(())
     }
 
     /// End game session (compatible with Stellar Game Studio standard).
-    pub fn end_game(env: Env, session_id: u32, player1_won: bool) {
+    /// Only the game contract that started the session may end it.
+    pub fn end_game(env: Env, session_id: u32, player1_won: bool) -> Result<(), GameHubError> {
         let key = DataKey::Session(session_id);
-        if let Some(mut session) = env
+        let mut session: GameSession = env
             .storage()
             .persistent()
-            .get::<DataKey, GameSession>(&key)
-        {
-            session.active = false;
-            session.player1_won = Some(player1_won);
-            env.storage().persistent().set(&key, &session);
-
-            let winner = if player1_won {
-                &session.player1
-            } else {
-                &session.player2
-            };
-            Self::record_player_win(&env, winner);
+            .get(&key)
+            .ok_or(GameHubError::SessionNotFound)?;
+        session.game_id.require_auth();
+        if !session.active {
+            return Err(GameHubError::SessionAlreadyEnded);
         }
+
+        session.active = false;
+        session.player1_won = Some(player1_won);
+        env.storage().persistent().set(&key, &session);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
+
+        let winner = if player1_won {
+            &session.player1
+        } else {
+            &session.player2
+        };
+        Self::record_player_win(&env, winner);
 
         GameEnded {
             session_id,
+            caller: session.game_id,
             player1_won,
         }
         .publish(&env);
+        Ok(())
     }
 
     /// Query a game session record.
     pub fn get_session(env: Env, session_id: u32) -> Option<GameSession> {
         env.storage().persistent().get(&DataKey::Session(session_id))
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), GameHubError> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(GameHubError::NotInitialized)?;
+        if admin != *caller {
+            return Err(GameHubError::Unauthorized);
+        }
+        Ok(())
     }
 
     fn update_player_activity(env: &Env, player: &Address, points: i128) {
@@ -466,14 +522,28 @@ impl MockGameHub {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{testutils::Address as _, IntoVal, Symbol};
+
+    fn setup_registered_game<'a>(client: &MockGameHubClient<'a>, env: &Env) -> Address {
+        let admin = Address::generate(env);
+        client.initialize(&admin);
+        let game_id = Address::generate(env);
+        client.register_game(
+            &admin,
+            &game_id,
+            &String::from_str(env, "StellPoker"),
+            &String::from_str(env, "ipfs://stellpoker-meta"),
+        );
+        game_id
+    }
 
     #[test]
     fn test_start_and_end_game() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(MockGameHub, ());
         let client = MockGameHubClient::new(&env, &contract_id);
-        let game_id = Address::generate(&env);
+        let game_id = setup_registered_game(&client, &env);
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
         client.start_game(&game_id, &1, &player1, &player2, &1000, &1000);
@@ -481,6 +551,7 @@ mod test {
         let s1 = client.get_session(&1).unwrap();
         assert!(s1.active);
         assert_eq!(s1.player1_points, 1000);
+        assert_eq!(s1.game_id, game_id);
 
         client.end_game(&1, &true);
         let s2 = client.get_session(&1).unwrap();
@@ -494,6 +565,95 @@ mod test {
         let p2_profile = client.get_player_profile(&player2).unwrap();
         assert_eq!(p2_profile.games_played, 1);
         assert_eq!(p2_profile.games_won, 0);
+
+        // The authenticated game contract is recorded as the caller in both
+        // lifecycle events so indexers can verify provenance.
+        let events = env.events().all();
+        assert_eq!(events.len(), 3); // GameRegistered, GameStarted, GameEnded
+        let start_event = events.get(1).unwrap();
+        let end_event = events.get(2).unwrap();
+        assert_eq!(
+            start_event.1.get(0).unwrap(),
+            Symbol::new(&env, "game_started").into_val(&env)
+        );
+        assert_eq!(
+            end_event.1.get(0).unwrap(),
+            Symbol::new(&env, "game_ended").into_val(&env)
+        );
+        let expected_caller: soroban_sdk::Val = game_id.into_val(&env);
+        let start_data: soroban_sdk::Map<Symbol, soroban_sdk::Val> = start_event.2.into_val(&env);
+        let end_data: soroban_sdk::Map<Symbol, soroban_sdk::Val> = end_event.2.into_val(&env);
+        assert_eq!(start_data.get(Symbol::new(&env, "caller")), Some(expected_caller.clone()));
+        assert_eq!(end_data.get(Symbol::new(&env, "caller")), Some(expected_caller));
+    }
+
+    #[test]
+    fn unregistered_game_cannot_start_session() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let _ = setup_registered_game(&client, &env);
+
+        let stranger_game = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        assert_eq!(
+            client.try_start_game(&stranger_game, &2, &player1, &player2, &1, &1),
+            Err(Ok(GameHubError::GameNotFound))
+        );
+        assert!(client.get_session(&2).is_none());
+    }
+
+    #[test]
+    fn unauthenticated_cannot_start_session() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let game_id = setup_registered_game(&client, &env);
+
+        // Without a signature/authorization for `game_id`, the call is rejected
+        // even though the game is registered.
+        env.set_auths(&[]);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        assert!(client
+            .try_start_game(&game_id, &3, &player1, &player2, &1, &1)
+            .is_err());
+        assert!(client.get_session(&3).is_none());
+    }
+
+    #[test]
+    fn unauthenticated_cannot_end_session() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let game_id = setup_registered_game(&client, &env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        client.start_game(&game_id, &4, &player1, &player2, &1, &1);
+
+        env.set_auths(&[]);
+        assert!(client.try_end_game(&4, &true).is_err());
+        assert!(client.get_session(&4).unwrap().active);
+    }
+
+    #[test]
+    fn end_game_rejects_unknown_and_finished_sessions() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let game_id = setup_registered_game(&client, &env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        assert_eq!(client.try_end_game(&99, &true), Err(Ok(GameHubError::SessionNotFound)));
+        client.start_game(&game_id, &5, &player1, &player2, &1, &1);
+        client.end_game(&5, &true);
+        assert_eq!(client.try_end_game(&5, &true), Err(Ok(GameHubError::SessionAlreadyEnded)));
     }
 
     #[test]

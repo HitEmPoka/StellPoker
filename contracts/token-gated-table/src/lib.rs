@@ -16,6 +16,9 @@ pub struct TokenInfo {
     pub enabled: bool,
     /// Minimum decimals the token must report. Used for metadata validation.
     pub min_decimals: u32,
+    /// Last ledger sequence at which this token may be used for a buy-in.
+    /// `u32::MAX` means the entry never expires.
+    pub valid_until: u32,
 }
 
 #[contracttype]
@@ -38,9 +41,21 @@ impl TokenAllowlistContract {
         env.storage().instance().set(&AllowlistKey::Admin, &admin);
     }
 
-    /// Add a token to the allowlist. Validates that the token contract exists
-    /// by querying its decimals. Admin only.
+    /// Add a token to the allowlist with no expiry. Validates that the token
+    /// contract exists by querying its decimals. Admin only.
     pub fn add_token(env: Env, admin: Address, token_address: Address, min_decimals: u32) {
+        Self::add_token_with_expiry(env, admin, token_address, min_decimals, u32::MAX);
+    }
+
+    /// Add a token that stops being accepted after `valid_until` (ledger
+    /// sequence). Admin only.
+    pub fn add_token_with_expiry(
+        env: Env,
+        admin: Address,
+        token_address: Address,
+        min_decimals: u32,
+        valid_until: u32,
+    ) {
         admin.require_auth();
         Self::require_admin(&env, &admin);
 
@@ -62,6 +77,7 @@ impl TokenAllowlistContract {
             token_address: token_address.clone(),
             enabled: true,
             min_decimals,
+            valid_until,
         };
         env.storage().instance().set(&key, &info);
 
@@ -76,7 +92,33 @@ impl TokenAllowlistContract {
 
         env.events().publish(
             (Symbol::new(&env, "token_added"),),
-            (token_address, min_decimals),
+            (token_address, min_decimals, valid_until),
+        );
+    }
+
+    /// Change the expiry of an allowlisted token. `u32::MAX` removes the
+    /// expiry. Admin only.
+    pub fn set_token_expiry(
+        env: Env,
+        admin: Address,
+        token_address: Address,
+        valid_until: u32,
+    ) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+
+        let key = AllowlistKey::Token(token_address.clone());
+        let mut info: TokenInfo = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("token not allowlisted");
+        info.valid_until = valid_until;
+        env.storage().instance().set(&key, &info);
+
+        env.events().publish(
+            (Symbol::new(&env, "token_expiry_changed"),),
+            (token_address, valid_until),
         );
     }
 
@@ -136,20 +178,17 @@ impl TokenAllowlistContract {
         );
     }
 
-    /// Check if a token is on the allowlist and enabled.
+    /// Check if a token is on the allowlist, enabled and not expired.
     pub fn is_allowed(env: Env, token_address: Address) -> bool {
-        let key = AllowlistKey::Token(token_address);
-        env.storage()
-            .instance()
-            .get::<AllowlistKey, TokenInfo>(&key)
-            .map(|info| info.enabled)
-            .unwrap_or(false)
+        Self::is_allowed_at(&env, &token_address)
     }
 
     /// Check if a player can join a table with a given buy-in token.
-    /// Rejects non-allowlisted assets.
+    /// Rejects assets that are not allowlisted, have been disabled/revoked, or
+    /// whose allowlist entry has expired. The player address is deliberately
+    /// not gated: this contract governs *assets*, not identities.
     pub fn can_join(env: Env, _player: Address, token_address: Address) -> bool {
-        Self::is_allowed(env, token_address)
+        Self::is_allowed_at(&env, &token_address)
     }
 
     /// Get token info for an allowlisted token.
@@ -177,15 +216,8 @@ impl TokenAllowlistContract {
         let mut enabled = Vec::new(&env);
         for i in 0..all.len() {
             let addr = all.get(i).unwrap();
-            let key = AllowlistKey::Token(addr.clone());
-            if let Some(info) = env
-                .storage()
-                .instance()
-                .get::<AllowlistKey, TokenInfo>(&key)
-            {
-                if info.enabled {
-                    enabled.push_back(addr);
-                }
+            if Self::is_allowed_at(&env, &addr) {
+                enabled.push_back(addr);
             }
         }
         enabled
@@ -204,6 +236,14 @@ impl TokenAllowlistContract {
         );
     }
 
+    fn is_allowed_at(env: &Env, token_address: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<AllowlistKey, TokenInfo>(&AllowlistKey::Token(token_address.clone()))
+            .map(|info| info.enabled && info.valid_until >= env.ledger().sequence())
+            .unwrap_or(false)
+    }
+
     fn require_admin(env: &Env, admin: &Address) {
         let stored: Address = env
             .storage()
@@ -218,8 +258,8 @@ impl TokenAllowlistContract {
 mod test {
     use super::*;
     use soroban_sdk::{
-        testutils::Address as _,
-        token::{StellarAssetClient, TokenClient},
+        testutils::{Address as _, Ledger as _},
+        token::TokenClient,
         Address, Env,
     };
 
@@ -276,6 +316,56 @@ mod test {
         let player = Address::generate(&s.env);
         s.client.add_token(&s.admin, &s.token_addr, &0);
         assert!(s.client.can_join(&player, &s.token_addr));
+    }
+
+    #[test]
+    fn can_join_rejects_expired_token() {
+        let s = setup();
+        let player = Address::generate(&s.env);
+        // Token is accepted at ledger 100 but the policy expires at ledger 110.
+        s.env.ledger().set_sequence_number(100);
+        s.client
+            .add_token_with_expiry(&s.admin, &s.token_addr, &0, &110);
+        assert!(s.client.can_join(&player, &s.token_addr));
+
+        s.env.ledger().set_sequence_number(110);
+        assert!(s.client.can_join(&player, &s.token_addr));
+
+        s.env.ledger().set_sequence_number(111);
+        assert!(!s.client.can_join(&player, &s.token_addr));
+        assert!(!s.client.is_allowed(&s.token_addr));
+    }
+
+    #[test]
+    fn can_join_rejects_revoked_token() {
+        let s = setup();
+        let player = Address::generate(&s.env);
+        s.client.add_token(&s.admin, &s.token_addr, &0);
+        assert!(s.client.can_join(&player, &s.token_addr));
+
+        // Governance can revoke a token either by disabling or removing it.
+        s.client.set_token_enabled(&s.admin, &s.token_addr, &false);
+        assert!(!s.client.can_join(&player, &s.token_addr));
+
+        s.client.set_token_enabled(&s.admin, &s.token_addr, &true);
+        assert!(s.client.can_join(&player, &s.token_addr));
+
+        s.client.remove_token(&s.admin, &s.token_addr);
+        assert!(!s.client.can_join(&player, &s.token_addr));
+    }
+
+    #[test]
+    fn set_token_expiry_updates_the_policy() {
+        let s = setup();
+        s.client.add_token(&s.admin, &s.token_addr, &0);
+        assert_eq!(s.client.get_token_info(&s.token_addr).unwrap().valid_until, u32::MAX);
+
+        s.client.set_token_expiry(&s.admin, &s.token_addr, &150);
+        assert_eq!(s.client.get_token_info(&s.token_addr).unwrap().valid_until, 150);
+
+        s.client
+            .set_token_expiry(&s.admin, &s.token_addr, &u32::MAX);
+        assert_eq!(s.client.get_token_info(&s.token_addr).unwrap().valid_until, u32::MAX);
     }
 
     #[test]

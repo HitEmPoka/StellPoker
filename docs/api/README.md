@@ -5,8 +5,19 @@ to GitHub Pages on each release tag.
 
 ## How it works
 
-1. **OpenAPI spec** (`openapi.yaml`) — the current API specification is maintained
-   here. Update it when endpoints, parameters, or response schemas change.
+1. **OpenAPI spec** (`openapi.yaml`) — a generated copy of the canonical
+   `docs/openapi.yaml`. Update the canonical file when endpoints, parameters,
+   or response schemas change, then regenerate this copy:
+
+   ```bash
+   cp docs/openapi.yaml docs/api/openapi.yaml
+   ```
+
+   `scripts/check-api-spec.py` fails in CI if this copy drifts from the
+   canonical spec. The canonical spec's `x-route-exclusions` section records
+   why internal, admin, WebSocket, metrics, and documentation routes are not
+   part of the public API contract; every other registered coordinator route
+   must have an OpenAPI operation.
 
 2. **Versioning** — when a tag matching `v*` is pushed, the
    `publish-api-docs.yml` workflow:
@@ -24,7 +35,8 @@ to GitHub Pages on each release tag.
 The workflow runs automatically on tag push. Tags must match `v*` (e.g. `v0.2.0`).
 
 Before tagging, ensure:
-- `docs/api/openapi.yaml` reflects all API changes
+- `docs/openapi.yaml` reflects all API changes and `docs/api/openapi.yaml` has
+  been regenerated from it
 - The coordinator's `Cargo.toml` version is bumped if needed
 - Manual entries in `versions.json` are updated if desired (the workflow will
   auto-generate the entry on publish)

@@ -10,6 +10,39 @@ servers:
   - url: http://localhost:8080
     description: Local development
 
+# Issue #1011: the Axum router registers more paths than the public API spec.
+# Every registered route must either appear under `paths:` below or be matched
+# by one of these explicit exclusions. `scripts/check-api-spec.py` enforces
+# this in both directions, so adding a route without documenting it (or without
+# a written rationale here) fails CI.
+x-route-exclusions:
+  - exact: ["GET /", "GET /metrics"]
+    reason: >
+      HTML operator dashboard and Prometheus scrape endpoint. They are not
+      part of the JSON API and are consumed by browsers/monitoring, not API
+      clients.
+  - suffix: "/ws"
+    reason: >
+      WebSocket upgrades are not representable as OpenAPI 3.0 operations.
+      Their subscribe/push protocol is documented separately in docs/api/.
+  - prefix: "/api/admin/"
+    reason: >
+      RBAC-protected operator/admin surface. It is intentionally excluded
+      from the public API contract; internal operators use the admin docs.
+  - prefix: "/api/mpc/"
+    reason: >
+      Internal MPC node protocol (version negotiation, benchmark, identity,
+      attestation, partition, decommission, preemption). Authenticated by the
+      MPC API-key middleware, not part of the public API.
+  - prefix: "/api/node/"
+    reason: >
+      Internal dynamic MPC node discovery/heartbeat endpoints, protected by
+      the MPC API-key middleware.
+  - prefix: "/api/plugins"
+    reason: >
+      Internal plugin-management/introspection endpoints. Not a stable
+      public contract; plugin implementations are deployment-specific.
+
 paths:
   /api/health:
     get:
@@ -391,6 +424,399 @@ paths:
           description: Unauthorized
         "404":
           description: Session not found
+
+  /api/readyz:
+    get:
+      operationId: getReadiness
+      summary: Blue-green readiness probe (503 while draining)
+      responses:
+        "200":
+          description: Ready
+        "503":
+          description: Draining or under maintenance
+
+  /api/benchmarks:
+    get:
+      operationId: getBenchmarks
+      summary: Latest coordinator/MPC benchmark measurements
+      responses:
+        "200":
+          description: Benchmark report
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/leader:
+    get:
+      operationId: getLeaderStatus
+      summary: Current MPC leader status
+      responses:
+        "200":
+          description: Leader status
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/stats/player/{address}:
+    get:
+      operationId: getPlayerHudStats
+      summary: HUD statistics for one player
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player HUD stats
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Player not found
+
+  /api/ratings/leaderboard:
+    get:
+      operationId: getRatingLeaderboard
+      summary: Player rating leaderboard
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/tables/overview:
+    get:
+      operationId: listTableOverview
+      summary: Overview of all tables (including full ones)
+      responses:
+        "200":
+          description: Table overview
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/table/{table_id}/rit-opt-in:
+    post:
+      operationId: ritOptIn
+      summary: Opt into RIT (random isolation table) allocation
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Opt-in recorded
+        "401":
+          description: Unauthorized
+        "404":
+          description: Table not found
+
+  /api/table/{table_id}/transfer-chips:
+    post:
+      operationId: transferChips
+      summary: Transfer chips between players at a table
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Transfer recorded
+        "401":
+          description: Unauthorized
+        "400":
+          description: Invalid transfer
+        "404":
+          description: Table not found
+
+  /api/table/{table_id}/players:
+    get:
+      operationId: getPlayersPaginated
+      summary: List seated players at a table
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Paginated players
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/table/{table_id}/hand-history/chunk:
+    get:
+      operationId: getHandHistoryChunk
+      summary: Read a chunk of a table's hand history
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Hand history chunk
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/table/{table_id}/mpc-status:
+    get:
+      operationId: getMpcStatus
+      summary: MPC session status for a table
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: MPC status
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Table not found
+
+  /api/table/{table_id}/spectators:
+    get:
+      operationId: getSpectatorCount
+      summary: Number of spectators watching a table
+      parameters:
+        - $ref: "#/components/parameters/tableId"
+      responses:
+        "200":
+          description: Spectator count
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/csp/report:
+    post:
+      operationId: reportCsp
+      summary: Ingest a browser Content-Security-Policy violation report
+      responses:
+        "200":
+          description: Report accepted
+        "400":
+          description: Malformed report
+
+  /api/csp/reports:
+    get:
+      operationId: listCspReports
+      summary: List recent CSP violation reports
+      responses:
+        "200":
+          description: CSP reports
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/tournaments:
+    get:
+      operationId: listTournaments
+      summary: List tournaments
+      responses:
+        "200":
+          description: Tournaments
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: createTournament
+      summary: Create a sit-and-go tournament
+      responses:
+        "200":
+          description: Tournament created
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid configuration
+
+  /api/tournaments/{id}:
+    get:
+      operationId: getTournament
+      summary: Get a tournament by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tournament
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/register:
+    post:
+      operationId: registerTournamentPlayer
+      summary: Register a player for a tournament
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player registered
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/start:
+    post:
+      operationId: startTournament
+      summary: Start a tournament
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tournament started
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/hand-result:
+    post:
+      operationId: recordTournamentHandResult
+      summary: Record a tournament hand result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Result recorded
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/balancing:
+    get:
+      operationId: getTournamentBalancing
+      summary: Table balancing plan for a tournament
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Balancing plan
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/tournaments/{id}/cancel:
+    post:
+      operationId: cancelTournament
+      summary: Cancel a tournament
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tournament cancelled
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/hand-for-hand:
+    post:
+      operationId: setTournamentHandForHand
+      summary: Toggle hand-for-hand play
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Setting updated
+        "404":
+          description: Tournament not found
+
+  /api/tournaments/{id}/tables/{table}/start-hand:
+    post:
+      operationId: startTournamentTableHand
+      summary: Start the next hand at a tournament table
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hand started
+        "404":
+          description: Tournament or table not found
+
+  /api/tournaments/{id}/hand-counts:
+    get:
+      operationId: getTournamentHandCounts
+      summary: Hands played per tournament table
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hand counts
+          content:
+            application/json:
+              schema:
+                type: object
 
 components:
   parameters:
