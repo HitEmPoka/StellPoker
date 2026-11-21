@@ -20,12 +20,26 @@ use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractVersionRoute {
+    pub version: u32,
+    pub contract: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableContractRoute {
+    pub table_id: u32,
+    pub version: u32,
+}
+
 /// Configuration for Soroban interactions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SorobanConfig {
     pub rpc_url: String,
     pub secret_key: String,
     pub poker_table_contract: String,
+    pub contract_versions: Vec<ContractVersionRoute>,
+    pub table_contract_versions: Vec<TableContractRoute>,
     pub committee_registry_contract: String,
     pub network_passphrase: String,
     pub onchain_table_id: Option<u32>,
@@ -57,13 +71,24 @@ impl SorobanConfig {
             }
         }
 
+        let poker_table_contract = std::env::var("POKER_TABLE_CONTRACT")
+            .unwrap_or_else(|_| String::new());
+        let contract_versions = parse_contract_versions(
+            &std::env::var("POKER_TABLE_CONTRACT_VERSIONS").unwrap_or_default(),
+            &poker_table_contract,
+        );
+        let table_contract_versions = parse_table_contract_versions(
+            &std::env::var("TABLE_CONTRACT_VERSIONS").unwrap_or_default(),
+        );
+
         Self {
             rpc_url: std::env::var("SOROBAN_RPC")
                 .unwrap_or_else(|_| "http://localhost:8000/soroban/rpc".to_string()),
             secret_key: std::env::var("COMMITTEE_SECRET")
                 .unwrap_or_else(|_| "test_secret".to_string()),
-            poker_table_contract: std::env::var("POKER_TABLE_CONTRACT")
-                .unwrap_or_else(|_| String::new()),
+            poker_table_contract,
+            contract_versions,
+            table_contract_versions,
             committee_registry_contract: std::env::var("COMMITTEE_REGISTRY_CONTRACT")
                 .unwrap_or_else(|_| String::new()),
             network_passphrase: std::env::var("NETWORK_PASSPHRASE")
@@ -88,6 +113,40 @@ impl SorobanConfig {
         !self.poker_table_contract.is_empty() && self.secret_key != "test_secret"
     }
 
+    pub fn contract_version_for_table(&self, table_id: u32) -> u32 {
+        let resolved = if table_id == 0 {
+            self.onchain_table_id.unwrap_or(0)
+        } else {
+            table_id
+        };
+        self.table_contract_versions
+            .iter()
+            .find(|route| route.table_id == resolved)
+            .map(|route| route.version)
+            .unwrap_or(1)
+    }
+
+    pub fn contract_for_table(&self, table_id: u32) -> String {
+        let version = self.contract_version_for_table(table_id);
+        self.contract_versions
+            .iter()
+            .find(|route| route.version == version)
+            .map(|route| route.contract.clone())
+            .filter(|contract| !contract.is_empty())
+            .unwrap_or_else(|| self.poker_table_contract.clone())
+    }
+
+    pub fn active_contract_versions(&self) -> Vec<u32> {
+        let mut versions: Vec<u32> = self
+            .contract_versions
+            .iter()
+            .map(|route| route.version)
+            .collect();
+        versions.sort_unstable();
+        versions.dedup();
+        versions
+    }
+
     /// Derive the Stellar public address (G...) from the committee secret key (S...).
     pub fn committee_address(&self) -> Result<String, String> {
         let sk = stellar_strkey::ed25519::PrivateKey::from_string(&self.secret_key)
@@ -107,6 +166,56 @@ impl SorobanConfig {
     pub fn has_identity_for_player(&self, player_address: &str) -> bool {
         self.identity_for_player(player_address).is_some()
     }
+}
+
+fn parse_contract_versions(raw: &str, default_contract: &str) -> Vec<ContractVersionRoute> {
+    let mut routes: Vec<ContractVersionRoute> = Vec::new();
+    for entry in raw.split(|ch| ch == ',' || ch == ' ' || ch == '\n') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((version, contract)) = entry.split_once('=').or_else(|| entry.split_once(':'))
+        else {
+            continue;
+        };
+        if let (Ok(version), true) = (version.trim().parse::<u32>(), !contract.trim().is_empty()) {
+            routes.push(ContractVersionRoute {
+                version,
+                contract: contract.trim().to_string(),
+            });
+        }
+    }
+    routes.sort_by_key(|route| route.version);
+    if !routes.iter().any(|route| route.version == 1) && !default_contract.is_empty() {
+        routes.insert(
+            0,
+            ContractVersionRoute {
+                version: 1,
+                contract: default_contract.to_string(),
+            },
+        );
+    }
+    routes
+}
+
+fn parse_table_contract_versions(raw: &str) -> Vec<TableContractRoute> {
+    let mut routes: Vec<TableContractRoute> = Vec::new();
+    for entry in raw.split(|ch| ch == ',' || ch == ' ' || ch == '\n') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((table_id, version)) = entry.split_once('=').or_else(|| entry.split_once(':'))
+        else {
+            continue;
+        };
+        if let (Ok(table_id), Ok(version)) = (table_id.trim().parse(), version.trim().parse()) {
+            routes.push(TableContractRoute { table_id, version });
+        }
+    }
+    routes.sort_by_key(|route| route.table_id);
+    routes
 }
 
 const INSTRUCTION_LEEWAY_STEPS: [u64; 4] = [0, 50_000_000, 200_000_000, 500_000_000];
@@ -136,7 +245,7 @@ pub(crate) async fn invoke_contract_with_retries(
             "contract".to_string(),
             "invoke".to_string(),
             "--id".to_string(),
-            config.poker_table_contract.clone(),
+            config.contract_for_table(0),
             "--source".to_string(),
             config.secret_key.clone(),
             "--rpc-url".to_string(),
@@ -196,7 +305,7 @@ pub(crate) async fn invoke_contract_with_source(
         "contract".to_string(),
         "invoke".to_string(),
         "--id".to_string(),
-        config.poker_table_contract.clone(),
+        config.contract_for_table(0),
         "--source".to_string(),
         source.to_string(),
         "--rpc-url".to_string(),
@@ -302,7 +411,7 @@ pub async fn fetch_active_nodes_from_registry(
         return Err("Committee Registry contract address not configured".to_string());
     }
 
-    let mut args: Vec<String> = vec![
+    let args: Vec<String> = vec![
         "contract".to_string(),
         "invoke".to_string(),
         "--id".to_string(),
@@ -405,6 +514,8 @@ mod error_handling_tests {
             rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
             secret_key: "test_secret".to_string(),
             poker_table_contract: String::new(),
+            contract_versions: Vec::new(),
+            table_contract_versions: Vec::new(),
             committee_registry_contract: String::new(),
             network_passphrase: "Test SDF Network ; September 2015".to_string(),
             onchain_table_id: None,
@@ -535,5 +646,65 @@ mod error_handling_tests {
         assert_eq!(parse_u32_value(&serde_json::json!("9")), Some(9));
         assert_eq!(parse_u32_value(&serde_json::json!(-1)), None);
         assert_eq!(parse_u32_value(&serde_json::json!("xx")), None);
+    }
+}
+
+#[cfg(test)]
+mod contract_version_routing_tests {
+    use super::*;
+
+    fn config() -> SorobanConfig {
+        SorobanConfig {
+            rpc_url: "http://localhost:8000/soroban/rpc".to_string(),
+            secret_key: "test_secret".to_string(),
+            poker_table_contract: "CDEFAULT".to_string(),
+            contract_versions: vec![
+                ContractVersionRoute {
+                    version: 1,
+                    contract: "CDEFAULT".to_string(),
+                },
+                ContractVersionRoute {
+                    version: 2,
+                    contract: "CV2".to_string(),
+                },
+            ],
+            table_contract_versions: vec![TableContractRoute {
+                table_id: 42,
+                version: 2,
+            }],
+            committee_registry_contract: String::new(),
+            network_passphrase: "Test SDF Network ; September 2015".to_string(),
+            onchain_table_id: None,
+            player_identities: Vec::new(),
+            committee_member_min_stake: 0,
+            committee_member_endpoint: String::new(),
+            committee_member_region: "us-east-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn parses_version_routes_and_adds_legacy_default() {
+        let routes = parse_contract_versions("2=CV2, 3:CV3, bad", "CDEFAULT");
+        assert_eq!(routes.len(), 3);
+        assert_eq!(routes[0].version, 1);
+        assert_eq!(routes[0].contract, "CDEFAULT");
+        assert_eq!(routes[1].contract, "CV2");
+        assert_eq!(routes[2].contract, "CV3");
+    }
+
+    #[test]
+    fn routes_tables_to_their_configured_contract_version() {
+        let cfg = config();
+        assert_eq!(cfg.contract_for_table(1), "CDEFAULT");
+        assert_eq!(cfg.contract_version_for_table(42), 2);
+        assert_eq!(cfg.contract_for_table(42), "CV2");
+        assert_eq!(cfg.active_contract_versions(), vec![1, 2]);
+    }
+
+    #[test]
+    fn table_zero_uses_the_fallback_table_id() {
+        let mut cfg = config();
+        cfg.onchain_table_id = Some(42);
+        assert_eq!(cfg.contract_for_table(0), "CV2");
     }
 }

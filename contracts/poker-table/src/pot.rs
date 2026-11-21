@@ -1,7 +1,20 @@
 use soroban_sdk::{Env, Vec};
+use stellar_zk_cards::Card;
 
 use crate::constant_time;
 use crate::types::*;
+
+/// True for 7-2 offsuit (#856). Card values are `suit * 13 + rank`, with
+/// rank 0 = deuce and 5 = seven.
+pub fn is_seven_deuce_offsuit(c1: u32, c2: u32) -> bool {
+    const DEUCE: u32 = 0;
+    const SEVEN: u32 = 5;
+    let (a, b) = (Card { value: c1 }, Card { value: c2 });
+    a.is_valid()
+        && b.is_valid()
+        && a.suit() != b.suit()
+        && ((a.rank() == SEVEN && b.rank() == DEUCE) || (a.rank() == DEUCE && b.rank() == SEVEN))
+}
 
 /// Maximum allowed rake, in basis points (5%). Enforced at table creation.
 pub const MAX_RAKE_BPS: u32 = 500;
@@ -24,6 +37,17 @@ pub fn min_bad_beat_qualifying_score(category: u32, rank: u32) -> u32 {
     (category << 28) | (rank << 4)
 }
 
+/// `amount * bps / 10_000`, rounded towards zero, without the intermediate
+/// `amount * bps` product that overflows `i128` for pots above `i128::MAX / bps`.
+///
+/// Splitting `amount = q * 10_000 + r` gives `q * bps + r * bps / 10_000`, which
+/// is exactly the naive result. Both terms are bounded by `amount` for any
+/// `bps <= 10_000`, so nothing can overflow.
+pub(crate) fn mul_bps(amount: i128, bps: u32) -> i128 {
+    let bps = bps as i128;
+    (amount / 10_000) * bps + (amount % 10_000) * bps / 10_000
+}
+
 /// Split `total_rake` into the house share and the jackpot share according to
 /// `jackpot_share_bps` (basis points of the rake).  When jackpot is disabled
 /// (`jackpot_share_bps == 0`), the entire rake goes to the house.
@@ -31,7 +55,7 @@ pub fn split_jackpot_rake(total_rake: i128, jackpot_share_bps: u32) -> (i128, i1
     if jackpot_share_bps == 0 {
         return (total_rake, 0);
     }
-    let jackpot = (total_rake * jackpot_share_bps as i128) / 10_000;
+    let jackpot = mul_bps(total_rake, jackpot_share_bps);
     let house = total_rake - jackpot;
     (house, jackpot)
 }
@@ -73,7 +97,7 @@ pub fn apply_rake(
 
     for i in 0..pots.len() {
         let pot = pots.get(i).ok_or(PokerTableError::InvalidPlayerIndex)?;
-        let rake = (pot.amount * rake_bps as i128) / 10_000;
+        let rake = mul_bps(pot.amount, rake_bps);
         total_rake += rake;
         net_pots.push_back(SidePot {
             amount: pot.amount - rake,

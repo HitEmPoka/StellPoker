@@ -663,6 +663,67 @@ pub async fn check_node_health(client: &reqwest::Client, endpoints: &[String]) -
     results
 }
 
+/// Fetch per-node drain flags advertised via GET /health (#571).
+///
+/// Returns one bool per endpoint (true = draining). Unreachable nodes or
+/// legacy plain-"ok" responses report false.
+pub async fn fetch_node_drain_states(endpoints: &[String]) -> Vec<bool> {
+    let mut results = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        let draining = match reqwest::get(format!("{}/health", endpoint)).await {
+            Ok(resp) if resp.status().is_success() => match resp.text().await {
+                Ok(body) => parse_health_draining(&body),
+                Err(_) => false,
+            },
+            _ => false,
+        };
+        results.push(draining);
+    }
+    results
+}
+
+/// Parse a node /health JSON body for its drain flag.
+///
+/// Accepts the new `{status, draining, node_id}` shape and legacy `"ok"`.
+pub fn parse_health_draining(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            // Plain-text "ok" parses as a JSON string; treat as not draining.
+            if v.is_string() {
+                return Some(false);
+            }
+            v.get("draining").and_then(|d| d.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+/// Return endpoints of nodes that are not draining.
+///
+/// The 3-of-3 MPC protocol needs every node, so when any node is draining
+/// the coordinator refuses *new* sessions (callers map the empty/short
+/// result to 503) while in-flight sessions finish on the nodes.
+pub fn available_node_endpoints(endpoints: &[String], draining: &[bool]) -> Vec<String> {
+    endpoints
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| draining.get(*i).copied().unwrap_or(false) == false)
+        .map(|(_, ep)| ep.clone())
+        .collect()
+}
+
+/// Structured per-session cost log emitted after proof collection (#572).
+///
+/// Aggregators (fee model doc, metrics) join these fields by `session_id`.
+pub fn log_session_cost(session_id: &str, circuit_name: &str, proof_bytes: usize) {
+    tracing::info!(
+        session_id = %session_id,
+        circuit = %circuit_name,
+        proof_bytes = proof_bytes,
+        "MPC session proof collected (coordinator cost attribution)"
+    );
+}
+
 async fn collect_prepared_share_sets(
     handles: Vec<tokio::task::JoinHandle<Result<(usize, String), String>>>,
     expected_len: usize,
@@ -923,6 +984,7 @@ async fn trigger_and_collect_proof(
                     .decode(&proof_data.proof)
                     .map_err(|e| format!("failed to decode proof: {}", e))?;
 
+                log_session_cost(session_id, circuit_name, proof_bytes.len());
                 return Ok(MpcProofResult {
                     proof: proof_bytes,
                     public_inputs: proof_data.public_inputs,
@@ -1074,6 +1136,36 @@ mod error_handling_tests {
             .await
             .unwrap_err();
         assert!(err.contains("out-of-range index"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_health_draining_handles_new_and_legacy_shapes() {
+        assert!(parse_health_draining(r#"{"status":"ok","draining":true,"node_id":0}"#));
+        assert!(!parse_health_draining(
+            r#"{"status":"ok","draining":false,"node_id":1}"#
+        ));
+        // Legacy plain-text health response.
+        assert!(!parse_health_draining(r#""ok""#));
+        assert!(!parse_health_draining("ok"));
+        assert!(!parse_health_draining("{}"));
+    }
+
+    #[test]
+    fn available_endpoints_skips_draining_nodes() {
+        let endpoints = vec!["n0".to_string(), "n1".to_string(), "n2".to_string()];
+        let draining = vec![false, true, false];
+        assert_eq!(
+            available_node_endpoints(&endpoints, &draining),
+            vec!["n0".to_string(), "n2".to_string()]
+        );
+        // Missing flags default to available.
+        assert_eq!(available_node_endpoints(&endpoints, &[]).len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fetch_drain_states_reports_unreachable_as_not_draining() {
+        let states = fetch_node_drain_states(&[DEAD_NODE.to_string()]).await;
+        assert_eq!(states, vec![false]);
     }
 }
 

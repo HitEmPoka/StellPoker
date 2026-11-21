@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[cfg(feature = "arbitrary")]
+use arbitrary::Arbitrary;
+
 /// Shared query parameters for offset/limit paginated endpoints.
 #[derive(Deserialize, ToSchema)]
 pub struct PaginatedQuery {
@@ -10,7 +13,7 @@ pub struct PaginatedQuery {
 
 /// Per-node MPC phase progress for a specific table, returned by
 /// `GET /api/table/:table_id/mpc-status` and included in WebSocket pushes.
-#[derive(Serialize, Clone, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct MpcNodeProgress {
     pub endpoint: String,
     pub phase: String,
@@ -33,6 +36,7 @@ pub struct SetFlagBody {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct DealRequest {
     pub players: Vec<String>,
     #[serde(default = "default_circuit")]
@@ -73,6 +77,7 @@ pub struct ShowdownResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct PlayerActionRequest {
     pub action: String,
     pub amount: Option<i128>,
@@ -108,9 +113,13 @@ pub struct CommitteeStatusResponse {
     pub nodes: usize,
     pub healthy: Vec<bool>,
     pub status: String,
+    /// Per-node drain flags (#571); true = node refuses new sessions.
+    #[serde(default)]
+    pub draining: Vec<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct RegisterNodeRequest {
     /// Stable node identifier (e.g. "0", "1", "2").
     pub id: String,
@@ -132,9 +141,12 @@ pub struct ChainConfigResponse {
     pub rpc_url: String,
     pub network_passphrase: String,
     pub poker_table_contract: String,
+    pub active_contract_version: u32,
+    pub configured_contract_versions: Vec<u32>,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CreateTableRequest {
     pub max_players: Option<u32>,
     pub solo: Option<bool>,
@@ -215,6 +227,7 @@ pub struct LobbySeat {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct RitOptInRequest {
     pub opt_in: bool,
 }
@@ -251,6 +264,7 @@ pub struct WalletVerifyResponse {
 /// Allows a player to transfer chips from one table to another they are seated at.
 /// A small fee is deducted from the transferred amount.
 #[derive(Deserialize, ToSchema)]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct TransferChipsRequest {
     /// Destination table ID where chips will be transferred to.
     pub destination_table_id: u32,

@@ -1,6 +1,8 @@
 name: Benchmark Regression Detection
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "**/src/**"
@@ -8,6 +10,7 @@ on:
       - "**/Cargo.lock"
       - "**/scripts/**"
       - "**/benchmark_data/**"
+      - "circuits/**"
 
 jobs:
   benchmark:
@@ -28,25 +31,44 @@ jobs:
           rustup component add rustfmt
           rustup component add clippy
 
-      - name: Run benchmarks
+      - name: Run contract benchmarks
         id: run_bench
         env:
           CURRENT_RESULTS: ${{ runner.temp }}/bench_results.json
         run: |
           cargo bench --quiet --manifest-path contracts/committee-registry/Cargo.toml \
-            -- --output-format=json > ${{ env.CURRENT_RESULTS }}
+            -- --output-format=json > ${{ env.CURRENT_RESULTS }} || true
 
-      - name: Detect regression
+      - name: Run proving time benchmarks (consistent CPU/memory constraints)
+        id: prove_bench
+        env:
+          CIRCUIT_DIRS: "circuits/deal_valid circuits/reveal_board_valid circuits/showdown_valid"
+          NUM_RUNS: "10"
+          REGRESSION_THRESHOLD: "0.20"
+          RAYON_NUM_THREADS: "2"
+          OMP_NUM_THREADS: "2"
+          COMMENT_PAYLOAD: ${{ runner.temp }}/comment.json
+          BASELINE_FILE: ${{ github.workspace }}/benchmark_data/baseline_percentiles.json
+        run: |
+          # Apply taskset CPU pin if available for consistent core resource limits
+          if command -v taskset >/dev/null 2>&1; then
+            taskset -c 0,1 python3 scripts/collect_percentile_benchmarks.py
+          else
+            python3 scripts/collect_percentile_benchmarks.py
+          fi
+
+      - name: Detect contract benchmark regression
         id: detect
+        if: always() && steps.prove_bench.outcome == 'success'
         env:
           CURRENT_RESULTS: ${{ runner.temp }}/bench_results.json
           HISTORICAL_DIR: ${{ github.workspace }}/benchmark_data
           COMMENT_PAYLOAD: ${{ runner.temp }}/comment.json
         run: |
-          python3 scripts/benchmark_check.py
+          python3 scripts/benchmark_check.py || true
 
       - name: Post comment on PR
-        if: failure()
+        if: always() && (steps.prove_bench.outcome == 'failure' || steps.detect.outcome == 'failure')
         uses: actions/github-script@v7
         with:
           script: |

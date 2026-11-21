@@ -9,142 +9,16 @@
   ],
   "keys": [
     {
-      "name": "Table",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Core table state: TableState per table_id."
-    },
-    {
-      "name": "Paused",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Per-table full pause flag."
-    },
-    {
-      "name": "BettingPaused",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Per-table betting pause (blocks new betting actions, allows settlement)."
-    },
-    {
-      "name": "SettlementPaused",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Per-table settlement pause (blocks hand settlement)."
-    },
-    {
-      "name": "HandRecord",
-      "arity": 2,
-      "domain": "persistent",
-      "description": "One archived hand: (table_id, circular buffer slot)."
-    },
-    {
-      "name": "HandHistoryMeta",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Circular buffer bookkeeping for a table's hand history."
-    },
-    {
-      "name": "PlayerTables",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Tables a wallet is currently seated at."
-    },
-    {
-      "name": "UpgradeSigners",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Upgrade-governance signer set (issue #504)."
-    },
-    {
-      "name": "UpgradeThreshold",
-      "arity": 1,
-      "domain": "instance",
-      "description": "N-of-M upgrade threshold (issue #504)."
-    },
-    {
-      "name": "UpgradeDelay",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Timelock delay in ledgers before an approved upgrade may execute."
-    },
-    {
-      "name": "PendingUpgrade",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Open governance upgrade proposal (issue #504)."
-    },
-    {
-      "name": "ChipDumpingReport",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Most recent on-chain chip-dumping evidence report (issue #506). Reserved."
-    },
-    {
-      "name": "PlayerActionCounter",
-      "arity": 2,
-      "domain": "persistent",
-      "description": "Per-player per-table monotonically increasing action sequence counter."
-    },
-    {
-      "name": "Queue",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Waiting-list queue for a full table."
-    },
-    {
-      "name": "UpgradeProposal",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Timelocked wasm upgrade proposal (admin path)."
-    },
-    {
-      "name": "LastUpgrade",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Most recently executed upgrade for fast rollback (issue #348)."
-    },
-    {
-      "name": "VarianceStats",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Per-table outcome distribution and variance state."
-    },
-    {
-      "name": "VarianceConfig",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Per-table variance-triggered jackpot funding configuration."
-    },
-    {
-      "name": "TableClosure",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Pending forced closure notice for a table."
-    },
-    {
-      "name": "StraddleConfig",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Per-table straddle configuration."
-    },
-    {
-      "name": "ActiveStraddleSeat",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Seat index of the player who posted a straddle for the current hand (legacy)."
-    },
-    {
-      "name": "EmergencyApprovals",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Addresses of players who approved emergency withdrawal for a table."
-    },
-    {
       "name": "ActionCommitment",
       "arity": 3,
       "domain": "persistent",
       "description": "Action commitment for dispute resolution: (table_id, hand_number, action_index). Reserved."
+    },
+    {
+      "name": "ActionCommitmentHash",
+      "arity": 3,
+      "domain": "persistent",
+      "description": "Commit-reveal action hash: (table_id, hand_number, seat)."
     },
     {
       "name": "ActionCommitmentMeta",
@@ -153,34 +27,16 @@
       "description": "Bookkeeping for action commitments per table. Reserved."
     },
     {
-      "name": "HandTypeDistribution",
-      "arity": 0,
+      "name": "ActionCommitmentNonce",
+      "arity": 3,
       "domain": "persistent",
-      "description": "Aggregate hand type distribution statistics (global). Reserved."
+      "description": "Commit-reveal nonce hash: (table_id, hand_number, seat)."
     },
     {
-      "name": "DeadChipSweep",
-      "arity": 1,
-      "domain": "persistent",
-      "description": "Dead chip sweep state per table."
-    },
-    {
-      "name": "TimeBank",
-      "arity": 2,
-      "domain": "persistent",
-      "description": "Per-player time bank: (table_id, player)."
-    },
-    {
-      "name": "TimeBankConfig",
+      "name": "ActiveStraddleSeat",
       "arity": 1,
       "domain": "instance",
-      "description": "Time bank config per table."
-    },
-    {
-      "name": "MississippiPending",
-      "arity": 1,
-      "domain": "instance",
-      "description": "Mississippi straddle pending entry per table."
+      "description": "Seat index of the player who posted a straddle for the current hand (legacy)."
     },
     {
       "name": "ActiveStraddleState",
@@ -195,34 +51,28 @@
       "description": "RBAC per-table auth manager override (instance storage mirror)."
     },
     {
-      "name": "RbacAudit",
+      "name": "BettingPaused",
       "arity": 1,
       "domain": "instance",
-      "description": "RBAC role assignment audit log position. Reserved."
+      "description": "Per-table betting pause (blocks new betting actions, allows settlement)."
     },
     {
-      "name": "JackpotVerifier",
+      "name": "BombPotConfig",
       "arity": 1,
       "domain": "instance",
-      "description": "Jackpot verifier contract per table."
+      "description": "Bomb-pot (interval, ante) per table; interval 0 disables (#857)."
     },
     {
-      "name": "JackpotClaim",
+      "name": "ChipDumpingReport",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Most recent on-chain chip-dumping evidence report (issue #506). Reserved."
+    },
+    {
+      "name": "ConfigChangeLog",
       "arity": 2,
       "domain": "persistent",
-      "description": "Jackpot claim history: (table_id, hand_number)."
-    },
-    {
-      "name": "ActionCommitmentHash",
-      "arity": 3,
-      "domain": "persistent",
-      "description": "Commit-reveal action hash: (table_id, hand_number, seat)."
-    },
-    {
-      "name": "ActionCommitmentNonce",
-      "arity": 3,
-      "domain": "persistent",
-      "description": "Commit-reveal nonce hash: (table_id, hand_number, seat)."
+      "description": "Configuration change log: (table_id, version) (issue #553)."
     },
     {
       "name": "ConfigVersion",
@@ -231,10 +81,244 @@
       "description": "Current configuration version for a table (issue #553)."
     },
     {
-      "name": "ConfigChangeLog",
+      "name": "ContractMetrics",
+      "arity": 0,
+      "domain": "instance",
+      "description": "Contract-wide aggregate counters for dashboards (issue #563)."
+    },
+    {
+      "name": "ContractMigration",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "ContractVersion",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "ContractVersionBeforeUpgrade",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "ContractVersionRecord",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "ContractVersionRecordPrev",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "DeadChipSweep",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Dead chip sweep state per table."
+    },
+    {
+      "name": "EmergencyApprovals",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Addresses of players who approved emergency withdrawal for a table."
+    },
+    {
+      "name": "HandHistoryMeta",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Circular buffer bookkeeping for a table's hand history."
+    },
+    {
+      "name": "HandRecord",
       "arity": 2,
       "domain": "persistent",
-      "description": "Configuration change log: (table_id, version) (issue #553)."
+      "description": "One archived hand: (table_id, circular buffer slot)."
+    },
+    {
+      "name": "HandTypeDistribution",
+      "arity": 0,
+      "domain": "persistent",
+      "description": "Aggregate hand type distribution statistics (global). Reserved."
+    },
+    {
+      "name": "JackpotClaim",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Jackpot claim history: (table_id, hand_number)."
+    },
+    {
+      "name": "JackpotVerifier",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Jackpot verifier contract per table."
+    },
+    {
+      "name": "LastUpgrade",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Most recently executed upgrade for fast rollback (issue #348)."
+    },
+    {
+      "name": "MississippiPending",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Mississippi straddle pending entry per table."
+    },
+    {
+      "name": "Paused",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Per-table full pause flag."
+    },
+    {
+      "name": "PendingContractVersion",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "New key (describe me)."
+    },
+    {
+      "name": "PendingUpgrade",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Open governance upgrade proposal (issue #504)."
+    },
+    {
+      "name": "PlayerActionCounter",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Per-player per-table monotonically increasing action sequence counter."
+    },
+    {
+      "name": "PlayerTables",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Tables a wallet is currently seated at."
+    },
+    {
+      "name": "Queue",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Waiting-list queue for a full table."
+    },
+    {
+      "name": "RabbitHunt",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Rabbit-hunt progress (hand_number, cards_revealed) per table (#858)."
+    },
+    {
+      "name": "RakeHistory",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Rake configuration history entry: (table_id, index) (issue #559)."
+    },
+    {
+      "name": "RakeHistoryLen",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Number of entries in a table's rake history (issue #559)."
+    },
+    {
+      "name": "RbacAudit",
+      "arity": 1,
+      "domain": "instance",
+      "description": "RBAC role assignment audit log position. Reserved."
+    },
+    {
+      "name": "SettlementPaused",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Per-table settlement pause (blocks hand settlement)."
+    },
+    {
+      "name": "SevenDeuceBounty",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Unclaimed seven-deuce bounty per table, escrowed outside the pot (#856)."
+    },
+    {
+      "name": "StraddleConfig",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Per-table straddle configuration."
+    },
+    {
+      "name": "Table",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Core table state: TableState per table_id."
+    },
+    {
+      "name": "TableClosure",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Pending forced closure notice for a table."
+    },
+    {
+      "name": "TableMetrics",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Per-table hand and rake totals for dashboards (issue #563)."
+    },
+    {
+      "name": "TableSunset",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Sunset record for a frozen table (issue #564)."
+    },
+    {
+      "name": "TimeBank",
+      "arity": 2,
+      "domain": "persistent",
+      "description": "Per-player time bank: (table_id, player)."
+    },
+    {
+      "name": "TimeBankConfig",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Time bank config per table."
+    },
+    {
+      "name": "UpgradeDelay",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Timelock delay in ledgers before an approved upgrade may execute."
+    },
+    {
+      "name": "UpgradeProposal",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Timelocked wasm upgrade proposal (admin path)."
+    },
+    {
+      "name": "UpgradeSigners",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Upgrade-governance signer set (issue #504)."
+    },
+    {
+      "name": "UpgradeThreshold",
+      "arity": 1,
+      "domain": "instance",
+      "description": "N-of-M upgrade threshold (issue #504)."
+    },
+    {
+      "name": "VarianceConfig",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Per-table variance-triggered jackpot funding configuration."
+    },
+    {
+      "name": "VarianceStats",
+      "arity": 1,
+      "domain": "persistent",
+      "description": "Per-table outcome distribution and variance state."
     }
   ]
 }

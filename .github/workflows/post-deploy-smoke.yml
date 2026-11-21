@@ -1,0 +1,48 @@
+name: Post-Deploy Smoke Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - testnet
+          - staging
+      poker_table_id:
+        description: 'Poker table contract ID'
+        required: true
+      game_hub_id:
+        description: 'Game hub contract ID'
+        required: true
+
+jobs:
+  smoke-test:
+    name: Smoke test deployed contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Stellar CLI
+        run: |
+          curl -L https://github.com/stellar/stellar-cli/releases/download/v21.0.0/stellar-cli-21.0.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv stellar /usr/local/bin/soroban
+          soroban version
+
+      - name: Run smoke tests
+        env:
+          POKER_TABLE_ID: ${{ inputs.poker_table_id }}
+          GAME_HUB_ID: ${{ inputs.game_hub_id }}
+          TESTNET_RPC: ${{ inputs.environment == 'testnet' && 'https://soroban-testnet.stellar.org' || secrets.STAGING_RPC_URL }}
+        run: ./scripts/smoke-test-testnet.sh
+
+      - name: Report results
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✓ Smoke tests passed for ${{ inputs.environment }}"
+          else
+            echo "✗ Smoke tests failed for ${{ inputs.environment }}"
+            exit 1
+          fi

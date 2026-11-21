@@ -575,6 +575,51 @@ pub enum PokerTableError {
     // --- Token allowlist ---
     TokenNotAllowlisted = 117,
     TokenAlreadyAllowlisted = 118,
+    // --- Sunset ---
+    /// The table has been sunset: it is frozen and takes no new deposits.
+    TableSunset = 119,
+    /// The table still holds player chips or a live hand, so it cannot be sunset yet.
+    SunsetNotReady = 120,
+    // --- Batched reads ---
+    /// A batched read was given more table ids than `MAX_POSITIONS_BATCH`.
+    BatchTooLarge = 121,
+    // --- Versioned upgrades (Issue #111) ---
+    /// A versioned upgrade must target a version newer than the active one.
+    InvalidContractVersion = 122,
+    // --- Seven-deuce bounty (#856) ---
+    /// A bounty deposit must be positive.
+    InvalidBountyAmount = 123,
+    // --- Bomb pots (#857) ---
+    /// A bomb-pot interval needs a positive ante.
+    InvalidBombPotConfig = 124,
+    // --- Rabbit hunt (#858) ---
+    /// The current hand has not settled without a showdown, or its board is
+    /// already complete.
+    RabbitHuntNotAvailable = 125,
+    /// Rabbit-hunt cards must be the next unused deck indices, in order.
+    InvalidRabbitHuntIndices = 126,
+}
+
+/// A wallet's position at one table, as returned in bulk by
+/// `get_player_positions` for multi-table dashboards.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerPosition {
+    pub table_id: u32,
+    /// The table exists. When false every other field is a default.
+    pub exists: bool,
+    /// The wallet holds a seat at the table. When false the chip and seat
+    /// fields are zero, but `phase` / `hand_number` still describe the table.
+    pub seated: bool,
+    pub seat_index: u32,
+    /// Chips behind, not in the pot.
+    pub stack: i128,
+    /// Chips this wallet has put in the pot this hand.
+    pub committed: i128,
+    /// Total buy-in including rebuys.
+    pub total_buy_in: i128,
+    pub phase: GamePhase,
+    pub hand_number: u32,
 }
 
 #[contracttype]
@@ -806,6 +851,17 @@ pub struct PendingUpgrade {
     pub started_ledger: u32,
 }
 
+/// Window during which the coordinator may route a table to either the old or
+/// the new contract instance (Issue #111).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContractMigrationWindow {
+    pub from_version: u32,
+    pub to_version: u32,
+    pub started_at: u64,
+    pub ends_at: u64,
+}
+
 /// Cumulative winner distribution used to detect unusually concentrated table
 /// outcomes. Counts are indexed by seat.
 #[contracttype]
@@ -942,6 +998,59 @@ pub struct TableClosureProposal {
     pub execute_after: u64,
 }
 
+/// Contract-wide aggregate counters (Issue #563).
+///
+/// Every field is a running counter kept up to date by the entrypoint that
+/// changes it, so reading them is a single storage read regardless of how many
+/// tables or hands the contract has served. See `docs/contract-metrics.md`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractMetrics {
+    /// Tables ever created.
+    pub tables_created: u32,
+    /// Settlements archived across all tables.
+    pub hands_played: u64,
+    /// Rake taken across all tables, including the jackpot share. Cumulative:
+    /// withdrawing rake does not reduce it.
+    pub total_rake: i128,
+    /// Players currently seated across all tables (queued players excluded).
+    pub active_seats: u32,
+}
+
+/// Running per-table totals behind [`TableMetrics`] (Issue #563).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableTotals {
+    pub hands_played: u64,
+    pub total_rake: i128,
+}
+
+/// Aggregate view of one table (Issue #563).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TableMetrics {
+    /// Settlements archived at this table.
+    pub hands_played: u64,
+    /// Rake taken at this table, including the jackpot share. Cumulative.
+    pub total_rake: i128,
+    /// Players currently seated at this table.
+    pub active_seats: u32,
+}
+
+/// What a table's sunset swept and refunded (Issue #564).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SunsetRecord {
+    /// Ledger sequence at which the table was frozen.
+    pub sunset_at_ledger: u32,
+    /// Accrued house rake paid to the table admin.
+    pub rake_swept: i128,
+    /// Jackpot pool balance paid to the table admin.
+    pub jackpot_swept: i128,
+    /// Escrowed queue buy-ins refunded to waiting players.
+    pub queue_refunded: i128,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct TableState {
@@ -1067,4 +1176,68 @@ pub enum DataKey {
     ConfigVersion(u32),
     /// Configuration change log: (table_id, version) -> ConfigChangeEvent (Issue #553).
     ConfigChangeLog(u32, u32),
+    /// Contract-wide aggregate counters for dashboards (Issue #563).
+    ContractMetrics,
+    /// Per-table hand and rake totals for dashboards (Issue #563).
+    TableMetrics(u32),
+    /// Sunset record for a table: present once the table is frozen (Issue #564).
+    TableSunset(u32),
+    /// Number of entries in a table's rake history (Issue #559).
+    RakeHistoryLen(u32),
+    /// Rake history entry: (table_id, index) -> RakeChange (Issue #559).
+    RakeHistory(u32, u32),
+    /// Deployed contract schema version for a table (Issue #111).
+    ContractVersion(u32),
+    /// Activated version details for a table (Issue #111).
+    ContractVersionRecord(u32),
+    /// Target version recorded when a versioned upgrade is proposed (Issue #111).
+    PendingContractVersion(u32),
+    /// Version before the most recent executed upgrade, used for rollback (Issue #111).
+    ContractVersionBeforeUpgrade(u32),
+    /// Details of the version active before the most recent executed upgrade (Issue #111).
+    ContractVersionRecordPrev(u32),
+    /// Active dual-version routing window for a table (Issue #111).
+    ContractMigration(u32),
+    /// Unclaimed seven-deuce bounty, escrowed outside the pot (#856).
+    SevenDeuceBounty(u32),
+    /// Bomb-pot `(interval, ante)`: every `interval`-th hand is a bomb pot (#857).
+    BombPotConfig(u32),
+    /// Rabbit-hunt progress `(hand_number, cards_revealed)` for a table (#858).
+    RabbitHunt(u32),
+}
+
+/// Stable format version emitted by `export_table_state`.
+pub const TABLE_EXPORT_VERSION: u32 = 1;
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ExportSeat {
+    pub seat_index: u32,
+    pub address: Address,
+    pub stack: i128,
+    pub bet_this_round: i128,
+    pub committed: i128,
+    pub folded: bool,
+    pub all_in: bool,
+    pub sitting_out: bool,
+}
+
+/// Versioned full-table snapshot for replay tools (#570).
+///
+/// Field set is frozen at `version == TABLE_EXPORT_VERSION`: stacks,
+/// seats, phase, button (`dealer_seat`) and config. Consumers (e.g. the
+/// hand replayer) must reject unknown `version` values.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TableExportV1 {
+    pub version: u32,
+    pub table_id: u32,
+    pub phase: GamePhase,
+    pub dealer_seat: u32,
+    pub current_turn: u32,
+    pub hand_number: u32,
+    pub pot: i128,
+    pub seats: Vec<ExportSeat>,
+    pub board_cards: Vec<u32>,
+    pub config: TableConfig,
 }

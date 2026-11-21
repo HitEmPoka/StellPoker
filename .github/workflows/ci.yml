@@ -13,6 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install gitleaks
+        run: brew install gitleaks
+
+      - name: Run gitleaks secret scanning
+        run: |
+          gitleaks protect --config .gitleaks.toml --staged
+        working-directory: .
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [poker-table, zk-verifier, committee-registry, game-hub, player-rating, stellar-zk-cards, stellpoker-test-vectors]
+        package: [poker-table, zk-verifier, committee-registry, game-hub, player-rating, protocol-treasury, governance, stellar-zk-cards, stellpoker-test-vectors]
     steps:
       - uses: actions/checkout@v4
 
@@ -263,8 +271,11 @@ jobs:
       - name: Start Soroban and MPC stack
         run: docker compose up -d --build soroban mpc-node-0 mpc-node-1 mpc-node-2 coordinator
 
-      - name: Run full hand lifecycle flow
+      - name: Run full hand lifecycle flow (2 players)
         run: python3 scripts/test-flow.py
+
+      - name: Run complete 6-player hand e2e flow
+        run: python3 scripts/test-6player-flow.py
 
       - name: Install schemathesis for conformance test
         run: pip install schemathesis pyyaml
@@ -332,6 +343,41 @@ jobs:
           name: playwright-report-visual
           path: app/playwright-report/
 
+  browser-e2e:
+    name: Critical path e2e (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: cd app && npm ci
+
+      - name: Install browser
+        run: cd app && npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run critical path
+        run: cd app && npx playwright test --config=e2e/playwright.config.ts --project=${{ matrix.browser }} tests/critical-path.spec.ts
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: app/playwright-report/
+
   frontend-lint:
     name: Frontend lint
     runs-on: ubuntu-latest
@@ -355,8 +401,17 @@ jobs:
       - name: Install dependencies
         run: cd app && npm ci
 
+      - name: Validate community theme contract
+        run: node scripts/validate-themes.mjs
+
+      - name: Run theme contract tests
+        run: cd app && npm run test:themes
+
       - name: Lint
         run: cd app && npm run lint --if-present
+
+      - name: Check i18n key parity
+        run: cd app && npm run test:i18n
 
   frontend-build:
     name: Frontend build

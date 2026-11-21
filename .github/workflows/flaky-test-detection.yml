@@ -1,0 +1,63 @@
+name: Flaky Test Detection & Quarantine
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  detect-flaky-tests:
+    name: Flaky test detection & dashboard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml pytest
+
+      - name: Run unit tests for tracker
+        run: python3 -m unittest discover tests -p "test_flaky_test_tracker.py" -v
+
+      - name: Self-check detection pipeline (dry run, no registry writes or issues)
+        # Runs the simulated canary sample to verify the pipeline logic works.
+        # --simulate-sample is a dry run: it never writes to quarantined_tests.json
+        # and never creates GitHub issues, so --auto-quarantine and --create-issues
+        # are intentionally omitted here to make that contract explicit.
+        run: |
+          python3 scripts/flaky_test_tracker.py --simulate-sample
+
+      - name: Execute flaky test detection and update dashboard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Real detection run against actual --input-results (or renders current state
+        # when no results file is provided). Never pass --simulate-sample here.
+        run: |
+          python3 scripts/flaky_test_tracker.py --auto-quarantine --create-issues
+
+      - name: Publish dashboard summary to GitHub Actions Step Summary
+        run: |
+          if [ -f "benchmark_data/flaky_dashboard.md" ]; then
+            cat benchmark_data/flaky_dashboard.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Flaky Test Dashboard Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flaky-test-dashboard
+          path: |
+            benchmark_data/flaky_dashboard.json
+            benchmark_data/flaky_dashboard.md
+            tests/quarantined_tests.json

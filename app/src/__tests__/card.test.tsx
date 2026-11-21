@@ -25,6 +25,16 @@ describe("Card", () => {
     expect(container.querySelector(".animate-card-deal")).not.toBeNull();
   });
 
+  it("names the card for screen readers", () => {
+    const { getByRole } = render(<Card value={ACE_OF_SPADES} />);
+    expect(getByRole("img", { name: "Ace of spades" })).toBeTruthy();
+  });
+
+  it("names a face down card without revealing it", () => {
+    const { getByRole } = render(<Card value={ACE_OF_SPADES} faceDown />);
+    expect(getByRole("img", { name: "Face down card" })).toBeTruthy();
+  });
+
   it("renders red suits for hearts", () => {
     const { container } = render(<Card value={TEN_OF_HEARTS} />);
     expect(container.textContent).toContain("10");

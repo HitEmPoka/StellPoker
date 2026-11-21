@@ -54,7 +54,20 @@ describe("decodePokerTableEvent", () => {
     expect(decodePokerTableEvent([sym("table_paused"), u32(0)], addr())).toBeNull();
   });
 
+  it("decodes rabbit_hunt as its own event, not board_revealed", () => {
+    const cards = xdr.ScVal.scvVec([u32(4), u32(5), u32(6)]);
+    const event = decodePokerTableEvent(
+      [sym("rabbit_hunt"), u32(0)],
+      xdr.ScVal.scvVec([u32(2), cards, cards])
+    );
+    expect(event).toEqual({
+      name: "rabbit_hunt",
+      topics: ["rabbit_hunt", 0],
+      data: [2, [4, 5, 6], [4, 5, 6]],
+    });
+  });
+
   it("lists one name per schema file", () => {
-    expect(POKER_TABLE_EVENT_NAMES).toHaveLength(11);
+    expect(POKER_TABLE_EVENT_NAMES).toHaveLength(12);
   });
 });

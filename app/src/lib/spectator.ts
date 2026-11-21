@@ -9,6 +9,14 @@
 
 import type { GamePhase } from "./game-state";
 
+/** Anti-HUD configuration and delay status (Issue #692). */
+export interface AntiHudStatus {
+  enabled: boolean;
+  policy: "Immediate" | "SettlementGated" | "DelayedSeconds" | "DelayedLedgers" | "Hidden";
+  cardsDelayed: boolean;
+  delayRemainingSeconds?: number;
+}
+
 /** Spectator Player shape. */
 export interface SpectatorPlayer {
   address: string;
@@ -17,6 +25,8 @@ export interface SpectatorPlayer {
   betThisRound: number;
   folded: boolean;
   allIn: boolean;
+  /** Revealed showdown hole cards if allowed by the anti-HUD delay policy. */
+  holeCards?: string[];
 }
 
 /** Spectator View shape. */
@@ -29,6 +39,7 @@ export interface SpectatorView {
   currentTurn: number;
   dealerSeat: number;
   handNumber: number;
+  antiHud?: AntiHudStatus;
 }
 
 /** Spectator Action Kind shape. */

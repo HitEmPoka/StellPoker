@@ -1,0 +1,84 @@
+{
+  "version": "1.0.0",
+  "network": "stellar-testnet",
+  "exported_at": "2026-10-19T15:10:00Z",
+  "table": {
+    "id": 8,
+    "name": "Micro Stakes Fast #3",
+    "variant": "texas_holdem",
+    "betting_structure": "no_limit",
+    "stakes": {
+      "small_blind": 1,
+      "big_blind": 2,
+      "ante": 0,
+      "min_buy_in": 40,
+      "max_buy_in": 200,
+      "currency": "USDC"
+    }
+  },
+  "hand": {
+    "number": 19,
+    "session_id": 5510,
+    "timestamp": "2026-10-19T15:09:20Z",
+    "duration_seconds": 12,
+    "dealer_seat": 1
+  },
+  "players": [
+    {
+      "seat": 0,
+      "address": "GABIGBLINDDEFENDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "starting_stack": 100,
+      "final_stack": 101,
+      "net_payout": 1,
+      "hole_cards": ["??", "??"],
+      "folded": false,
+      "all_in": false
+    },
+    {
+      "seat": 1,
+      "address": "GASMALLBLINDFOLDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "starting_stack": 100,
+      "final_stack": 99,
+      "net_payout": -1,
+      "hole_cards": ["??", "??"],
+      "folded": true,
+      "all_in": false
+    }
+  ],
+  "board": [],
+  "streets": [
+    {
+      "street": "preflop",
+      "pot_start": 0,
+      "actions": [
+        { "sequence": 1, "seat": 1, "address": "GASMALLBLINDFOLDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_sb", "amount": 1, "pot_after": 1 },
+        { "sequence": 2, "seat": 0, "address": "GABIGBLINDDEFENDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_bb", "amount": 2, "pot_after": 3 },
+        { "sequence": 3, "seat": 1, "address": "GASMALLBLINDFOLDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "fold", "amount": 0, "pot_after": 3 }
+      ]
+    }
+  ],
+  "showdown": {
+    "occurred": false,
+    "revealed_hands": []
+  },
+  "pots": [
+    {
+      "pot_index": 0,
+      "is_side_pot": false,
+      "total": 3,
+      "rake": 0,
+      "winners": [
+        {
+          "seat": 0,
+          "address": "GABIGBLINDDEFENDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "amount": 3
+        }
+      ]
+    }
+  ],
+  "verifiability": {
+    "deck_root": "0x77778888999900001111222233334444555566667777888899990000aaaabbbb",
+    "zk_proof_verified": true,
+    "settled_ledger": 204512
+  }
+}

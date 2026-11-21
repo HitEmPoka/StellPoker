@@ -1,5 +1,8 @@
 # MPC Committee Resilience
 
+> **Paging:** committee quorum loss is P0; a single node down is P1.
+> See [`incident-response.md`](incident-response.md).
+
 Covers two related pieces of committee hardening:
 
 - **5-node committee, N=5/threshold=3** (issue #95)

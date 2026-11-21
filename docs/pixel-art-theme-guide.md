@@ -2,6 +2,9 @@
 
 This guide covers everything you need to customize Stellar Poker's retro pixel-art theme. The theme is built entirely with CSS custom properties, utility classes, and pixel-art CSS techniques — no JavaScript theming library is required.
 
+For the formalized felt/deck contract, its JSON format, and a complete community
+theme example, see [Community Theme API](./community-themes.md).
+
 ---
 
 ## 1. CSS Variable Overrides
@@ -28,6 +31,11 @@ The entire color palette is defined as CSS custom properties in `app/src/app/glo
   --felt-dark: #1a5c2a;
   --felt-mid: #237a3a;
   --felt-light: #2d9648;
+  --felt-shadow: #0f3b1a;
+  --card-back-start: #1a3a5c;
+  --card-back-end: #0d2137;
+  --card-back-border: #2a5a8c;
+  --card-back-symbol: #3498db;
   --card-white: #fefefe;
   --card-shadow: #c0c0c0;
   --ui-panel: rgba(20, 12, 8, 0.85);
@@ -42,7 +50,8 @@ The entire color palette is defined as CSS custom properties in `app/src/app/glo
 | `--pixel-brown` / `--pixel-brown-dark` | `#8b6914` / `#6b4f12` | Borders and UI accents |
 | `--pixel-cream` | `#f5e6c8` | Text and panel backgrounds |
 | `--pixel-red` / `--pixel-gold` / `--pixel-blue` / `--pixel-green` | — | Button and accent colors |
-| `--felt-*` | Three green shades | Poker table felt radial gradient |
+| `--felt-*` | Three green shades + shadow | Poker table felt radial gradient |
+| `--card-back-*` | Blue gradient, border, symbol | Card deck backs |
 | `--card-white` / `--card-shadow` | `#fefefe` / `#c0c0c0` | Playing card faces |
 | `--ui-panel` | `rgba(20, 12, 8, 0.85)` | Semi-transparent overlays |
 | `--ui-border` | `#8b6914` | Modal and panel borders |
@@ -72,21 +81,21 @@ Card backs are rendered in `app/src/components/Card.tsx` in the `CardBack` sub-c
 
 Edit the `CardBack` component styles:
 
-**Change the gradient and border:**
-```tsx
-// Card.tsx — CardBack style prop
-const cardBackStyle: React.CSSProperties = {
-  background: 'linear-gradient(135deg, #2c1a0e 0%, #4a2c0a 50%, #2c1a0e 100%)',
-  border: '3px solid var(--pixel-gold)',
-  // ...
-};
+**Change the gradient and border (CSS variables, no code change):**
+```css
+:root {
+  --card-back-start: #2c1a0e;
+  --card-back-end: #4a2c0a;
+  --card-back-border: #f1c40f;
+  --card-back-symbol: #f1c40f;
+}
 ```
 
 **Replace the center logo:**
 ```tsx
-{/* Replace the "S" logo with a custom symbol */}
+{/* The default "S" is colored by --card-back-symbol. */}
 <span style={{
-  color: 'var(--pixel-gold)',
+  color: 'var(--card-back-symbol, #3498db)',
   fontSize: size === 'lg' ? '24px' : size === 'md' ? '18px' : '14px',
 }}>♠</span>
 ```
@@ -329,3 +338,57 @@ Use this checklist when creating a new theme:
 | `app/src/components/PlayerSeat.tsx` | Player seat with avatar and cards |
 | `app/public/cat_sprites/` | Cat PNG assets |
 | `app/public/music/` | Ambient music MP3 files |
+
+---
+
+## 9. Repaint Cost and Dark Themes (OLED)
+
+This section records the tradeoffs behind a darker, lower-power theme (#623).
+It is documentation only: no measurements were taken for it, and the code is
+unchanged.
+
+### Where repaint cost comes from
+
+- **Continuous animations.** `PixelWorld.tsx` runs an infinite `twinkle`
+  animation on every star and an infinite `cloudFloat2` on each cloud. Each one
+  repaints on every frame for as long as the page is open.
+- **Animated box-shadow.** The `seatPulse` keyframe in `globals.css` animates
+  `box-shadow` on the acting player's seat. Changing `box-shadow` forces a
+  repaint of the element and its surroundings, which costs more than animating
+  `transform` or `opacity`.
+- **Large bright areas.** The felt gradient, the pixel sky, and the card-face
+  gradient in `Card.tsx` cover most of the viewport, so they set most of the
+  panel's pixel luminance.
+
+### What a dark theme saves, and what it does not
+
+- On **OLED** panels, a pixel that is off uses no power, so power falls roughly
+  with the average luminance of the lit pixels. A darker sky and felt reduce it.
+- On **LCD** panels the backlight is always on, so a darker theme saves little
+  or nothing. The savings depend on the display, not the page.
+- Animations cost CPU and GPU time on any panel. A dark theme does not reduce
+  them.
+
+### Tradeoffs
+
+- **Readability.** Card faces need to stay light for contrast. Text on dark
+  backgrounds should meet WCAG AA contrast (4.5:1 for body text).
+- **Identity.** Much of the pixel-art palette (felt, chips, card backs) is
+  tuned for a light sky. A dark variant changes the mood, so it should be an
+  opt-in theme and not the default.
+- **Implementation cost.** A `<canvas>` renderer for cards would replace
+  working DOM components, lose text selection and accessibility semantics, and
+  need its own tests. A CSS-variable theme (section 1) gets most of the gain
+  without that cost.
+
+### Recommendation
+
+1. Ship the darker palette as a CSS-variable override (section 1), selected by
+   a `data-theme` attribute. No new rendering path is needed.
+2. Move `seatPulse` from `box-shadow` to a pseudo-element with `opacity`
+   animated, to avoid the repaint.
+3. Pause the infinite `twinkle` and `cloudFloat2` animations when the tab is
+   hidden or when `prefers-reduced-motion` is set.
+4. Before choosing a canvas renderer, measure with the browser's Performance
+   panel (Paint flashing and the Rendering tab) on a representative table. Only
+   proceed to canvas if paint time, not animation, is the measured bottleneck.

@@ -1,0 +1,131 @@
+name: Nightly Load Test
+
+on:
+  schedule:
+    # 02:00 UTC every day.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: "Virtual users"
+        default: "100"
+        required: false
+      duration:
+        description: "Test duration (k6 syntax, e.g. 3m)"
+        default: "3m"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  BASELINE_ARTIFACT: loadtest-baseline
+  REGRESSION_THRESHOLD_PCT: "10"
+
+jobs:
+  load-test:
+    name: Run k6 load test and compare against baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Start coordinator under test
+        working-directory: load-testing
+        run: |
+          docker compose up -d
+          # Give Prometheus and the app a moment to come up.
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:9090/-/ready >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "Prometheus never became ready" >&2
+          docker compose logs >&2
+          exit 1
+
+      - name: Run k6 benchmark
+        env:
+          BASE_URL: http://localhost:8080
+          VUS: ${{ github.event.inputs.vus || '100' }}
+          DURATION: ${{ github.event.inputs.duration || '3m' }}
+          TABLE_COUNT: "1000"
+        run: |
+          mkdir -p artifacts
+          k6 run \
+            --summary-export=artifacts/summary.json \
+            -e BASE_URL=$BASE_URL -e VUS=$VUS -e DURATION=$DURATION -e TABLE_COUNT=$TABLE_COUNT \
+            load-testing/k6/benchmark.js | tee artifacts/k6.log
+
+      - name: Fetch previous baseline
+        id: fetch-baseline
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          name: ${{ env.BASELINE_ARTIFACT }}
+          workflow: load-test-nightly.yml
+          branch: main
+          path: baseline/
+
+      - name: Compare against baseline
+        id: compare
+        if: steps.fetch-baseline.outcome == 'success'
+        run: |
+          python3 scripts/compare-loadtest-results.py \
+            --baseline baseline/summary.json \
+            --current artifacts/summary.json \
+            --threshold-pct ${{ env.REGRESSION_THRESHOLD_PCT }} \
+            --out artifacts/report.md
+
+      - name: Upload current run as new baseline
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BASELINE_ARTIFACT }}
+          path: artifacts/summary.json
+          retention-days: 90
+
+      - name: Archive full run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-run-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 30
+
+      - name: Open regression issue
+        if: failure() && steps.compare.conclusion == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = 'Nightly load test regressed beyond the configured threshold.';
+            try {
+              body = fs.readFileSync('artifacts/report.md', 'utf8');
+            } catch (e) {}
+            body += `\n\n[Workflow run](${process.env.RUN_URL})`;
+            const title = `Load-test regression — ${new Date().toISOString().slice(0,10)}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title,
+              body,
+              labels: ['testing', 'regression'],
+            });
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Tear down
+        if: always()
+        working-directory: load-testing
+        run: docker compose down --volumes

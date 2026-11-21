@@ -10,9 +10,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::cost::SessionCost;
 use crate::private_table::{self, DealPreparation, RevealPreparation, ShowdownPreparation};
 use crate::session::{self, MpcSessionState, SessionStatus};
-use crate::NodeState;
+use crate::{is_draining, NodeState};
 
 #[derive(Deserialize)]
 pub struct PrepareDealRequest {
@@ -65,6 +66,64 @@ pub struct PermLookupResponse {
 }
 
 #[derive(Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub draining: bool,
+    pub node_id: u32,
+}
+
+#[derive(Deserialize)]
+pub struct DrainRequest {
+    #[serde(default)]
+    pub draining: bool,
+}
+
+#[derive(Serialize)]
+pub struct DrainResponse {
+    pub draining: bool,
+}
+
+/// GET /health — includes drain state for coordinator heartbeats (#571).
+pub async fn get_health(State(state): State<NodeState>) -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        draining: is_draining(&state),
+        node_id: state.node_id,
+    })
+}
+
+/// POST /admin/drain — toggle graceful drain mode for planned maintenance.
+///
+/// Body: `{"draining": true|false}`. While draining, the node finishes
+/// in-flight sessions (status/proof/generate keep working) but refuses new
+/// ones (prepare-*, new session shares) with 503.
+pub async fn post_admin_drain(
+    State(state): State<NodeState>,
+    Json(req): Json<DrainRequest>,
+) -> Json<DrainResponse> {
+    use std::sync::atomic::Ordering;
+    state.draining.store(req.draining, Ordering::SeqCst);
+    if req.draining {
+        tracing::warn!("MPC Node {} entered DRAIN mode", state.node_id);
+    } else {
+        tracing::info!("MPC Node {} left DRAIN mode", state.node_id);
+    }
+    Json(DrainResponse {
+        draining: req.draining,
+    })
+}
+
+fn reject_if_draining(state: &NodeState) -> Result<(), (StatusCode, String)> {
+    if is_draining(state) {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "node is draining, refusing new sessions".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
 pub struct StatusResponse {
     pub session_id: String,
     pub status: String,
@@ -84,6 +143,7 @@ pub async fn post_prepare_deal(
     Path(table_id): Path<u32>,
     Json(req): Json<PrepareDealRequest>,
 ) -> Result<Json<DealPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut seen = HashSet::new();
     for player in &req.players {
         if player.trim().is_empty() {
@@ -119,6 +179,7 @@ pub async fn post_prepare_reveal(
     Path((table_id, phase)): Path<(u32, String)>,
     Json(req): Json<PrepareRevealRequest>,
 ) -> Result<Json<RevealPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut tables = state.tables.write().await;
     let prepared = private_table::prepare_reveal(
         table_id,
@@ -143,6 +204,7 @@ pub async fn post_prepare_showdown(
     Path(table_id): Path<u32>,
     Json(req): Json<PrepareShowdownRequest>,
 ) -> Result<Json<ShowdownPreparation>, (StatusCode, String)> {
+    reject_if_draining(&state)?;
     let mut tables = state.tables.write().await;
     let prepared = private_table::prepare_showdown(
         table_id,
@@ -297,6 +359,9 @@ pub async fn post_shares(
         if let Some(existing) = sessions.get(&session_id) {
             existing.clone()
         } else {
+            // New session while draining: refuse so the node can drain for
+            // planned maintenance. In-flight sessions (existing IDs) continue.
+            reject_if_draining(&state)?;
             // Reject new sessions once the node is saturated, to prevent DoS via
             // session flooding (issue #315). Existing sessions are never rejected.
             let max = state.limits.max_concurrent_sessions;
@@ -423,7 +488,12 @@ pub async fn post_generate(
     let profiling_enabled = state.profiling.is_enabled(&sid).await;
     let profile = profiling_enabled.then(|| state.profiling.clone());
 
-    tokio::spawn(async move {
+    // tokio::spawn drops task-locals, so carry the request's trace context
+    // into the background proof task explicitly (Issue #672).
+    let trace = crate::trace_context::current()
+        .unwrap_or_else(crate::trace_context::TraceContext::new_root);
+
+    let task = async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
         let proof_future = session::run_proof_generation(
             sid.clone(),
@@ -480,18 +550,25 @@ pub async fn post_generate(
                 }
                 session.proof_path = Some(proof_path);
                 session.public_inputs = Some(public_inputs);
+                session.bytes_out = proof_bytes.len() as u64;
                 session.status = SessionStatus::Complete;
                 finalized_sessions.write().await.insert(sid.clone());
                 metrics
                     .proofs_generated
                     .with_label_values(&[&circuit_label])
                     .inc();
+                let cost = session.cost_snapshot();
                 tracing::info!(
                     session_id = %sid,
                     phase = "complete",
                     node_id,
                     circuit = %circuit_label,
-                    "proof generation complete"
+                    status = %cost.status,
+                    cpu_seconds = cost.cpu_seconds,
+                    bytes_in = cost.bytes_in,
+                    bytes_out = cost.bytes_out,
+                    fragments = cost.fragments,
+                    "MPC session cost attribution"
                 );
             }
             Err(e) => {
@@ -500,16 +577,27 @@ pub async fn post_generate(
                     .with_label_values(&["proof_generation"])
                     .inc();
                 session.status = SessionStatus::Failed(e.clone());
+                let cost = session.cost_snapshot();
                 tracing::error!(
                     session_id = %sid,
                     phase = "proof_generation",
                     node_id,
                     error = %e,
-                    "proof generation failed"
+                    circuit = %cost.circuit_name,
+                    cpu_seconds = cost.cpu_seconds,
+                    bytes_in = cost.bytes_in,
+                    bytes_out = cost.bytes_out,
+                    "MPC session failed: {}",
+                    e
                 );
             }
         }
-    });
+    };
+    tokio::spawn(crate::trace_context::scope(
+        trace,
+        "mpc.proof_generation",
+        task,
+    ));
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -575,6 +663,35 @@ pub struct ProofResponse {
     pub public_inputs: Vec<String>,
 }
 
+/// POST /session/:id/profile
+///
+/// Enable on-demand CPU/memory profiling for a session (issue #244). Must be
+/// called before the session's proof generation starts.
+pub async fn post_enable_profiling(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> StatusCode {
+    state.profiling.enable(&session_id).await;
+    StatusCode::ACCEPTED
+}
+
+/// GET /session/:id/profile
+///
+/// Retrieve the resource profile collected for a session (issue #244).
+/// Returns `404` until the session has been enabled and has produced at
+/// least one profiled phase.
+pub async fn get_profile(
+    State(state): State<NodeState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<crate::profiling::SessionProfile>, StatusCode> {
+    state
+        .profiling
+        .get(&session_id)
+        .await
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
 /// Tests for #241 — coordinator replay protection on session initiation.
 #[cfg(test)]
 mod replay_protection_tests {
@@ -590,10 +707,12 @@ mod replay_protection_tests {
             tables: Arc::new(RwLock::new(HashMap::new())),
             party_config_path: "unused".to_string(),
             peer_http_endpoints: vec![],
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             limits: ResourceLimits::default(),
             metrics: NodeMetrics::new(),
             finalized_sessions: Arc::new(RwLock::new(HashSet::new())),
             seen_share_nonces: Arc::new(RwLock::new(HashMap::new())),
+            profiling: crate::profiling::ProfileRegistry::new(),
         }
     }
 

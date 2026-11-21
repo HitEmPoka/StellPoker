@@ -1,0 +1,63 @@
+name: Parallel Prove Verify Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: "Concurrent hands"
+        required: false
+        default: "20"
+      runs_per_circuit:
+        description: "Proofs per circuit"
+        required: false
+        default: "10"
+      max_p95_total_ms:
+        description: "Fail if worst p95 prove+verify exceeds this many ms (0 disables)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Prove+verify under concurrent hands
+    runs-on: [self-hosted, benchmarks]
+    timeout-minutes: 45
+    env:
+      CIRCUITS: ${{ vars.BENCH_CIRCUITS || 'circuits/deal_valid circuits/showdown_valid' }}
+      CONCURRENCY: ${{ inputs.concurrency }}
+      RUNS_PER_CIRCUIT: ${{ inputs.runs_per_circuit }}
+      MAX_P95_TOTAL_MS: ${{ inputs.max_p95_total_ms }}
+      OUTPUT_FILE: benchmark_data/parallel_prove_verify.json
+      REPORT_FILE: benchmark_data/parallel_prove_verify_report.md
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify benchmark toolchain
+        run: |
+          command -v bb
+          bb --version
+
+      - name: Run benchmark
+        run: python3 scripts/bench_parallel_prove_verify.py
+
+      - name: Publish report
+        if: always()
+        run: |
+          if [ -f benchmark_data/parallel_prove_verify_report.md ]; then
+            cat benchmark_data/parallel_prove_verify_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-prove-verify-${{ github.run_id }}
+          path: |
+            benchmark_data/parallel_prove_verify.json
+            benchmark_data/parallel_prove_verify_report.md
+          if-no-files-found: warn
+          retention-days: 90

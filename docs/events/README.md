@@ -11,6 +11,7 @@ One JSON Schema per event emitted by the poker-table contract, for indexers and 
 | `deal_committed` | name, table id | (hand number, commitments) |
 | `player_action` | name, table id, action type | (player, chips added) |
 | `board_revealed` | name, table id | (cards, deck indices) |
+| `rabbit_hunt` | name, table id | (hand number, cards, deck indices) of a board revealed after the hand ended without a showdown |
 | `phase_change` | name, table id | new phase |
 | `hand_settled` | name, table id | (winner, total pot, payouts) |
 | `fold_win` | name, table id | (winner, winnings) |

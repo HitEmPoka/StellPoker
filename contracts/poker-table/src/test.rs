@@ -239,6 +239,41 @@ mod test {
         assert_eq!(id2, 2);
     }
 
+    #[test]
+    fn test_export_table_state_versioned_snapshot() {
+        use soroban_sdk::testutils::Address as _;
+        use soroban_sdk::Vec as SdkVec;
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join_player(&s, table_id, &p1, 500);
+        join_player(&s, table_id, &p2, 700);
+        s.client.start_hand(&table_id);
+
+        let export = s.client.export_table_state(&table_id);
+        // Stable versioned format.
+        assert_eq!(export.version, crate::types::TABLE_EXPORT_VERSION);
+        assert_eq!(export.version, 1);
+        assert_eq!(export.table_id, table_id);
+        // Seated stacks, seats, phase, button and config.
+        assert_eq!(export.phase, GamePhase::Dealing);
+        assert_eq!(export.dealer_seat, 1);
+        assert_eq!(export.hand_number, 1);
+        assert_eq!(export.seats.len(), 2);
+        assert_eq!(export.seats.get(0).unwrap().address, p1);
+        assert_eq!(export.seats.get(0).unwrap().seat_index, 0);
+        assert_eq!(export.seats.get(0).unwrap().stack, 495); // 500 - sb 5
+        assert_eq!(export.seats.get(1).unwrap().address, p2);
+        assert_eq!(export.seats.get(1).unwrap().stack, 690); // 700 - bb 10
+        assert_eq!(export.pot, 15);
+        assert_eq!(export.board_cards, SdkVec::new(&s.env));
+        assert_eq!(export.config.max_players, 6);
+        let level = export.config.blinds_schedule.levels.get(0).unwrap();
+        assert_eq!(level.small_blind, 5);
+        assert_eq!(level.big_blind, 10);
+    }
+
     // ---------------------------------------------------------------------------
     // 2. Join table with buy-in
     // ---------------------------------------------------------------------------
@@ -1754,5 +1789,630 @@ mod test {
 
         assert_eq!(s.client.get_hand_history(&table_a, &0).len(), 2);
         assert_eq!(s.client.get_hand_history(&table_b, &0).len(), 1);
+    }
+
+    // ---------------------------------------------------------------------------
+    // All-in run-out (#855)
+    // ---------------------------------------------------------------------------
+
+    /// Committee reveal of the next street from fresh deck indices.
+    fn reveal_next_street(s: &TestSetup, table_id: u32) {
+        let table = s.client.get_table(&table_id);
+        let count = if table.phase == GamePhase::DealingFlop {
+            3
+        } else {
+            1
+        };
+        let first = table.dealt_indices.len();
+        let mut cards: Vec<u32> = Vec::new(&s.env);
+        let mut indices: Vec<u32> = Vec::new(&s.env);
+        for i in first..first + count {
+            cards.push_back(i);
+            indices.push_back(i);
+        }
+        let empty = soroban_sdk::Bytes::new(&s.env);
+        s.client
+            .reveal_board(&table_id, &s.committee, &cards, &indices, &empty, &empty);
+    }
+
+    /// Drive the hand to `Showdown`: on `shove_street` players with at most 200
+    /// behind go all in, everyone else calls or checks, and every street is
+    /// revealed. Fails if a betting round opens after the shove round.
+    /// Returns how many streets were revealed.
+    fn play_to_showdown(
+        s: &TestSetup,
+        table_id: u32,
+        seqs: &mut [u32; 6],
+        shove_street: Option<GamePhase>,
+    ) -> u32 {
+        let (mut shoving, mut shoved, mut reveals) = (false, false, 0);
+        loop {
+            let table = s.client.get_table(&table_id);
+            match table.phase {
+                GamePhase::Preflop | GamePhase::Flop | GamePhase::Turn | GamePhase::River => {
+                    assert!(!shoved, "{:?} opened betting after the all-in", table.phase);
+                    shoving = shove_street.as_ref() == Some(&table.phase);
+                    let mut max_bet = 0;
+                    for p in table.players.iter() {
+                        max_bet = max_bet.max(p.bet_this_round);
+                    }
+                    let seat = table.current_turn;
+                    let p = table.players.get(seat).unwrap();
+                    let action = if shoving && p.stack <= 200 {
+                        Action::AllIn
+                    } else if p.bet_this_round < max_bet {
+                        Action::Call
+                    } else {
+                        Action::Check
+                    };
+                    seqs[seat as usize] += 1;
+                    s.client
+                        .player_action(&table_id, &p.address, &seqs[seat as usize], &action);
+                }
+                GamePhase::DealingFlop | GamePhase::DealingTurn | GamePhase::DealingRiver => {
+                    shoved |= shoving;
+                    reveal_next_street(s, table_id);
+                    reveals += 1;
+                }
+                GamePhase::Showdown => return reveals,
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+    }
+
+    /// Three-handed: the two 200-chip stacks shove on `shove_street` and the
+    /// 1,000-chip stack calls. No one can bet after that, so the remaining
+    /// streets are only revealed, each with its own reveal proof.
+    fn assert_all_in_runs_out(shove_street: GamePhase) {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [1_000, 200, 200] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 3);
+
+        let reveals = play_to_showdown(&s, table_id, &mut [0; 6], Some(shove_street));
+
+        let table = s.client.get_table(&table_id);
+        assert_eq!(reveals, 3, "flop, turn and river each need a reveal");
+        assert_eq!(table.board_cards.len(), 5);
+        assert_eq!(table.players.iter().filter(|p| p.all_in).count(), 2);
+        assert_eq!(table.action_deadline, 0, "no player timer left running");
+    }
+
+    #[test]
+    fn test_all_in_preflop_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Preflop);
+    }
+
+    #[test]
+    fn test_all_in_on_flop_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Flop);
+    }
+
+    #[test]
+    fn test_all_in_on_turn_runs_out_the_board() {
+        assert_all_in_runs_out(GamePhase::Turn);
+    }
+
+    #[test]
+    fn test_deal_runs_out_the_board_when_blinds_leave_no_one_to_act() {
+        let s = setup();
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 0);
+        let table_id = s.client.create_table(&s.admin, &config);
+        // Blinds 100/200. Seat 0 is the big blind and all in for 100; seat 1
+        // (button, small blind 100) has already matched it.
+        join_player(&s, table_id, &Address::generate(&s.env), 100);
+        join_player(&s, table_id, &Address::generate(&s.env), 1_000);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::DealingFlop);
+
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+        assert_eq!(s.client.get_table(&table_id).board_cards.len(), 5);
+    }
+
+    #[test]
+    fn test_deal_passes_the_turn_past_an_all_in_big_blind() {
+        let s = setup();
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 0);
+        let table_id = s.client.create_table(&s.admin, &config);
+        // Blinds 100/200. Seat 0 is the big blind, all in for 150: more than
+        // the small blind's 100, so seat 1 still has to call or fold.
+        join_player(&s, table_id, &Address::generate(&s.env), 150);
+        let small_blind = Address::generate(&s.env);
+        join_player(&s, table_id, &small_blind, 1_000);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::Preflop);
+        assert_eq!(table.current_turn, 1);
+        assert!(table.action_deadline > 0);
+
+        s.client
+            .player_action(&table_id, &small_blind, &1, &Action::Call);
+        assert_eq!(
+            play_to_showdown(&s, table_id, &mut [0, 1, 0, 0, 0, 0], None),
+            3
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Seven-deuce bounty (#856)
+    // ---------------------------------------------------------------------------
+
+    // Card values are `suit * 13 + rank`, rank 0 = deuce.
+    const SEVEN_CLUBS: u32 = 5;
+    const DEUCE_CLUBS: u32 = 0;
+    const DEUCE_DIAMONDS: u32 = 13;
+    const KING_SPADES: u32 = 50;
+    const ACE_SPADES: u32 = 51;
+
+    /// Write `value` into BN254 field `field_index` of a proof's public inputs.
+    fn write_field(bytes: &mut soroban_sdk::Bytes, field_index: u32, value: u32) {
+        let start = field_index * 32 + 28;
+        for (i, b) in value.to_be_bytes().iter().enumerate() {
+            bytes.set(start + i as u32, *b);
+        }
+    }
+
+    /// Showdown arguments in which seat `winner` (plus every seat in
+    /// `tie_mask`) wins, with `holes[seat]` as each seat's proved hole cards.
+    fn showdown_inputs(
+        s: &TestSetup,
+        winner: u32,
+        tie_mask: u32,
+        holes: &[(u32, u32)],
+    ) -> (
+        Vec<(u32, u32)>,
+        Vec<(BytesN<32>, BytesN<32>)>,
+        soroban_sdk::Bytes,
+    ) {
+        let mut public_inputs = soroban_sdk::Bytes::new(&s.env);
+        for _ in 0..(27 * 32) {
+            public_inputs.push_back(0);
+        }
+        let mut hole_cards: Vec<(u32, u32)> = Vec::new(&s.env);
+        let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&s.env);
+        for (seat, &(c1, c2)) in holes.iter().enumerate() {
+            write_field(&mut public_inputs, 13 + seat as u32, c1);
+            write_field(&mut public_inputs, 19 + seat as u32, c2);
+            hole_cards.push_back((c1, c2));
+            let salt = BytesN::from_array(&s.env, &[0u8; 32]);
+            salts.push_back((salt.clone(), salt));
+        }
+        write_field(&mut public_inputs, 25, winner);
+        write_field(&mut public_inputs, 26, tie_mask);
+        (hole_cards, salts, public_inputs)
+    }
+
+    /// Submit a committee showdown built by [`showdown_inputs`].
+    fn mock_showdown(
+        s: &TestSetup,
+        table_id: u32,
+        winner: u32,
+        tie_mask: u32,
+        holes: &[(u32, u32)],
+    ) {
+        let (hole_cards, salts, public_inputs) = showdown_inputs(s, winner, tie_mask, holes);
+        s.client.submit_showdown(
+            &table_id,
+            &s.committee,
+            &hole_cards,
+            &salts,
+            &soroban_sdk::Bytes::new(&s.env),
+            &public_inputs,
+            &Vec::new(&s.env),
+        );
+    }
+
+    /// Heads-up table (blinds 100/200, 5% rake) with `bounty` funded by the
+    /// admin and a hand checked down to the showdown.
+    fn bounty_hand_at_showdown(s: &TestSetup, bounty: i128) -> u32 {
+        let config = rake_config(&s.env, &s.token.address, &s.committee, &s.verifier, 500);
+        let table_id = s.client.create_table(&s.admin, &config);
+        for _ in 0..2 {
+            join_player(s, table_id, &Address::generate(&s.env), 1_000);
+        }
+        s.token_admin_client.mint(&s.admin, &bounty);
+        assert_eq!(s.client.fund_seven_deuce_bounty(&table_id, &bounty), bounty);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(s, table_id, 2);
+        play_to_showdown(s, table_id, &mut [0; 6], None);
+        table_id
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_paid_to_outright_winner_and_not_raked() {
+        let s = setup();
+        let table_id = bounty_hand_at_showdown(&s, 300);
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+        assert_eq!(s.token.balance(&s.admin), 0);
+
+        let before = s.client.get_table(&table_id);
+        let stack = before.players.get(0).unwrap().stack;
+        mock_showdown(
+            &s,
+            table_id,
+            0,
+            0,
+            &[(SEVEN_CLUBS, DEUCE_DIAMONDS), (ACE_SPADES, KING_SPADES)],
+        );
+
+        let after = s.client.get_table(&table_id);
+        let rake = after.rake_balance + after.jackpot_balance;
+        assert_eq!(
+            rake,
+            before.pot * 500 / 10_000,
+            "rake comes from the pot only"
+        );
+        assert_eq!(
+            after.players.get(0).unwrap().stack,
+            stack + before.pot - rake + 300
+        );
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_needs_an_outright_offsuit_seven_deuce_win() {
+        let seven_deuce = (SEVEN_CLUBS, DEUCE_DIAMONDS);
+        let ace_king = (ACE_SPADES, KING_SPADES);
+        // (winner, tie mask, hole cards by seat)
+        let cases = [
+            (0, 0, [(SEVEN_CLUBS, DEUCE_CLUBS), ace_king]), // suited
+            (1, 0, [seven_deuce, ace_king]),                // 7-2 loses
+            (0, 0b10, [seven_deuce, ace_king]),             // 7-2 only chops
+        ];
+        for (winner, tie_mask, holes) in cases {
+            let s = setup();
+            let table_id = bounty_hand_at_showdown(&s, 300);
+            mock_showdown(&s, table_id, winner, tie_mask, &holes);
+            assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+        }
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_not_paid_on_a_fold_win() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+
+        play_fold_hand(&s, table_id);
+
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+    }
+
+    #[test]
+    fn test_seven_deuce_bounty_cannot_be_claimed_twice_for_one_hand() {
+        let s = setup();
+        let table_id = bounty_hand_at_showdown(&s, 300);
+        let holes = [(SEVEN_CLUBS, DEUCE_DIAMONDS), (ACE_SPADES, KING_SPADES)];
+        mock_showdown(&s, table_id, 0, 0, &holes);
+
+        // Refund the bounty before the next hand and replay the showdown.
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+        let (hole_cards, salts, public_inputs) = showdown_inputs(&s, 0, 0, &holes);
+        assert_eq!(
+            s.client.try_submit_showdown(
+                &table_id,
+                &s.committee,
+                &hole_cards,
+                &salts,
+                &soroban_sdk::Bytes::new(&s.env),
+                &public_inputs,
+                &Vec::new(&s.env),
+            ),
+            Err(Ok(PokerTableError::NotInShowdownPhase))
+        );
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 300);
+    }
+
+    #[test]
+    fn test_fund_seven_deuce_bounty_rejects_non_positive_amounts() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for amount in [0, -1] {
+            assert_eq!(
+                s.client.try_fund_seven_deuce_bounty(&table_id, &amount),
+                Err(Ok(PokerTableError::InvalidBountyAmount))
+            );
+        }
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
+
+    #[test]
+    fn test_finalize_sunset_returns_unclaimed_bounty_to_admin() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        s.token_admin_client.mint(&s.admin, &300);
+        s.client.fund_seven_deuce_bounty(&table_id, &300);
+        assert_eq!(s.token.balance(&s.admin), 0);
+
+        s.client.finalize_sunset(&table_id);
+
+        assert_eq!(s.token.balance(&s.admin), 300);
+        assert_eq!(s.client.get_seven_deuce_bounty(&table_id), 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Bomb pots (#857)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_bomb_pot_collects_antes_and_skips_preflop() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for _ in 0..3 {
+            join_player(&s, table_id, &Address::generate(&s.env), 500);
+        }
+        s.client.configure_bomb_pot(&table_id, &2, &50);
+        let mut seqs = [0u32; 6];
+
+        // Hand 1 is a normal hand: blinds 5/10 and preflop betting.
+        s.client.start_hand(&table_id);
+        assert_eq!(s.client.get_table(&table_id).pot, 15);
+        commit_mock_deal(&s, table_id, 3);
+        for _ in 0..2 {
+            let table = s.client.get_table(&table_id);
+            assert_eq!(table.phase, GamePhase::Preflop);
+            let seat = table.current_turn;
+            seqs[seat as usize] += 1;
+            let folder = table.players.get(seat).unwrap().address;
+            s.client
+                .player_action(&table_id, &folder, &seqs[seat as usize], &Action::Fold);
+        }
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
+
+        // Hand 2 is a bomb pot: three antes, no blinds, no preflop betting.
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.pot, 150);
+        for p in table.players.iter() {
+            assert_eq!(p.committed, 50);
+            assert_eq!(p.bet_this_round, 0);
+        }
+        commit_mock_deal(&s, table_id, 3);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::DealingFlop);
+        let seat = table.current_turn as usize;
+        assert_eq!(
+            s.client.try_player_action(
+                &table_id,
+                &table.players.get(seat as u32).unwrap().address,
+                &(seqs[seat] + 1),
+                &Action::Check
+            ),
+            Err(Ok(PokerTableError::NotInBettingPhase))
+        );
+
+        reveal_next_street(&s, table_id);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Flop);
+    }
+
+    #[test]
+    fn test_bomb_pot_side_pots_add_up_to_the_antes() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [500, 500, 100] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+
+        // Seat 2 can only ante 100 of the 150 and is all in.
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.pot, 400);
+        assert!(table.players.get(2).unwrap().all_in);
+        commit_mock_deal(&s, table_id, 3);
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+        mock_showdown(
+            &s,
+            table_id,
+            2,
+            0,
+            &[
+                (ACE_SPADES, KING_SPADES),
+                (SEVEN_CLUBS, DEUCE_CLUBS),
+                (40, 41),
+            ],
+        );
+
+        // Main pot: 3 x 100 to seat 2. Side pot: 2 x 50 to the next best seat.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.side_pots.len(), 2);
+        assert_eq!(table.side_pots.get(0).unwrap().amount, 300);
+        assert_eq!(table.side_pots.get(1).unwrap().amount, 100);
+        assert_eq!(table.players.get(2).unwrap().stack, 300);
+    }
+
+    #[test]
+    fn test_bomb_pot_starts_when_the_ante_leaves_one_player_with_chips() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 100);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+
+        // Seat 0 is all in on the ante, so seat 1 has no one to bet against.
+        s.client.start_hand(&table_id);
+        assert_eq!(s.client.get_table(&table_id).pot, 250);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(play_to_showdown(&s, table_id, &mut [0; 6], None), 3);
+    }
+
+    #[test]
+    fn test_bomb_pot_ante_of_a_whole_stack_is_all_in_and_wins_the_main_pot() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for buy_in in [500, 500, 150] {
+            join_player(&s, table_id, &Address::generate(&s.env), buy_in);
+        }
+        s.client.configure_bomb_pot(&table_id, &1, &150);
+        s.client.start_hand(&table_id);
+        assert!(s.client.get_table(&table_id).players.get(2).unwrap().all_in);
+        commit_mock_deal(&s, table_id, 3);
+        reveal_next_street(&s, table_id);
+
+        // The two players with chips put 100 more in on the flop.
+        let mut seqs = [0u32; 6];
+        for action in [Action::Bet(100), Action::Call] {
+            let table = s.client.get_table(&table_id);
+            let seat = table.current_turn;
+            seqs[seat as usize] += 1;
+            let player = table.players.get(seat).unwrap().address;
+            s.client
+                .player_action(&table_id, &player, &seqs[seat as usize], &action);
+        }
+        play_to_showdown(&s, table_id, &mut seqs, None);
+        mock_showdown(
+            &s,
+            table_id,
+            2,
+            0,
+            &[
+                (ACE_SPADES, KING_SPADES),
+                (SEVEN_CLUBS, DEUCE_CLUBS),
+                (40, 41),
+            ],
+        );
+
+        // Seat 2 wins the 3 x 150 main pot; the 2 x 100 side pot is not its.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.players.get(2).unwrap().stack, 450);
+    }
+
+    #[test]
+    fn test_configure_bomb_pot_validates_and_waits_for_the_hand_to_end() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        assert_eq!(
+            s.client.try_configure_bomb_pot(&table_id, &3, &0),
+            Err(Ok(PokerTableError::InvalidBombPotConfig))
+        );
+        assert_eq!(s.client.get_bomb_pot_config(&table_id), (0, 0));
+        s.client.configure_bomb_pot(&table_id, &3, &25);
+        assert_eq!(s.client.get_bomb_pot_config(&table_id), (3, 25));
+
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.start_hand(&table_id);
+        assert_eq!(
+            s.client.try_configure_bomb_pot(&table_id, &0, &0),
+            Err(Ok(PokerTableError::HandAlreadyInProgress))
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Rabbit hunt (#858)
+    // ---------------------------------------------------------------------------
+
+    /// Committee rabbit hunt of the given deck indices (card value = index).
+    fn try_rabbit_hunt(
+        s: &TestSetup,
+        table_id: u32,
+        deck_indices: &[u32],
+    ) -> Result<(), PokerTableError> {
+        let mut cards: Vec<u32> = Vec::new(&s.env);
+        for &i in deck_indices {
+            cards.push_back(i);
+        }
+        let empty = soroban_sdk::Bytes::new(&s.env);
+        match s
+            .client
+            .try_rabbit_hunt(&table_id, &s.committee, &cards, &cards, &empty, &empty)
+        {
+            Ok(_) => Ok(()),
+            Err(Ok(e)) => Err(e),
+            Err(Err(e)) => panic!("rabbit_hunt failed to invoke: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_rabbit_hunt_reveals_the_rest_of_the_board_after_a_fold() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        // Preflop fold: hole cards used deck indices 0..4, no board.
+        play_fold_hand(&s, table_id);
+        let settled = s.client.get_table(&table_id);
+
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6, 7, 8, 9]),
+            Err(PokerTableError::WrongCardCount)
+        );
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[4, 5, 6]), Ok(()));
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[8]),
+            Err(PokerTableError::InvalidRabbitHuntIndices),
+            "the turn card comes before the river card"
+        );
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[0]),
+            Err(PokerTableError::InvalidRabbitHuntIndices),
+            "hole cards are never revealed"
+        );
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[7]), Ok(()));
+        assert_eq!(try_rabbit_hunt(&s, table_id, &[8]), Ok(()));
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[9]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "five board cards at most"
+        );
+
+        // The settled hand and the next one are untouched.
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.board_cards, settled.board_cards);
+        assert_eq!(table.dealt_indices, settled.dealt_indices);
+        let record = s.client.get_hand(&table_id, &table.hand_number).unwrap();
+        assert_eq!(record.board.len(), 0);
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.board_cards.len(), 0);
+        assert_eq!(table.dealt_indices.len(), 0);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6]),
+            Err(PokerTableError::RabbitHuntNotAvailable)
+        );
+    }
+
+    #[test]
+    fn test_rabbit_hunt_only_after_a_hand_settles_without_showdown() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[0, 1, 2]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "no hand played yet"
+        );
+
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[4, 5, 6]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "hand still live"
+        );
+
+        play_to_showdown(&s, table_id, &mut [0; 6], None);
+        mock_showdown(
+            &s,
+            table_id,
+            0,
+            0,
+            &[(ACE_SPADES, KING_SPADES), (SEVEN_CLUBS, DEUCE_CLUBS)],
+        );
+        assert_eq!(
+            try_rabbit_hunt(&s, table_id, &[9]),
+            Err(PokerTableError::RabbitHuntNotAvailable),
+            "showdown hands have a full board"
+        );
     }
 }

@@ -1,0 +1,39 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-11-20T00:00:00Z",
+  "policy": {
+    "auto_quarantine_threshold": 1,
+    "dequarantine_consecutive_passes": 10,
+    "max_quarantined_ratio": 0.05
+  },
+  "quarantined_tests": [
+    {
+      "id": "tests.test_mpc.test_peer_heartbeat_timeout",
+      "file": "tests/test_mpc.py",
+      "test_name": "test_peer_heartbeat_timeout",
+      "quarantined_at": "2026-10-20T00:00:00Z",
+      "reason": "Rerun-only failure detected across multiple runs",
+      "flake_rate": 0.5,
+      "errors": [
+        "ConnectionResetError: Peer 2 heartbeat timed out"
+      ],
+      "issue_url": "https://github.com/HitEmPoka/StellPoker/issues/763",
+      "related_issues": [
+        "https://github.com/HitEmPoka/StellPoker/issues/764",
+        "https://github.com/HitEmPoka/StellPoker/issues/765",
+        "https://github.com/HitEmPoka/StellPoker/issues/766",
+        "https://github.com/HitEmPoka/StellPoker/issues/776",
+        "https://github.com/HitEmPoka/StellPoker/issues/778",
+        "https://github.com/HitEmPoka/StellPoker/issues/779",
+        "https://github.com/HitEmPoka/StellPoker/issues/807",
+        "https://github.com/HitEmPoka/StellPoker/issues/835",
+        "https://github.com/HitEmPoka/StellPoker/issues/838",
+        "https://github.com/HitEmPoka/StellPoker/issues/839"
+      ],
+      "consecutive_passes": 10,
+      "status": "dequarantined",
+      "dequarantined_at": "2026-11-19T18:51:06Z",
+      "fix_commit_notes": "Root cause: test_peer_heartbeat_timeout read the wall clock (time.time()) and used time.sleep() margins to judge timeout \u2014 a scheduler stall on a loaded CI runner could push elapsed time past or below the timeout boundary, causing a 50% flake rate (issues #776, #778, #779 each caught a re-detection). Fix: MockPeer now accepts an injectable clock parameter (default time.monotonic); tests use FakeClock, a manually-advanced, thread-safe clock that only moves when the test calls clock.advance(). The boundary assertion verifies strict greater-than (>) semantics at exactly the timeout value and one step past it. test_peer_heartbeat_timeout_is_deterministic repeats the scenario 200 times in a single test run, making any residual timing dependency immediately visible. reset_heartbeat sets is_alive=True under the lock to close the bare-attribute-write race on the recovery path. PR #845 merged 2026-11-19; entry retained as a dequarantined audit record with 10 consecutive clean passes. Follow-up (#807, #835, #838, #839): the boundary assertion advanced the FakeClock by 0.3, which is not binary-representable, so (start + 0.3) - start rounded above or below the timeout depending on the start value (e.g. any start in 200..249 gave elapsed > 0.3). The test now uses binary-exact durations (HEARTBEAT_TIMEOUT=0.25, HEARTBEAT_STEP=0.125) and test_peer_heartbeat_timeout_boundary_independent_of_clock_start checks the boundary across several clock start values."
+    }
+  ]
+}

@@ -15,6 +15,8 @@ members = [
     "contracts/rakeback-rewards",
     "contracts/hand-verifier",
     "contracts/token-gated-table",
+    "contracts/protocol-treasury",
+    "contracts/governance",
     "stellar-zk-cards",
     "services/coordinator",
     "services/node",

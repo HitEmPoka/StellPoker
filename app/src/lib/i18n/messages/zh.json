@@ -1,0 +1,201 @@
+{
+  "app": {
+    "title": "Poker on Stellar",
+    "back": "← 返回",
+    "loading": "加载中…"
+  },
+  "nav": {
+    "history": "历史牌局",
+    "keys": "快捷键 [?]",
+    "chat": "聊天",
+    "tables": "牌桌列表",
+    "stats": "战绩统计",
+    "language": "语言"
+  },
+  "table": {
+    "title": "牌桌 #{id}",
+    "hand": "第 #{n} 手",
+    "waitingToJoin": "等待加入...",
+    "connectWallet": "连接钱包",
+    "emptySeat": "空座",
+    "mpcStatus": "MPC: 3/3 节点 | TACEO CO-NOIR REP3",
+    "viewTx": "查看交易 ↗",
+    "explorer": "区块链浏览器 ↗",
+    "joinTable": "加入牌桌"
+  },
+  "seat": {
+    "you": "— 你 —",
+    "aiBot": "— AI 机器人 —",
+    "yourTurn": "▼ 轮到你行动 ▼",
+    "theirTurn": "▼ 对手行动中 ▼",
+    "winner": "★ 胜者 ★",
+    "chips": "筹码",
+    "bet": "下注",
+    "folded": "弃牌",
+    "allIn": "全押！",
+    "editAlias": "修改昵称",
+    "edit": "[修改]",
+    "dealer": "[D]",
+    "editAvatar": "自定义头像"
+  },
+  "stats": {
+    "title": "链上战绩统计",
+    "global": "全局",
+    "handsPlayed": "已玩手牌",
+    "biggestPot": "最大底池",
+    "playersJoined": "参与玩家",
+    "leaderboard": "排行榜",
+    "ratingLeaderboard": "ELO天梯榜",
+    "noHands": "暂无牌局记录。",
+    "player": "玩家",
+    "handsWon": "胜局数",
+    "rating": "天梯分",
+    "rank": "排名",
+    "cachedAt": "缓存于 {time} · 每30秒自动刷新",
+    "vpip": "入池率(VPIP)",
+    "pfr": "翻前加注(PFR)",
+    "aggression": "激进度(AF)",
+    "hands": "手牌数",
+    "loadingStats": "正在加载战绩…",
+    "minHandsNote": "排行榜要求达到最低链上手牌数。"
+  },
+  "minimap": {
+    "title": "牌桌概览",
+    "collapse": "隐藏",
+    "expand": "地图",
+    "seats": "{seated}/{max} 席位",
+    "chips": "{chips} 筹码",
+    "phase": "阶段: {phase}",
+    "current": "你在此桌",
+    "empty": "未找到牌桌",
+    "refresh": "刷新"
+  },
+  "home": {
+    "connect": "连接钱包",
+    "createTable": "创建牌桌",
+    "joinOpen": "加入公开牌桌",
+    "playSolo": "人机单练 (AI)",
+    "viewStats": "查看战绩"
+  },
+  "actions": {
+    "fold": "弃牌",
+    "check": "过牌",
+    "call": "跟注",
+    "bet": "下注",
+    "raise": "加注",
+    "allIn": "全押",
+    "deal": "发牌"
+  },
+  "settings": {
+    "volume": "音量",
+    "language": "语言",
+    "english": "English",
+    "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
+    "logout": "断开连接",
+    "autoDetect": "自动 (浏览器)"
+  },
+  "dealer": {
+    "shuffling": "洗牌并生成发牌证明中... (~30-60秒){timer}",
+    "revealProof": "生成开牌证明中... (~20-40秒){timer}",
+    "showdown": "验证摊牌中 — 需要2-4分钟，请耐心等待。{timer}",
+    "oneMoment": "请稍候...{timer}",
+    "dealingFlop": "下注轮结束，荷官正在翻出翻牌...",
+    "dealingTurn": "下注轮结束，荷官正在翻出转牌...",
+    "dealingRiver": "下注轮结束，荷官正在翻出河牌...",
+    "resolvingShowdown": "下注完成，荷官正在进行摊牌结算...",
+    "joinPrompt": "当前链上席位为 {seats}。点击「加入牌桌」以坐下。",
+    "soloStart": "人机对战使用模拟筹码(各100)。点击「发牌」开始。",
+    "headsUpWait": "单挑模式需2位玩家入座。请分享牌桌ID并等待对手加入。",
+    "headsUpReady": "单挑准备就绪。点击「发牌」。",
+    "multiWait": "3-6人局需要至少3位玩家加入。",
+    "multiReady": "多人桌准备就绪。点击「发牌」。",
+    "dealing": "正在发牌。",
+    "preflop": "翻前轮进行中。请下注，荷官将翻开翻牌。",
+    "flop": "翻牌已出。请下注，荷官将翻开转牌。",
+    "turn": "转牌已出。请下注，荷官将翻开河牌。",
+    "river": "河牌已出。最后下注轮，荷官将开始摊牌。",
+    "showdownLive": "摊牌进行中。",
+    "youWin": "牌局结束。你赢了！",
+    "aiWins": "牌局结束。AI获胜！",
+    "winner": "牌局结束。胜者: {addr}。",
+    "handComplete": "牌局结束。准备好后开始下一手。",
+    "ready": "准备就绪。"
+  },
+  "common": {
+    "cancel": "取消",
+    "submitting": "提交中…"
+  },
+  "avatar": {
+    "title": "自定义头像",
+    "connectWallet": "请先连接钱包。",
+    "resetDesc": "清除自定义头像并恢复默认像素Identicon。",
+    "rawSvg": "SVG代码",
+    "chooseTemplate": "选择模板",
+    "nftContract": "NFT合约地址",
+    "nftTokenId": "NFT代币ID",
+    "nftNote": "仅接受管理员白名单合约中的NFT。",
+    "saveSvg": "保存SVG头像",
+    "linkNft": "关联NFT",
+    "resetConfirm": "重置为默认IDENTICON"
+  },
+  "diagnostics": {
+    "title": "交易深度诊断",
+    "simulationFailed": "交易预模拟失败",
+    "executionFailed": "交易执行失败",
+    "viewDocs": "查看Stellar官方文档 ↗",
+    "simulationLogs": "模拟日志",
+    "hideLogs": "隐藏日志",
+    "commonCauses": "常见原因",
+    "suggestedAction": "建议操作",
+    "insufficient_balance": {
+      "title": "余额不足 (Insufficient Balance)",
+      "description": "钱包余额不足以支付带入筹码及网络储备金。",
+      "cause": "账户可用XLM低于带入金额与Stellar基础储备金(Base Reserve)之和。",
+      "action": "请向钱包充值更多XLM以满足牌桌带入和最低余额要求。"
+    },
+    "timeout": {
+      "title": "交易超时 (Timeout)",
+      "description": "交易或RPC请求在获得网络确认前超时。",
+      "cause": "网络拥堵或RPC节点延迟导致请求超过等待窗口。",
+      "action": "请检查网络连接后重试，资金未被扣除。"
+    },
+    "seq": {
+      "title": "序号不匹配 (Sequence Mismatch)",
+      "description": "交易序号与链上账户当前序号不一致。",
+      "cause": "该账户同时发起了其他并发交易，导致序号递增。",
+      "action": "请刷新牌桌以获取最新账户序号后重试。"
+    },
+    "expired": {
+      "title": "交易已过期 (Expired)",
+      "description": "交易在被区块收录前已超过最大时间或账本序号限制。",
+      "cause": "交易在账本有效时间窗口内未能及时完成上链。",
+      "action": "请重新发起具有当前账本有效期的交易。"
+    },
+    "budget": {
+      "title": "资源预算超限 (Budget Exceeded)",
+      "description": "合约调用超过了Soroban的CPU或内存指令预算配额。",
+      "cause": "智能合约计算复杂度或存储读写消耗超出了系统预设上限。",
+      "action": "请检查调用参数或等待网络预算调整后重试。"
+    },
+    "unknown": {
+      "title": "交易错误",
+      "description": "发生未预期的交易失败。",
+      "cause": "执行过程中发生未知错误或合约崩溃(Panic)。",
+      "action": "请查看下方模拟日志或稍后重试。"
+    }
+  },
+  "offline": {
+    "cachedView": "缓存视图 (只读模式)",
+    "disconnected": "钱包未连接",
+    "lastUpdated": "最后更新: {time}",
+    "stale": "已过期",
+    "reconnect": "重新连接钱包",
+    "viewingCached": "钱包已断开，正在查看离线缓存的牌桌数据。",
+    "offlineNotice": "离线模式: 显示缓存的大厅状态。"
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "app": {
+    "title": "Poker on Stellar",
+    "back": "← Zurück",
+    "loading": "Wird geladen…"
+  },
+  "nav": {
+    "history": "VERLAUF",
+    "keys": "TASTEN [?]",
+    "chat": "CHAT",
+    "tables": "TISCHE",
+    "stats": "STATISTIKEN",
+    "language": "SPRACHE"
+  },
+  "table": {
+    "title": "TISCH #{id}",
+    "hand": "HAND #{n}",
+    "waitingToJoin": "WARTE AUF BEITRITT...",
+    "connectWallet": "WALLET VERBINDEN",
+    "emptySeat": "FREIER PLATZ",
+    "mpcStatus": "MPC: 3/3 KNOTEN | TACEO CO-NOIR REP3",
+    "viewTx": "TX ANSEHEN ↗",
+    "explorer": "EXPLORER ↗",
+    "joinTable": "TISCH BEITRETEN"
+  },
+  "seat": {
+    "you": "— DU —",
+    "aiBot": "— KI-BOT —",
+    "yourTurn": "▼ DU BIST DRAN ▼",
+    "theirTurn": "▼ GEGNER AM ZUG ▼",
+    "winner": "★ GEWINNER ★",
+    "chips": "CHIPS",
+    "bet": "EINSATZ",
+    "folded": "GEPASST",
+    "allIn": "ALL-IN!",
+    "editAlias": "Alias ändern",
+    "edit": "[BEARBEITEN]",
+    "dealer": "[D]",
+    "editAvatar": "Klicken, um Avatar anzupassen"
+  },
+  "stats": {
+    "title": "Onchain-Statistiken",
+    "global": "Global",
+    "handsPlayed": "Gespielte Hände",
+    "biggestPot": "Größter Pot",
+    "playersJoined": "Beigetretene Spieler",
+    "leaderboard": "Bestenliste",
+    "ratingLeaderboard": "ELO-Rangliste",
+    "noHands": "Noch keine Hände gespielt.",
+    "player": "Spieler",
+    "handsWon": "Gewonnene Hände",
+    "rating": "Wertung",
+    "rank": "Rang",
+    "cachedAt": "Gespeichert um {time} · aktualisiert alle 30s",
+    "vpip": "VPIP",
+    "pfr": "PFR",
+    "aggression": "AF",
+    "hands": "Hände",
+    "loadingStats": "Lade Statistiken…",
+    "minHandsNote": "Für die Bestenliste ist eine Mindestanzahl an Onchain-Händen erforderlich."
+  },
+  "minimap": {
+    "title": "TISCHÜBERSICHT",
+    "collapse": "AUSBLENDEN",
+    "expand": "KARTE",
+    "seats": "{seated}/{max} Plätze",
+    "chips": "{chips} Chips",
+    "phase": "Phase: {phase}",
+    "current": "DU BIST HIER",
+    "empty": "Keine Tische gefunden",
+    "refresh": "AKTUALISIEREN"
+  },
+  "home": {
+    "connect": "WALLET VERBINDEN",
+    "createTable": "TISCH ERSTELLEN",
+    "joinOpen": "OFFENEM TISCH BEITRETEN",
+    "playSolo": "SOLO GEGEN KI",
+    "viewStats": "STATISTIKEN ANSEHEN"
+  },
+  "actions": {
+    "fold": "PASSEN",
+    "check": "CHECK",
+    "call": "MITGEHEN",
+    "bet": "SETZEN",
+    "raise": "ERHÖHEN",
+    "allIn": "ALL-IN",
+    "deal": "KARTEN GEBEN"
+  },
+  "settings": {
+    "volume": "LAUTSTÄRKE",
+    "language": "SPRACHE",
+    "english": "English",
+    "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
+    "logout": "ABMELDEN",
+    "autoDetect": "Auto (Browser)"
+  },
+  "dealer": {
+    "shuffling": "MISCHEN & ERZEUGE GEB-BEWEIS... (~30-60s){timer}",
+    "revealProof": "ERZEUGE AUFDECK-BEWEIS... (~20-40s){timer}",
+    "showdown": "VERIFIZIERE SHOWDOWN — DAUERT 2-4 MINUTEN. BITTE WARTEN.{timer}",
+    "oneMoment": "Einen Moment...{timer}",
+    "dealingFlop": "Setzrunde beendet. Dealer deckt den Flop auf...",
+    "dealingTurn": "Setzrunde beendet. Dealer deckt den Turn auf...",
+    "dealingRiver": "Setzrunde beendet. Dealer deckt den River auf...",
+    "resolvingShowdown": "Setzrunde beendet. Dealer wertet Showdown aus...",
+    "joinPrompt": "Onchain-Plätze sind {seats}. Klicke TISCH BEITRETEN mit dieser Wallet.",
+    "soloStart": "Solo gegen KI verwendet Test-Chips (je 100). Klicke KARTEN GEBEN zum Starten.",
+    "headsUpWait": "Heads-Up-Modus benötigt 2 Spieler. Teile Tisch-ID und warte auf Beitritt.",
+    "headsUpReady": "Heads-Up ist bereit. Klicke KARTEN GEBEN.",
+    "multiWait": "3-6 Spieler-Modus benötigt mindestens 3 Spieler.",
+    "multiReady": "Mehrspieler-Tisch ist bereit. Klicke KARTEN GEBEN.",
+    "dealing": "Karten werden ausgeteilt.",
+    "preflop": "Preflop läuft. Setze deinen Einsatz; Dealer deckt nächsten Street auf.",
+    "flop": "Flop liegt. Setze deinen Einsatz; Dealer deckt Turn auf.",
+    "turn": "Turn liegt. Setze deinen Einsatz; Dealer deckt River auf.",
+    "river": "River liegt. Letzte Setzrunde; Dealer startet Showdown.",
+    "showdownLive": "Showdown läuft.",
+    "youWin": "Hand beendet. DU HAST GEWONNEN!",
+    "aiWins": "Hand beendet. KI HAT GEWONNEN!",
+    "winner": "Hand beendet. Gewinner: {addr}.",
+    "handComplete": "Hand beendet. Starte die nächste Hand, wenn du bereit bist.",
+    "ready": "Bereit, wenn du es bist."
+  },
+  "common": {
+    "cancel": "ABBRECHEN",
+    "submitting": "WIRD ÜBERMITTELT…"
+  },
+  "avatar": {
+    "title": "AVATAR ANPASSEN",
+    "connectWallet": "Verbinde zuerst eine Wallet.",
+    "resetDesc": "Eigenen Avatar löschen und zum Standard-Pixel-Identicon zurückkehren.",
+    "rawSvg": "Roh-SVG",
+    "chooseTemplate": "Vorlage wählen",
+    "nftContract": "NFT-Vertragsadresse",
+    "nftTokenId": "NFT-Token-ID",
+    "nftNote": "Nur NFTs von durch Admins genehmigten Verträgen werden akzeptiert.",
+    "saveSvg": "SVG-AVATAR SPEICHERN",
+    "linkNft": "NFT VERKNÜPFEN",
+    "resetConfirm": "AUF IDENTICON ZURÜCKSETZEN"
+  },
+  "diagnostics": {
+    "title": "Transaktionsdiagnose",
+    "simulationFailed": "Transaktionssimulation fehlgeschlagen",
+    "executionFailed": "Transaktionsausführung fehlgeschlagen",
+    "viewDocs": "Stellar-Dokumentation ansehen ↗",
+    "simulationLogs": "Simulationsprotokolle",
+    "hideLogs": "Protokolle ausblenden",
+    "commonCauses": "Häufige Ursachen",
+    "suggestedAction": "Empfohlene Maßnahme",
+    "insufficient_balance": {
+      "title": "Unzureichendes Guthaben",
+      "description": "Deine Wallet hat nicht genügend XLM für Buy-in und Netzwerk-Basisreserve.",
+      "cause": "Kontoguthaben liegt unter dem erforderlichen Betrag zuzüglich der Stellar-Mindestreserve.",
+      "action": "Zahle zusätzliches XLM ein, um Tisch-Buy-in und Mindestreserve abzudecken."
+    },
+    "timeout": {
+      "title": "Zeitüberschreitung der Transaktion",
+      "description": "Die Transaktion oder RPC-Anfrage hat das Zeitlimit überschritten.",
+      "cause": "Netzwerküberlastung oder RPC-Latenz hat das Zeitfenster überschritten.",
+      "action": "Netzwerkverbindung prüfen und Transaktion wiederholen. Es wurden keine Gelder abgebucht."
+    },
+    "seq": {
+      "title": "Sequenznummer-Abweichung",
+      "description": "Die Transaktionssequenznummer stimmt nicht mit der aktuellen Kontosequenz überein.",
+      "cause": "Eine andere Transaktion wurde zeitgleich von diesem Konto gesendet.",
+      "action": "Tisch aktualisieren, um die neue Sequenznummer abzurufen, und erneut versuchen."
+    },
+    "expired": {
+      "title": "Transaktion abgelaufen",
+      "description": "Die Transaktion hat ihre maximalen Zeit- oder Ledger-Grenzen überschritten.",
+      "cause": "Die Transaktion blieb über das Ablaufzeitfenster hinaus unbestätigt.",
+      "action": "Sende eine neue Transaktion mit aktuellen Zeitgrenzen ab."
+    },
+    "budget": {
+      "title": "Ressourcenbudget überschritten",
+      "description": "Der Vertragsaufruf hat das Soroban-CPU- oder Speicherbudget überschritten.",
+      "cause": "Vertragsausführung verbrauchte mehr Rechen- oder Speichereinheiten als zulässig.",
+      "action": "Überprüfe Eingabeparameter oder warte auf Gebührenanpassungen vor dem erneuten Versuch."
+    },
+    "unknown": {
+      "title": "Transaktionsfehler",
+      "description": "Ein unerwarteter Transaktionsfehler ist aufgetreten.",
+      "cause": "Unbekannter Fehler oder Vertragsabbruch während der Ausführung.",
+      "action": "Prüfe die technischen Simulationsprotokolle unten oder wiederhole den Vorgang."
+    }
+  },
+  "offline": {
+    "cachedView": "GESPEICHERTE ANSICHT (SCHREIBGESCHÜTZT)",
+    "disconnected": "Wallet getrennt",
+    "lastUpdated": "Zuletzt aktualisiert: {time}",
+    "stale": "VERALTET",
+    "reconnect": "WALLET WIEDERVERBINDEN",
+    "viewingCached": "Du siehst zwischengespeicherte Tischdaten, während die Wallet getrennt ist.",
+    "offlineNotice": "Offline-Modus: Zeige zwischengespeicherten Lobby-Status."
+  }
+}

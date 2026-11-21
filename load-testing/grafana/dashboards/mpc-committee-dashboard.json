@@ -1,0 +1,53 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "up{job=\"mpc-nodes\"}", "legendFormat": "{{node_id}} {{instance}}", "refId": "A"}],
+      "title": "Committee Node Uptime",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "targets": [{"expr": "100 * rate(coordinator_mpc_session_success_total[5m]) / clamp_min(rate(coordinator_mpc_session_success_total[5m]) + rate(coordinator_mpc_session_errors_total[5m]), 1e-9)", "legendFormat": "success rate", "refId": "A"}],
+      "title": "Session Success Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, node_id) (rate(coordinator_mpc_prove_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{node_id}}", "refId": "A"}],
+      "title": "p95 Prove Time per Node",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "id": 4,
+      "targets": [
+        {"expr": "coordinator_process_memory_bytes", "legendFormat": "process memory", "refId": "A"},
+        {"expr": "coordinator_memory_watermark_bytes", "legendFormat": "watermark", "refId": "B"}
+      ],
+      "title": "Coordinator Memory and Watermark",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 36,
+  "tags": ["stellpoker", "mpc", "committee"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "StellPoker MPC Committee",
+  "version": 1
+}

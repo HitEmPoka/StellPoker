@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_TURN_TIMER,
   getTurnTimerPreference,
+  setTurnTimerPreference,
   type TurnTimerPreference,
 } from "./turn-timer-store";
 
@@ -33,6 +34,11 @@ export interface UseTurnTimerResult {
   isUrgent: boolean;
   /** Resolved auto-action that the timeout callback will attempt. */
   resolvedAutoAction: "fold" | "check" | "none";
+  /**
+   * Turns auto-fold on timeout on or off for this table and wallet, and
+   * persists the choice. Does not restart the running clock (#630).
+   */
+  setAutoFold: (on: boolean) => void;
 }
 
 const ACTIVE_PHASES = new Set(["preflop", "flop", "turn", "river"]);
@@ -84,6 +90,16 @@ export function useTurnTimer(
     timeoutHandlerRef.current = onTimeout;
   }, [onTimeout]);
 
+  // The clock reads the latest preference and bet when it runs out, rather
+  // than the values it started with. Changing the auto-fold toggle or the bet
+  // mid-turn therefore takes effect without restarting the shot clock (#630).
+  const preferenceRef = useRef(preference);
+  const callAmountRef = useRef(callAmount);
+  useEffect(() => {
+    preferenceRef.current = preference;
+    callAmountRef.current = callAmount;
+  }, [preference, callAmount]);
+
   // Resolution of auto-action at timeout: only fold or actual-check (never)
   // fires the onTimeout.
   const resolvedAutoAction: UseTurnTimerResult["resolvedAutoAction"] =
@@ -119,15 +135,14 @@ export function useTurnTimer(
         window.clearInterval(id);
         if (lastFiredTurnKeyRef.current !== turnKey) {
           lastFiredTurnKeyRef.current = turnKey;
+          const pref = preferenceRef.current;
           // Only attempt submission if preferences say so.
-          if (preference.enabled) {
-            // Re-evaluate callAmount via a fresh closure if possible, but for
-            // simplicity we recompute with the prop value:
+          if (pref.enabled) {
             const action: "fold" | "check" | "none" =
-              preference.autoAction === "fold"
+              pref.autoAction === "fold"
                 ? "fold"
-                : preference.autoAction === "check_if_possible"
-                  ? callAmount <= 0
+                : pref.autoAction === "check_if_possible"
+                  ? callAmountRef.current <= 0
                     ? "check"
                     : "fold"
                   : "none";
@@ -142,14 +157,24 @@ export function useTurnTimer(
     }, 250);
 
     return () => window.clearInterval(id);
-    // Intentionally exclude `callAmount` from the dep list: we don't want the
-    // timer to reset just because the current bet increased. If someone else
-    // raised *and* it's still our turn, the turnAddress/phase stay the same,
-    // so we continue counting from the original start time (standard poker
-    // "shot clock" semantics — the bet size change doesn't extend your clock).
-    // We *do* want to react to a new duration, though.
+    // Intentionally exclude the preference fields and `callAmount`: they are
+    // read through refs at timeout. Changing them must not reset the clock.
+    // A new duration still restarts it, because the duration is in `turnKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnKey, isActiveTurn, preference.durationSeconds, preference.autoAction, preference.enabled]);
+  }, [turnKey, isActiveTurn, preference.durationSeconds]);
+
+  const setAutoFold = useCallback(
+    (on: boolean) => {
+      if (!address) return;
+      const current = getTurnTimerPreference(tableId, address);
+      const next: TurnTimerPreference = on
+        ? { ...current, enabled: true, autoAction: "fold" }
+        : { ...current, autoAction: "never" };
+      setTurnTimerPreference(tableId, address, next);
+      setPreference(next);
+    },
+    [tableId, address]
+  );
 
   const pct =
     preference.durationSeconds <= 0
@@ -163,5 +188,6 @@ export function useTurnTimer(
     isActive: isActiveTurn,
     isUrgent: isActiveTurn && pct <= 0.2,
     resolvedAutoAction,
+    setAutoFold,
   };
 }

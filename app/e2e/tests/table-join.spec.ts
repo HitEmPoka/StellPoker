@@ -78,4 +78,24 @@ test.describe("table join flow", () => {
     await expect(page.getByText("CREATE TABLE")).toBeVisible();
     await expect(page.getByText("JOIN TABLE")).toBeVisible();
   });
+
+  test("join by ID stays disabled until a table ID is entered (#622)", async ({ page }) => {
+    await setupFreighter(page);
+    await page.goto("/");
+    await page.getByText("CLICK ANYWHERE TO START").click();
+    await page.waitForTimeout(500);
+
+    await page.getByText("CONNECT FREIGHTER").click();
+    await page.waitForTimeout(1000);
+
+    await page.getByText("JOIN TABLE").click();
+    await page.waitForTimeout(500);
+
+    const joinButton = page.getByRole("button", { name: "JOIN", exact: true });
+    await expect(page.getByPlaceholder("TABLE ID")).toBeVisible();
+    await expect(joinButton).toBeDisabled();
+
+    await page.getByPlaceholder("TABLE ID").fill("7");
+    await expect(joinButton).toBeEnabled();
+  });
 });

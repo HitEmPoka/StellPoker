@@ -93,6 +93,19 @@ terraform plan
 terraform apply
 ```
 
+### Drift detection
+
+`.github/workflows/terraform-drift.yml` runs `terraform plan` on a schedule
+(daily) and on demand (`workflow_dispatch`). If the plan reports changes —
+i.e. someone edited resources in the cloud console — the job writes the drift
+report to the step summary, uploads the plan as the `terraform-drift-report`
+artifact, and **fails so the repository is alerted**.
+
+The check needs the `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`GOOGLE_CREDENTIALS` repository secrets plus a state backend to compare
+against; without them it reports how to enable it instead of failing. Trigger
+it manually from the Actions tab to test.
+
 ## Key Variables
 
 ### Environment

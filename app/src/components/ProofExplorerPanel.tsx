@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ProofExplorer } from "./ProofExplorer";
+import { ProofExplorer, type ProofExplorerData } from "./ProofExplorer";
 import {
   PROOF_PANEL_MAX_WIDTH,
   PROOF_PANEL_MIN_WIDTH,
@@ -14,6 +14,8 @@ import {
 interface ProofExplorerPanelProps {
   open: boolean;
   onClose: () => void;
+  /** Tx hashes, sizes and public inputs for the current hand (#625). */
+  data?: ProofExplorerData;
 }
 
 /** Must match the mobile breakpoint in globals.css, where the panel is a bottom sheet. */
@@ -51,7 +53,7 @@ interface ResizeState {
  * into a bottom sheet instead (see `.proof-panel` in globals.css), so no
  * viewport-width state lives in React.
  */
-export function ProofExplorerPanel({ open, onClose }: ProofExplorerPanelProps) {
+export function ProofExplorerPanel({ open, onClose, data }: ProofExplorerPanelProps) {
   const [prefs, setPrefs] = useState<ProofPanelPrefs>(() => loadProofPanelPrefs());
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const panelRef = useRef<HTMLElement>(null);
@@ -202,7 +204,7 @@ export function ProofExplorerPanel({ open, onClose }: ProofExplorerPanelProps) {
       </div>
 
       <div id="proof-panel-body" className="proof-panel-body" hidden={prefs.collapsed}>
-        <ProofExplorer />
+        <ProofExplorer data={data} />
       </div>
     </aside>
   );

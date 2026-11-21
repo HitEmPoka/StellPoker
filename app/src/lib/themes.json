@@ -1,0 +1,67 @@
+[
+  {
+    "id": "classic-green",
+    "label": "Classic Green",
+    "feltDark": "#1a5c2a",
+    "feltMid": "#237a3a",
+    "feltLight": "#2d9648",
+    "feltShadow": "#0f3b1a",
+    "uiBorder": "#8b6914",
+    "cardBackStart": "#1a3a5c",
+    "cardBackEnd": "#0d2137",
+    "cardBackBorder": "#2a5a8c",
+    "cardBackSymbol": "#3498db"
+  },
+  {
+    "id": "blue",
+    "label": "Blue",
+    "feltDark": "#1a2a5c",
+    "feltMid": "#234a7a",
+    "feltLight": "#2d6a96",
+    "feltShadow": "#0f1a3b",
+    "uiBorder": "#8b6914",
+    "cardBackStart": "#1a3a3c",
+    "cardBackEnd": "#0d2127",
+    "cardBackBorder": "#2a5a6c",
+    "cardBackSymbol": "#3498db"
+  },
+  {
+    "id": "red",
+    "label": "Red",
+    "feltDark": "#5c1a1a",
+    "feltMid": "#7a2323",
+    "feltLight": "#962d2d",
+    "feltShadow": "#3b0f0f",
+    "uiBorder": "#b8860b",
+    "cardBackStart": "#3c1a2a",
+    "cardBackEnd": "#270d17",
+    "cardBackBorder": "#6c2a4a",
+    "cardBackSymbol": "#db3498"
+  },
+  {
+    "id": "dark",
+    "label": "Dark Mode",
+    "feltDark": "#0d0d0d",
+    "feltMid": "#1a1a1a",
+    "feltLight": "#2a2a2a",
+    "feltShadow": "#000000",
+    "uiBorder": "#555555",
+    "cardBackStart": "#1a1a2e",
+    "cardBackEnd": "#0a0a15",
+    "cardBackBorder": "#2a2a5e",
+    "cardBackSymbol": "#5b5bdb"
+  },
+  {
+    "id": "amber",
+    "label": "Amber",
+    "feltDark": "#3a2a0a",
+    "feltMid": "#5a4020",
+    "feltLight": "#7a5a30",
+    "feltShadow": "#2a1a05",
+    "uiBorder": "#c8a030",
+    "cardBackStart": "#2e1a1a",
+    "cardBackEnd": "#150d0d",
+    "cardBackBorder": "#5e2a2a",
+    "cardBackSymbol": "#db9b34"
+  }
+]

@@ -7,7 +7,9 @@
 //! Players must reach `min_hands` before appearing on the public leaderboard
 //! (anti-manipulation).
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, Symbol, Vec,
+};
 
 /// Default starting ELO rating.
 const DEFAULT_RATING: u32 = 1500;
@@ -17,6 +19,10 @@ const DEFAULT_K_FACTOR: u32 = 32;
 const DEFAULT_MIN_HANDS: u32 = 10;
 /// Maximum leaderboard page size.
 const MAX_LEADERBOARD_LIMIT: u32 = 50;
+
+pub const INITIAL_REPUTATION: u32 = 500;
+pub const MAX_REPUTATION: u32 = 1000;
+pub const MIN_REPUTATION: u32 = 0;
 
 #[contract]
 pub struct PlayerRatingContract;
@@ -29,6 +35,27 @@ pub struct PlayerRating {
     pub rating: u32,
     pub hands_played: u32,
     pub hands_won: u32,
+    pub last_update_ledger: u32,
+}
+
+/// Opt-in privacy-preserving player reputation record (Issue #690).
+/// Stores high-level attendance and reliability statistics without revealing
+/// any private hand contents, cards, or betting actions.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlayerReputation {
+    pub address: Address,
+    pub opted_in: bool,
+    /// Composite reputation score (0 - 1000, starts at 500).
+    pub score: u32,
+    /// Total hands attended and completed cleanly without timing out.
+    pub hands_completed: u32,
+    /// Total hands won.
+    pub hands_won: u32,
+    /// Total timeouts / stalling incidents recorded.
+    pub timeouts: u32,
+    /// Consecutive clean hands without timeouts.
+    pub clean_streak: u32,
     pub last_update_ledger: u32,
 }
 
@@ -51,6 +78,7 @@ pub enum DataKey {
     /// Addresses authorized to call `record_hand` (e.g. poker-table / coordinator).
     Recorder(Address),
     Paused,
+    Reputation(Address),
 }
 
 #[contracterror]
@@ -65,6 +93,21 @@ pub enum RatingError {
     InvalidConfig = 6,
     PlayerNotFound = 7,
     LimitTooLarge = 8,
+    NotOptedIn = 9,
+}
+
+#[contractevent]
+pub struct ReputationOptInToggled {
+    pub player: Address,
+    pub opted_in: bool,
+}
+
+#[contractevent]
+pub struct ReputationUpdated {
+    pub player: Address,
+    pub new_score: u32,
+    pub hands_completed: u32,
+    pub timeouts: u32,
 }
 
 #[contractimpl]
@@ -382,6 +425,178 @@ impl PlayerRatingContract {
         Ok(board.len())
     }
 
+    // ========================================================================
+    // Player Reputation (Issue #690: Opt-in, Privacy-Preserving)
+    // ========================================================================
+
+    /// Opt in to public reputation scoring (Issue #690).
+    pub fn opt_in_reputation(env: Env, player: Address) -> Result<(), RatingError> {
+        player.require_auth();
+        Self::require_initialized(&env)?;
+        let ledger = env.ledger().sequence();
+        let mut rep = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Reputation(player.clone()))
+            .unwrap_or_else(|| PlayerReputation {
+                address: player.clone(),
+                opted_in: true,
+                score: INITIAL_REPUTATION,
+                hands_completed: 0,
+                hands_won: 0,
+                timeouts: 0,
+                clean_streak: 0,
+                last_update_ledger: ledger,
+            });
+
+        rep.opted_in = true;
+        rep.last_update_ledger = ledger;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Reputation(player.clone()), &rep);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Reputation(player.clone()), 100_000, 100_000);
+
+        ReputationOptInToggled {
+            player,
+            opted_in: true,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Opt out of reputation scoring. Hides reputation record from public view.
+    pub fn opt_out_reputation(env: Env, player: Address) -> Result<(), RatingError> {
+        player.require_auth();
+        Self::require_initialized(&env)?;
+        let ledger = env.ledger().sequence();
+        if let Some(mut rep) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PlayerReputation>(&DataKey::Reputation(player.clone()))
+        {
+            rep.opted_in = false;
+            rep.last_update_ledger = ledger;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Reputation(player.clone()), &rep);
+        }
+
+        ReputationOptInToggled {
+            player,
+            opted_in: false,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Check if a player has opted into reputation tracking.
+    pub fn is_opted_in(env: Env, player: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get::<DataKey, PlayerReputation>(&DataKey::Reputation(player))
+            .map(|r| r.opted_in)
+            .unwrap_or(false)
+    }
+
+    /// Read a player's reputation score. Returns Err(NotOptedIn) if not opted in.
+    pub fn get_reputation(env: Env, player: Address) -> Result<PlayerReputation, RatingError> {
+        Self::require_initialized(&env)?;
+        let rep = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PlayerReputation>(&DataKey::Reputation(player.clone()))
+            .ok_or(RatingError::NotOptedIn)?;
+
+        if !rep.opted_in {
+            return Err(RatingError::NotOptedIn);
+        }
+
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Reputation(player), 100_000, 100_000);
+        Ok(rep)
+    }
+
+    /// Record hand completion results for reputation (wins, attendance, timeouts).
+    ///
+    /// Auth: authorized recorder (poker-table / coordinator) or admin.
+    /// Preserves privacy: strictly receives table outcome indexes, zero hand content.
+    pub fn record_hand_reputation(
+        env: Env,
+        caller: Address,
+        participants: Vec<Address>,
+        winner_index: u32,
+        has_timeout: bool,
+        timed_out_index: u32,
+    ) -> Result<(), RatingError> {
+        caller.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_recorder_or_admin(&env, &caller)?;
+
+        let n = participants.len();
+        if n < 2 || winner_index >= n {
+            return Err(RatingError::EmptyResults);
+        }
+
+        let ledger = env.ledger().sequence();
+
+        for i in 0..n {
+            let addr = participants.get(i).unwrap();
+            if let Some(mut rep) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PlayerReputation>(&DataKey::Reputation(addr.clone()))
+            {
+                if !rep.opted_in {
+                    continue;
+                }
+
+                let is_timeout = has_timeout && (timed_out_index == i);
+                let is_winner = i == winner_index;
+
+                if is_timeout {
+                    rep.timeouts = rep.timeouts.saturating_add(1);
+                    rep.clean_streak = 0;
+                } else {
+                    rep.hands_completed = rep.hands_completed.saturating_add(1);
+                    rep.clean_streak = rep.clean_streak.saturating_add(1);
+                }
+
+                if is_winner && !is_timeout {
+                    rep.hands_won = rep.hands_won.saturating_add(1);
+                }
+
+                rep.score = calculate_reputation(
+                    rep.hands_completed,
+                    rep.hands_won,
+                    rep.timeouts,
+                    rep.clean_streak,
+                );
+                rep.last_update_ledger = ledger;
+
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Reputation(addr.clone()), &rep);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&DataKey::Reputation(addr.clone()), 100_000, 100_000);
+
+                ReputationUpdated {
+                    player: addr,
+                    new_score: rep.score,
+                    hands_completed: rep.hands_completed,
+                    timeouts: rep.timeouts,
+                }
+                .publish(&env);
+            }
+        }
+
+        Ok(())
+    }
+
     // ── internals ────────────────────────────────────────────────────────────
 
     fn require_initialized(env: &Env) -> Result<(), RatingError> {
@@ -563,6 +778,41 @@ fn apply_delta(rating: u32, delta: i32) -> u32 {
     }
 }
 
+/// Scaled composite reputation calculator (Issue #690).
+/// Strictly uses high-level results: attendance/completion, fair wins, and penalties for timeouts.
+pub fn calculate_reputation(
+    hands_completed: u32,
+    hands_won: u32,
+    timeouts: u32,
+    clean_streak: u32,
+) -> u32 {
+    let mut score = INITIAL_REPUTATION as i32;
+
+    // Attendance & completion: +2 points per hand completed (capped at +300)
+    let completion_bonus = core::cmp::min(hands_completed * 2, 300) as i32;
+    score += completion_bonus;
+
+    // Fair victory bonus: +3 points per win (capped at +150)
+    let win_bonus = core::cmp::min(hands_won * 3, 150) as i32;
+    score += win_bonus;
+
+    // Clean streak reliability bonus: +1 point per 5 consecutive hands without timeout (capped at +50)
+    let streak_bonus = core::cmp::min(clean_streak / 5, 50) as i32;
+    score += streak_bonus;
+
+    // Timeout penalty: -50 points per timeout/stalling incident
+    let timeout_penalty = (timeouts * 50) as i32;
+    score -= timeout_penalty;
+
+    if score < MIN_REPUTATION as i32 {
+        MIN_REPUTATION
+    } else if score > MAX_REPUTATION as i32 {
+        MAX_REPUTATION
+    } else {
+        score as u32
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -682,5 +932,96 @@ mod test {
 
         client.unpause(&admin);
         assert!(client.try_record_hand(&admin, &parts, &0).is_ok());
+    }
+
+    #[test]
+    fn test_reputation_opt_in_out_and_privacy() {
+        let (env, _admin, client) = setup();
+        let player = Address::generate(&env);
+
+        // Initially not opted in
+        assert!(!client.is_opted_in(&player));
+        assert_eq!(client.try_get_reputation(&player), Err(Ok(RatingError::NotOptedIn)));
+
+        // Opt in
+        client.opt_in_reputation(&player);
+        assert!(client.is_opted_in(&player));
+
+        let rep = client.get_reputation(&player);
+        assert_eq!(rep.score, INITIAL_REPUTATION);
+        assert_eq!(rep.hands_completed, 0);
+        assert_eq!(rep.hands_won, 0);
+        assert_eq!(rep.timeouts, 0);
+        assert!(rep.opted_in);
+
+        // Opt out -> privacy restored, querying reputation returns Err(NotOptedIn)
+        client.opt_out_reputation(&player);
+        assert!(!client.is_opted_in(&player));
+        assert_eq!(client.try_get_reputation(&player), Err(Ok(RatingError::NotOptedIn)));
+    }
+
+    #[test]
+    fn test_reputation_attendance_wins_and_penalties() {
+        let (env, admin, client) = setup();
+        let p1 = Address::generate(&env);
+        let p2 = Address::generate(&env);
+        let p3_non_opted = Address::generate(&env);
+
+        client.opt_in_reputation(&p1);
+        client.opt_in_reputation(&p2);
+
+        let mut parts = Vec::new(&env);
+        parts.push_back(p1.clone());
+        parts.push_back(p2.clone());
+        parts.push_back(p3_non_opted.clone());
+
+        // Hand 1: p1 wins cleanly (no timeout)
+        client.record_hand_reputation(&admin, &parts, &0, &false, &0);
+
+        let r1 = client.get_reputation(&p1);
+        // p1: 500 (base) + 2 (completion) + 3 (win) = 505
+        assert_eq!(r1.hands_completed, 1);
+        assert_eq!(r1.hands_won, 1);
+        assert_eq!(r1.clean_streak, 1);
+        assert_eq!(r1.score, 505);
+
+        let r2 = client.get_reputation(&p2);
+        // p2: 500 (base) + 2 (completion) + 0 (win) = 502
+        assert_eq!(r2.hands_completed, 1);
+        assert_eq!(r2.hands_won, 0);
+        assert_eq!(r2.clean_streak, 1);
+        assert_eq!(r2.score, 502);
+
+        // p3 was not opted in, still not opted in
+        assert!(!client.is_opted_in(&p3_non_opted));
+
+        // Hand 2: p2 causes a timeout, p1 wins
+        client.record_hand_reputation(&admin, &parts, &0, &true, &1);
+
+        let r1_after = client.get_reputation(&p1);
+        // p1: 500 + 4 (2 completions) + 6 (2 wins) = 510
+        assert_eq!(r1_after.hands_completed, 2);
+        assert_eq!(r1_after.hands_won, 2);
+        assert_eq!(r1_after.clean_streak, 2);
+        assert_eq!(r1_after.score, 510);
+
+        let r2_after = client.get_reputation(&p2);
+        // p2: 500 + 2 (1 completion) - 50 (1 timeout) = 452
+        assert_eq!(r2_after.hands_completed, 1); // did not increment on timeout
+        assert_eq!(r2_after.timeouts, 1);
+        assert_eq!(r2_after.clean_streak, 0); // streak reset
+        assert_eq!(r2_after.score, 452);
+    }
+
+    #[test]
+    fn test_calculate_reputation_clamping() {
+        // Test lower bound clamp at 0
+        assert_eq!(calculate_reputation(0, 0, 20, 0), MIN_REPUTATION);
+
+        // Test upper bound clamp at 1000
+        assert_eq!(calculate_reputation(1000, 500, 0, 500), MAX_REPUTATION);
+
+        // Test base
+        assert_eq!(calculate_reputation(0, 0, 0, 0), INITIAL_REPUTATION);
     }
 }

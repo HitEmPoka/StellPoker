@@ -41,6 +41,12 @@ import {
   readTableStakes,
   type SeatPreference,
 } from "@/lib/quick-seat";
+import {
+  saveLobbyCache,
+  loadLobbyCache,
+  isCacheStale,
+  formatLastUpdated,
+} from "@/lib/lobby-cache";
 
 type Screen = "splash" | "connect" | "menu" | "create" | "join";
 const STROOPS_PER_XLM = BigInt("10000000");
@@ -95,6 +101,8 @@ export default function Home() {
   const [oddsCalculatorOpen, setOddsCalculatorOpen] = useState(false);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [seatPreference, setSeatPreference] = useState<SeatPreference | null>(null);
+  const [lobbyCachedAt, setLobbyCachedAt] = useState<number>(0);
+  const [isWalletDisconnected, setIsWalletDisconnected] = useState(false);
 
   const joinTableSim = useJoinTableSimulation(wallet, () => {
     if (pendingTableId !== null) {
@@ -137,7 +145,7 @@ export default function Home() {
 
   // Load the browsable open-tables list when entering the join screen.
   useEffect(() => {
-    if (screen === "join" && wallet) {
+    if (screen === "join") {
       void loadLobbyTables();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,13 +158,21 @@ export default function Home() {
     }
   }, [screen, wallet]);
 
-  // Auto-logout when wallet disconnects (#322).
+  // Auto-logout when wallet disconnects (#322, #618).
+  // Disconnected players & spectators still see cached tables with stale indicator.
   useWalletMonitor({
     wallet,
     onDisconnect: () => {
       setWallet(null);
-      setScreen("connect");
-      setError("Wallet disconnected. Please reconnect to continue.");
+      setIsWalletDisconnected(true);
+      const cached = loadLobbyCache();
+      if (cached) {
+        setLobbyTables(cached.tables);
+        setTableLobbies(cached.tableLobbies);
+        setLobbyCachedAt(cached.cachedAt);
+      }
+      setScreen("join");
+      setError("Wallet disconnected. Viewing cached table state in read-only mode.");
     },
     onAccountSwitch: (newAddress) => {
       // User switched accounts in Freighter — re-initialise the session with
@@ -174,6 +190,7 @@ export default function Home() {
     try {
       const session = await connectWallet(type);
       setWallet(session);
+      setIsWalletDisconnected(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to connect ${type} wallet`);
     } finally {
@@ -206,6 +223,7 @@ export default function Home() {
       if (!solo && buyIn) {
         setPendingTableId(created.table_id);
         joinTableSim.joinTable(created.table_id, buyIn);
+        setBusy(false);
         return; // Simulation will handle navigation
       }
 
@@ -215,9 +233,18 @@ export default function Home() {
           ? "?mode=multi"
           : "?mode=headsup";
       router.push(`/table/${created.table_id}${query}`);
+      setBusy(false);
     } catch (e) {
+      if (e instanceof api.ApiRequestError && e.retryAfterSeconds !== null) {
+        // Issue #601: respect the server's Retry-After by keeping table
+        // creation disabled for the full back-off window instead of
+        // re-enabling immediately, so the client can't hammer the
+        // coordinator again right away.
+        setError(`${e.message} Retry in ${e.retryAfterSeconds}s.`);
+        setTimeout(() => setBusy(false), e.retryAfterSeconds * 1000);
+        return;
+      }
       setError(e instanceof Error ? e.message : "Create table failed");
-    } finally {
       setBusy(false);
     }
   };
@@ -264,7 +291,16 @@ export default function Home() {
         if (entry) lobbies[entry[0]] = entry[1];
       }
       setTableLobbies(lobbies);
+      const now = Date.now();
+      setLobbyCachedAt(now);
+      saveLobbyCache(result.tables, lobbies, now);
     } catch (e) {
+      const cached = loadLobbyCache();
+      if (cached) {
+        setLobbyTables(cached.tables);
+        setTableLobbies(cached.tableLobbies);
+        setLobbyCachedAt(cached.cachedAt);
+      }
       setError(e instanceof Error ? e.message : "Failed to load open tables");
     } finally {
       setLoadingTables(false);
@@ -655,14 +691,40 @@ export default function Home() {
             </div>
 
             {/* A visitor with no wallet is otherwise stuck on this screen;
-                practice mode is exactly what they can do instead (#174). */}
-            <Link
-              href="/practice"
-              className="text-[9px]"
-              style={{ color: "#ffc078", textDecoration: "underline" }}
-            >
-              NO WALLET? PRACTICE VS BOTS →
-            </Link>
+                practice mode and public spectator browsing are what they can do instead (#174, #618). */}
+            <div className="flex flex-col items-center gap-2">
+              <Link
+                href="/practice"
+                className="text-[9px]"
+                style={{ color: "#ffc078", textDecoration: "underline" }}
+              >
+                NO WALLET? PRACTICE VS BOTS →
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  const cached = loadLobbyCache();
+                  if (cached) {
+                    setLobbyTables(cached.tables);
+                    setTableLobbies(cached.tableLobbies);
+                    setLobbyCachedAt(cached.cachedAt);
+                  }
+                  setScreen("join");
+                }}
+                className="text-[9px]"
+                style={{
+                  color: "#27ae60",
+                  textDecoration: "underline",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                data-testid="view-public-lobby-button"
+              >
+                BROWSE PUBLIC TABLES (SPECTATE) →
+              </button>
+            </div>
           </div>
         )}
 
@@ -838,6 +900,55 @@ export default function Home() {
             >
               JOIN TABLE
             </h2>
+
+            {/* Offline-aware / Disconnected lobby cache banner (Issue #618) */}
+            {(isWalletDisconnected || !wallet || (lobbyCachedAt > 0 && isCacheStale(lobbyCachedAt))) && (
+              <div
+                className="w-full flex flex-col gap-2 p-3 pixel-border-thin"
+                style={{
+                  background: "rgba(35, 20, 8, 0.95)",
+                  borderColor: isCacheStale(lobbyCachedAt) ? "#e74c3c" : "#f39c12",
+                }}
+                data-testid="offline-lobby-banner"
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2 text-[9px]">
+                  <div className="flex items-center gap-2">
+                    <span>⚠️</span>
+                    <span style={{ color: "#ffc078", fontWeight: "bold" }}>
+                      {!wallet ? "WALLET DISCONNECTED · READ-ONLY CACHE" : "CACHED LOBBY"}
+                    </span>
+                    {lobbyCachedAt > 0 && (
+                      <span
+                        className="px-2 py-[2px] rounded text-[8px]"
+                        style={{
+                          background: isCacheStale(lobbyCachedAt) ? "#e74c3c" : "#e67e22",
+                          color: "#ffffff",
+                        }}
+                        data-testid="stale-indicator"
+                      >
+                        {isCacheStale(lobbyCachedAt) ? "STALE" : "CACHED"}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsWalletDisconnected(false);
+                      setScreen("connect");
+                    }}
+                    className="pixel-btn pixel-btn-green text-[9px]"
+                    style={{ padding: "4px 8px" }}
+                    data-testid="reconnect-lobby-btn"
+                  >
+                    RECONNECT WALLET
+                  </button>
+                </div>
+                {lobbyCachedAt > 0 && (
+                  <div className="text-[8px]" style={{ color: "#c8e6ff" }} data-testid="last-updated-time">
+                    Last updated: {formatLastUpdated(lobbyCachedAt)}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* One-click seat for returning players (#159) */}
             {seatPreference && (

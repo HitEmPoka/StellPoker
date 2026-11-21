@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "network": "stellar-testnet",
+  "exported_at": "2026-10-19T15:20:00Z",
+  "table": {
+    "id": 12,
+    "name": "Standard Cash Table",
+    "variant": "texas_holdem",
+    "betting_structure": "no_limit",
+    "stakes": {
+      "small_blind": 2,
+      "big_blind": 4,
+      "ante": 0,
+      "min_buy_in": 100,
+      "max_buy_in": 500,
+      "currency": "USDC"
+    }
+  },
+  "hand": {
+    "number": 88,
+    "session_id": 11200,
+    "timestamp": "2026-10-19T15:18:10Z",
+    "duration_seconds": 95,
+    "dealer_seat": 0
+  },
+  "players": [
+    {
+      "seat": 0,
+      "address": "GAAGGRESSIVEBETTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "starting_stack": 200,
+      "final_stack": 218,
+      "net_payout": 18,
+      "hole_cards": ["??", "??"],
+      "folded": false,
+      "all_in": false
+    },
+    {
+      "seat": 1,
+      "address": "GASTALLINGPLAYERTIMEOUTXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "starting_stack": 200,
+      "final_stack": 182,
+      "net_payout": -18,
+      "hole_cards": ["??", "??"],
+      "folded": true,
+      "all_in": false
+    }
+  ],
+  "board": ["Kh", "8c", "3d"],
+  "streets": [
+    {
+      "street": "preflop",
+      "pot_start": 0,
+      "actions": [
+        { "sequence": 1, "seat": 0, "address": "GAAGGRESSIVEBETTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_sb", "amount": 2, "pot_after": 2 },
+        { "sequence": 2, "seat": 1, "address": "GASTALLINGPLAYERTIMEOUTXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "post_bb", "amount": 4, "pot_after": 6 },
+        { "sequence": 3, "seat": 0, "address": "GAAGGRESSIVEBETTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "raise", "amount": 10, "pot_after": 16 },
+        { "sequence": 4, "seat": 1, "address": "GASTALLINGPLAYERTIMEOUTXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "call", "amount": 6, "pot_after": 22 }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards_dealt": ["Kh", "8c", "3d"],
+      "pot_start": 22,
+      "actions": [
+        { "sequence": 5, "seat": 1, "address": "GASTALLINGPLAYERTIMEOUTXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "check", "amount": 0, "pot_after": 22 },
+        { "sequence": 6, "seat": 0, "address": "GAAGGRESSIVEBETTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "bet", "amount": 14, "pot_after": 36 },
+        { "sequence": 7, "seat": 1, "address": "GASTALLINGPLAYERTIMEOUTXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "action_type": "timeout", "amount": 0, "pot_after": 36 }
+      ]
+    }
+  ],
+  "showdown": {
+    "occurred": false,
+    "revealed_hands": []
+  },
+  "pots": [
+    {
+      "pot_index": 0,
+      "is_side_pot": false,
+      "total": 36,
+      "rake": 0,
+      "winners": [
+        {
+          "seat": 0,
+          "address": "GAAGGRESSIVEBETTORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          "amount": 36
+        }
+      ]
+    }
+  ],
+  "verifiability": {
+    "deck_root": "0x999900001111222233334444555566667777888899990000aaaabbbbccccdddd",
+    "zk_proof_verified": true,
+    "settled_ledger": 310892
+  }
+}

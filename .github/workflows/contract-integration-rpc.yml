@@ -1,0 +1,59 @@
+name: Contract Integration (Soroban RPC)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  soroban-rpc-integration:
+    name: Soroban RPC Integration (pinned v22.0.1)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start pinned Soroban RPC container
+        run: |
+          echo "Starting stellar/quickstart:v22.0.1..."
+          docker run -d --name soroban \
+            -p 8000:8000 \
+            stellar/quickstart:v22.0.1 \
+            --local --enable-soroban-rpc
+
+      - name: Wait for Soroban RPC healthcheck
+        run: |
+          echo "Polling Soroban RPC getHealth..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -X POST -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+              http://localhost:8000/soroban/rpc | grep -o '"status":"healthy"' || true)
+            if [ -n "$STATUS" ]; then
+              echo "Soroban RPC is healthy after ${i} checks."
+              exit 0
+            fi
+            echo "Waiting for Soroban RPC... (${i}/60)"
+            sleep 2
+          done
+          echo "Soroban RPC failed to become healthy within 120s"
+          docker logs soroban --tail 100
+          exit 1
+
+      - name: Run contract integration tests against live Soroban RPC
+        run: |
+          python3 scripts/test_contract_integration_rpc.py --url http://localhost:8000/soroban/rpc
+
+      - name: Run contract integration unit tests
+        run: |
+          python3 -m unittest discover tests -p "test_contract_integration_rpc.py" -v
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker logs soroban --tail 200

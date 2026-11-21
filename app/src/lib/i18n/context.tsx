@@ -16,18 +16,24 @@ import {
   storeLocale,
   translate,
   DEFAULT_LOCALE,
+  isRtlLocale,
+  getDirection,
 } from "./index";
 
 interface I18nContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: (key: MessageKey | string, vars?: Record<string, string | number>) => string;
+  isRtl: boolean;
+  dir: "rtl" | "ltr";
 }
 
 const I18nContext = createContext<I18nContextValue>({
   locale: DEFAULT_LOCALE,
   setLocale: () => {},
   t: (key, vars) => translate(DEFAULT_LOCALE, key, vars),
+  isRtl: isRtlLocale(DEFAULT_LOCALE),
+  dir: getDirection(DEFAULT_LOCALE),
 });
 
 /** Renders I18n Provider.
@@ -46,6 +52,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     if (!ready) return;
     if (typeof document !== "undefined") {
       document.documentElement.lang = locale;
+      document.documentElement.dir = getDirection(locale);
     }
   }, [locale, ready]);
 
@@ -60,9 +67,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [locale]
   );
 
+  const isRtl = useMemo(() => isRtlLocale(locale), [locale]);
+  const dir = useMemo(() => getDirection(locale), [locale]);
+
   const value = useMemo(
-    () => ({ locale, setLocale, t }),
-    [locale, setLocale, t]
+    () => ({ locale, setLocale, t, isRtl, dir }),
+    [locale, setLocale, t, isRtl, dir]
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

@@ -32,12 +32,12 @@ const GC_INTERVAL_SECS: u64 = 300;
 const HEADER_KEY: &str = "idempotency-key";
 
 #[derive(Clone)]
-struct CachedResponse {
-    status: u16,
-    content_type: Option<String>,
-    body: Vec<u8>,
-    inserted_at: Instant,
-    ttl: Duration,
+pub struct CachedResponse {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub body: Vec<u8>,
+    pub inserted_at: Instant,
+    pub ttl: Duration,
 }
 
 impl CachedResponse {

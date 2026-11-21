@@ -5,6 +5,9 @@ use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Sym
 
 mod constant_time;
 
+#[cfg(test)]
+mod slashing_sim_test;
+
 /// Committee Registry contract.
 ///
 /// Manages MPC committee membership, staking bonds, and slashing hooks.
@@ -23,6 +26,12 @@ pub struct CommitteeMember {
     pub stake: i128,
     pub endpoint: soroban_sdk::String, // MPC node endpoint URL
     pub region: soroban_sdk::String,   // Geographic region (e.g., us-east-1)
+    /// Cloud/infrastructure operator (e.g., aws, gcp, bare-metal). Empty
+    /// string means not yet declared; set via `set_operator` after
+    /// registration (#577). Geographic diversity enforcement at
+    /// `create_epoch` only compares operators when both sides have
+    /// declared one.
+    pub operator: soroban_sdk::String,
     pub active: bool,
     pub slash_count: u32,
     /// Total stake delegated to this node by external delegators.
@@ -373,6 +382,7 @@ impl CommitteeRegistryContract {
             stake,
             endpoint,
             region,
+            operator: soroban_sdk::String::from_str(&env, ""),
             active: true,
             slash_count: 0,
             total_delegated_stake: 0,
@@ -407,6 +417,23 @@ impl CommitteeRegistryContract {
 
         env.events()
             .publish((Symbol::new(&env, "member_registered"),), member);
+    }
+
+    /// Declare or update the cloud/infrastructure operator for an already-
+    /// registered member (#577). Kept separate from `register_member` so
+    /// existing callers of that entry point are unaffected; `operator`
+    /// defaults to an empty string (not yet declared) at registration.
+    pub fn set_operator(env: Env, member: Address, operator: soroban_sdk::String) {
+        member.require_auth();
+        let mut m: CommitteeMember = env
+            .storage()
+            .persistent()
+            .get(&RegistryKey::Member(member.clone()))
+            .expect("member not registered");
+        m.operator = operator;
+        env.storage()
+            .persistent()
+            .set(&RegistryKey::Member(member.clone()), &m);
     }
 
     /// Withdraw stake and deregister (only when not in active epoch).
@@ -525,7 +552,9 @@ impl CommitteeRegistryContract {
             "not enough members for threshold"
         );
 
-        // Verify all members are registered and active
+        // Verify all members are registered and active, and collect their
+        // state for the geographic/operator diversity check below.
+        let mut member_states: Vec<CommitteeMember> = Vec::new(&env);
         for i in 0..members.len() {
             let addr = members.get(i).unwrap();
             let m: CommitteeMember = env
@@ -534,6 +563,25 @@ impl CommitteeRegistryContract {
                 .get(&RegistryKey::Member(addr.clone()))
                 .expect("member not registered");
             assert!(m.active, "member not active");
+            member_states.push_back(m);
+        }
+
+        // #577: hard geographic diversity policy — no two members in the
+        // same epoch may share a region. Operators are only compared when
+        // both sides have declared one via `set_operator` (an empty string
+        // means "not yet declared", not "same provider").
+        for i in 0..member_states.len() {
+            let mi = member_states.get(i).unwrap();
+            for j in (i + 1)..member_states.len() {
+                let mj = member_states.get(j).unwrap();
+                assert!(mi.region != mj.region, "duplicate region among epoch members");
+                if mi.operator.len() > 0 && mj.operator.len() > 0 {
+                    assert!(
+                        mi.operator != mj.operator,
+                        "duplicate operator among epoch members"
+                    );
+                }
+            }
         }
 
         // Close previous epoch
@@ -2400,5 +2448,93 @@ mod test_stake_topup_unbonding {
         // node2 share = 3000 * 1000 / 3000 = 1000
         assert_eq!(client.get_pending_reward(&node), 2_000);
         assert_eq!(client.get_pending_reward(&node2), 1_000);
+    }
+}
+
+#[cfg(test)]
+mod test_geo_diversity {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String, Vec};
+
+    /// A freshly initialized registry with three registered, funded members.
+    fn setup_three_members(
+        regions: [&str; 3],
+    ) -> (
+        Env,
+        CommitteeRegistryContractClient<'static>,
+        Address,
+        Vec<Address>,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(CommitteeRegistryContract, ());
+        let client = CommitteeRegistryContractClient::new(&env, &contract_id);
+        let token_admin = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract_v2(token_admin);
+        let token_sac = StellarAssetClient::new(&env, &sac.address());
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &sac.address(), &100, &0);
+
+        let mut members: Vec<Address> = Vec::new(&env);
+        for region in regions {
+            let member = Address::generate(&env);
+            token_sac.mint(&member, &500);
+            client.register_member(
+                &member,
+                &500,
+                &String::from_str(&env, "http://node:8101"),
+                &String::from_str(&env, region),
+                &0,
+            );
+            members.push_back(member);
+        }
+        (env, client, admin, members)
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate region among epoch members")]
+    fn test_create_epoch_rejects_duplicate_region() {
+        let (_env, client, admin, members) =
+            setup_three_members(["us-east-1", "us-east-1", "eu-west-1"]);
+        client.create_epoch(&admin, &members, &2);
+    }
+
+    #[test]
+    fn test_create_epoch_accepts_distinct_regions() {
+        let (_env, client, admin, members) =
+            setup_three_members(["us-east-1", "eu-west-1", "ap-southeast-1"]);
+        let epoch_id = client.create_epoch(&admin, &members, &2);
+        assert_eq!(epoch_id, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate operator among epoch members")]
+    fn test_create_epoch_rejects_duplicate_operator_even_with_distinct_regions() {
+        let (env, client, admin, members) =
+            setup_three_members(["us-east-1", "eu-west-1", "ap-southeast-1"]);
+        client.set_operator(&members.get(0).unwrap(), &String::from_str(&env, "aws"));
+        client.set_operator(&members.get(1).unwrap(), &String::from_str(&env, "aws"));
+        client.create_epoch(&admin, &members, &2);
+    }
+
+    #[test]
+    fn test_create_epoch_ignores_undeclared_operators() {
+        // Operators default to "" (undeclared) at registration — two
+        // undeclared operators must not be treated as a duplicate.
+        let (_env, client, admin, members) =
+            setup_three_members(["us-east-1", "eu-west-1", "ap-southeast-1"]);
+        let epoch_id = client.create_epoch(&admin, &members, &2);
+        assert_eq!(epoch_id, 1);
+    }
+
+    #[test]
+    fn test_set_operator_then_create_epoch_with_distinct_operators() {
+        let (env, client, admin, members) =
+            setup_three_members(["us-east-1", "eu-west-1", "ap-southeast-1"]);
+        client.set_operator(&members.get(0).unwrap(), &String::from_str(&env, "aws"));
+        client.set_operator(&members.get(1).unwrap(), &String::from_str(&env, "gcp"));
+        client.set_operator(&members.get(2).unwrap(), &String::from_str(&env, "bare-metal"));
+        let epoch_id = client.create_epoch(&admin, &members, &2);
+        assert_eq!(epoch_id, 1);
     }
 }

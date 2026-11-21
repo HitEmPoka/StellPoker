@@ -85,6 +85,15 @@ describe("ActionPanel", () => {
     expect(props.setBetAmount).toHaveBeenLastCalledWith(300);
   });
 
+  it("sets pot sized bets from keyboard operable presets", () => {
+    const { props } = renderPanel({ pot: 400 });
+    fireEvent.click(button(/half the pot/));
+    expect(props.setBetAmount).toHaveBeenLastCalledWith(200);
+    fireEvent.click(button(/^Set bet to the pot$/));
+    expect(props.setBetAmount).toHaveBeenLastCalledWith(400);
+    expect(screen.getByRole("slider", { name: "Bet amount" })).toBeTruthy();
+  });
+
   it("disables actions and shows waiting text when it is not my turn", () => {
     renderPanel({ isMyTurn: false });
     expect((button(/FOLD/) as HTMLButtonElement).disabled).toBe(true);

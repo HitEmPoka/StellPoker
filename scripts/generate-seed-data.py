@@ -23,6 +23,8 @@ Usage:
 Run with --help for the full list of configurable parameters.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import random

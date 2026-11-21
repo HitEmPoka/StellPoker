@@ -7,6 +7,8 @@ on:
 permissions:
   contents: read
   packages: write
+  # Keyless cosign signing needs an OIDC token (Issue #678).
+  id-token: write
 
 jobs:
   build-and-push:
@@ -48,6 +50,11 @@ jobs:
           echo "semver=$SEMVER_STRIPPED" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA_SHORT" >> "$GITHUB_OUTPUT"
 
+          # GHCR requires lowercase repository names, and the Helm charts pull
+          # from ghcr.io/<owner>/stellpoker/<image>.
+          OWNER_LOWER="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "repo=ghcr.io/${OWNER_LOWER}/stellpoker/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -59,16 +66,43 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ${{ matrix.image }}
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.meta.outputs.sha }}
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.meta.outputs.semver }}
+            ${{ steps.meta.outputs.repo }}:latest
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}
+            ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.semver }}
           # Cache to speed up rebuilds
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless signing: the certificate identity is this workflow on main, so
+      # deploy-side verification can refuse anything else (Issue #678).
+      - name: Sign image digest
+        run: |
+          set -euo pipefail
+          DIGEST="${{ steps.build.outputs.digest }}"
+          if [ -z "$DIGEST" ]; then
+            echo "ERROR: build produced no digest; refusing to sign an unknown artifact." >&2
+            exit 1
+          fi
+          cosign sign --yes "${{ steps.meta.outputs.repo }}@${DIGEST}"
+
+      # Publish the frontend RC channel from the same build digest so the RC
+      # URL runs an identical image. Promote via scripts/promote-rc.sh after
+      # the RC smoke checklist passes.
+      - name: Tag frontend RC channel
+        if: matrix.image == 'frontend'
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ steps.meta.outputs.repo }}:rc" \
+            "${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}"
 

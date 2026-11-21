@@ -3,6 +3,9 @@ import "./globals.css";
 import { I18nProvider } from "@/lib/i18n/context";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationsCenter } from "@/components/NotificationsCenter";
+import { ReducedDataToggle } from "@/components/ReducedDataToggle";
+import { PwaRegistrar } from "@/components/PwaRegistrar";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 /** Metadata.
  * @param Safari - Safari.
@@ -21,6 +24,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: "#0c0a18",
 };
 
 /** Default.
@@ -35,13 +39,16 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <I18nProvider>
-          <div style={{ position: "absolute", top: 8, right: 8, zIndex: 9999 }}>
+          <div className="app-top-controls" style={{ position: "absolute", top: 8, insetInlineEnd: 8, zIndex: 9999 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <NotificationsCenter />
               <ThemeToggle />
+              <ReducedDataToggle />
             </div>
           </div>
           {children}
+          <OfflineBanner />
+          <PwaRegistrar />
         </I18nProvider>
       </body>
     </html>

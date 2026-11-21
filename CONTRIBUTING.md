@@ -78,6 +78,10 @@ git commit --no-verify
 3. Pre-commit hooks will run automatically — fix any issues they report.
 4. Open a pull request with a clear description of what changed and why.
 
+How a PR is reviewed and merged — required status checks, the merge queue,
+label triage, and review SLAs — is documented for maintainers in
+[docs/MAINTAINERS.md](docs/MAINTAINERS.md).
+
 ## Contract upgrades
 
 Deploy order, init args, and which contracts support an on-chain upgrade
@@ -95,6 +99,9 @@ Common commands are wrapped in a top-level `Makefile` — run `make help` (or
 just `make`) to list them: `build`, `test`, `lint`, `deploy-local`,
 `start`/`stop` (the docker-compose dev stack), `clean`, and `ci` (runs
 `lint`, `test`, and `build` together, the same checks CI runs).
+`make pr-preview PR=<n>` starts an isolated per-PR stack and
+`make pr-preview-down PR=<n>` tears it down — see
+[docs/preview-environments.md](docs/preview-environments.md).
 
 ## Running Tests
 

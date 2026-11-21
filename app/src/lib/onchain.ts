@@ -10,6 +10,15 @@ import {
 } from "@stellar/stellar-sdk";
 import type { WalletSession } from "./wallet";
 import { getChainConfig } from "./api";
+import { assertOnline } from "./online";
+import {
+  parseContractMetrics,
+  parseTableMetrics,
+  type ContractMetrics,
+  type TableMetrics,
+} from "./contract-metrics";
+import { fetchPlayerPositions, type PlayerPosition } from "./player-positions";
+import { parseTableRules, type TableRules } from "./table-rules";
 
 type LobstrSignResult = {
   signedTxXdr?: string;
@@ -148,6 +157,8 @@ async function submitWalletTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string | undefined> {
+  // Transactions are never queued for later: refuse while offline (#632).
+  assertOnline();
   const cfg = await getConfig();
   const server = new rpc.Server(cfg.rpcUrl, { allowHttp: cfg.rpcUrl.startsWith("http://") });
 
@@ -272,6 +283,35 @@ async function simulateReadCall(
   return scValToNative(result.retval);
 }
 
+/**
+ * Reads the contract-wide aggregate counters (tables created, hands played,
+ * total rake, active seats) via `get_contract_metrics` (Issue #563). The view
+ * reads running counters, so it costs the same however much the contract has
+ * done.
+ */
+export async function getContractMetrics(sourceAddress: string): Promise<ContractMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(
+    sourceAddress,
+    cfg.pokerTableContract,
+    "get_contract_metrics",
+    []
+  );
+  return parseContractMetrics(native);
+}
+
+/** Reads one table's hands played, total rake and seated players via `get_table_metrics` (Issue #563). */
+export async function getTableMetrics(
+  sourceAddress: string,
+  tableId: number
+): Promise<TableMetrics> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table_metrics", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ]);
+  return parseTableMetrics(native);
+}
+
 /** Subset of contracts/poker-table's TableConfig needed by auto-rebuy (Issue #164). */
 export interface RebuyRelevantTableConfig {
   minBuyIn: bigint;
@@ -321,6 +361,40 @@ export async function getTableConfig(
   };
 }
 
+/**
+ * Reads a table's `config_version` via `get_config_version` (#624). This is
+ * the cheap check the rules popover polls: it only changes when the table's
+ * rules do, so the full config is re-read only then.
+ */
+export async function getTableConfigVersion(
+  sourceAddress: string,
+  tableId: number
+): Promise<number> {
+  const cfg = await getConfig();
+  const native = await simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_config_version", [
+    nativeToScVal(tableId, { type: "u32" }),
+  ]);
+  return Number(native);
+}
+
+/**
+ * Reads everything the in-table rules popover shows (#624): the full table
+ * config from `get_table`, tagged with the `config_version` it was read at.
+ */
+export async function getTableRules(
+  sourceAddress: string,
+  tableId: number
+): Promise<TableRules> {
+  const cfg = await getConfig();
+  const [version, table] = await Promise.all([
+    getTableConfigVersion(sourceAddress, tableId),
+    simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_table", [
+      nativeToScVal(tableId, { type: "u32" }),
+    ]),
+  ]);
+  return parseTableRules(table, version);
+}
+
 /** Reads a seated player's rebuy count so far this session, via `get_player_buy_in` (Issue #164). */
 export async function getPlayerRebuyCount(
   sourceAddress: string,
@@ -334,6 +408,26 @@ export async function getPlayerRebuyCount(
   ])) as [bigint, number];
 
   return Number(native[1]);
+}
+
+/**
+ * Reads a wallet's position at each of `tableIds` with the contract's batched
+ * `get_player_positions` (#560): one simulated call per 20 tables rather than
+ * one `get_table` per table. Positions come back in the order the ids were
+ * first given; tables that don't exist or where the wallet isn't seated are
+ * included with `exists` / `seated` false.
+ */
+export async function getPlayerPositions(
+  sourceAddress: string,
+  tableIds: readonly number[]
+): Promise<PlayerPosition[]> {
+  const cfg = await getConfig();
+  return fetchPlayerPositions(tableIds, (ids) =>
+    simulateReadCall(sourceAddress, cfg.pokerTableContract, "get_player_positions", [
+      new Address(sourceAddress).toScVal(),
+      xdr.ScVal.scvVec(ids.map((id) => nativeToScVal(id, { type: "u32" }))),
+    ])
+  );
 }
 
 /**
@@ -379,6 +473,7 @@ async function submitAvatarTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string | undefined> {
+  assertOnline();
   const cfg = await getConfig();
   const avatarContract = (cfg as unknown as { player_avatar_contract?: string }).player_avatar_contract;
   if (!avatarContract) {

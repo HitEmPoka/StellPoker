@@ -112,3 +112,29 @@ row if it changes the accepted proof format). Until a `v2` API or a
 breaking proof-format change ships, this is the only supported
 combination — mixing a newer coordinator with older deployed contracts (or
 vice versa) is not tested and not supported.
+
+## Release channels and upgrade path
+
+The coordinator and every MPC node declare a release channel in the version
+handshake. `COORDINATOR_RELEASE_CHANNEL` accepts `stable` (the default) or
+`canary`; nodes use the matching `MPC_RELEASE_CHANNEL` setting.
+
+| Coordinator channel | Accepted node channels | Intended use |
+|---|---|---|
+| `stable` | `stable` only | Pin production to the stable train |
+| `canary` | `stable` or `canary` | Roll out the next train incrementally |
+
+The channel check happens before protocol and circuit version intersection.
+Both channels must still agree on the highest common protocol and circuit
+versions, so channel compatibility never bypasses proof-format checks.
+
+Upgrade path:
+
+1. Deploy the next coordinator and MPC nodes as `canary`, while keeping the
+  stable pool available for production traffic.
+2. Send a canary coordinator to a mixed stable/canary committee and verify
+  negotiation, proof success, and resource alerts.
+3. Upgrade the remaining nodes, then move the coordinator pool back to
+  `stable` once every node reports the stable release.
+4. Roll back by pinning the coordinator to `stable`; canary-only committees
+  are rejected instead of being mixed into stable traffic.

@@ -84,7 +84,8 @@ interface HorizonEventsPage {
   next?: { href: string };
 }
 
-function horizonBase(): string {
+/** Horizon base URL, from NEXT_PUBLIC_HORIZON_URL or the public testnet default. */
+export function horizonBase(): string {
   const rpcUrl = process.env.NEXT_PUBLIC_HORIZON_URL;
   if (rpcUrl) return rpcUrl.replace(/\/+$/, "");
   // Derive from coordinator env as fallback.

@@ -1,0 +1,58 @@
+{
+  "deal_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 55.0,
+      "p95": 58.5,
+      "p99": 60.0
+    }
+  },
+  "reveal_board_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 45.0,
+      "p95": 48.0,
+      "p99": 50.0
+    }
+  },
+  "showdown_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 250.0,
+      "p95": 265.0,
+      "p99": 275.0
+    }
+  },
+  "muck_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 30.0,
+      "p95": 32.0,
+      "p99": 34.0
+    }
+  },
+  "burn_card_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 35.0,
+      "p95": 37.5,
+      "p99": 39.0
+    }
+  },
+  "side_pot_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 30.0,
+      "p95": 32.0,
+      "p99": 34.0
+    }
+  },
+  "split_pot_valid": {
+    "num_runs": 30,
+    "prove_time_ms": {
+      "p50": 32.0,
+      "p95": 34.5,
+      "p99": 36.0
+    }
+  }
+}

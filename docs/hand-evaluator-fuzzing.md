@@ -181,3 +181,10 @@ Typical performance on a modern CPU:
 - [libFuzzer documentation](https://llvm.org/docs/LibFuzzer/)
 - [cargo-fuzz](https://docs.rs/cargo-fuzz/latest/cargo_fuzz/)
 - [Rust fuzzing book](https://rust-fuzz.github.io/book/cargo-fuzz.html)
+
+## Showdown winner consistency
+
+Hand category agreement is necessary but not sufficient: settlement depends on the
+circuit's `winner_index` and `tie_mask`. `docs/showdown-winner-consistency.md`
+describes the suite that compares those two values against the contract's evaluator
+on random deals, including a known kicker divergence.

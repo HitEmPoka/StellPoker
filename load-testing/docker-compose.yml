@@ -52,3 +52,25 @@ services:
     volumes:
       - ./k6:/scripts
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    # The official image runs as UID 12345, which cannot write the
+    # host-owned bind mount above. Run as root so handleSummary can persist
+    # k6/results/*.json for local runs and CI artifacts.
+    user: "0:0"
+
+  lobby-fixture:
+    image: node:20-alpine
+    container_name: stellpoker-k6-lobby-fixture
+    working_dir: /app
+    volumes:
+      - ./lobby-fixture:/app:ro
+    command: ["node", "/app/server.mjs"]
+    environment:
+      - PORT=8090
+      - TABLE_COUNT=${LOBBY_TABLE_COUNT:-5000}
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

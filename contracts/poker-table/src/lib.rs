@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contractimpl, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contractimpl, symbol_short, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Symbol, Vec,
 };
 
 mod anti_cheat;
@@ -16,15 +16,22 @@ mod blinds_schedule_test;
 mod budget_guard;
 #[cfg(test)]
 mod budget_ceilings_test;
+#[cfg(test)]
+mod button_test;
+#[cfg(test)]
+mod chip_math_test;
+#[cfg(test)]
+mod contract_version_test;
 mod commit_reveal;
 mod config_versioning;
+mod contract_version;
 mod constant_time;
 #[cfg(test)]
 mod event_schema;
 #[cfg(test)]
 mod event_schema_test;
 mod game;
-mod game_hub;
+pub mod game_hub;
 #[cfg(test)]
 mod gas_regression_test;
 mod governance;
@@ -34,16 +41,29 @@ mod history;
 mod invariants_test;
 #[cfg(test)]
 mod lifecycle_invariants_test;
+mod metrics;
+#[cfg(test)]
+mod metrics_test;
 #[cfg(test)]
 mod min_raise_test;
 mod multi_currency;
 mod pot;
+#[cfg(test)]
+mod positions_test;
+mod rake_history;
+#[cfg(test)]
+mod rake_history_test;
+#[cfg(test)]
+mod rake_proptest;
 #[cfg(test)]
 mod queue_test;
 #[cfg(test)]
 mod state_machine_test;
 #[cfg(test)]
 mod storage_layout_test;
+mod sunset;
+#[cfg(test)]
+mod sunset_test;
 mod test;
 mod time_bank;
 mod timeout;
@@ -52,7 +72,7 @@ mod tournament_lifecycle_test;
 mod ttl;
 #[cfg(test)]
 mod ttl_test;
-mod types;
+pub mod types;
 mod dispute_window;
 #[cfg(test)]
 mod dispute_window_test;
@@ -109,16 +129,24 @@ fn require_table_owner_or_governance(
 
 fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, PokerTableError> {
     let token = token::Client::new(env, &table.config.token);
+    // `committed` only describes live chips while a hand is running. After
+    // settlement it is a stale record of chips the pot already paid out (it is
+    // reset by the next `start_hand`), so refunding it would pay them twice.
+    let hand_live = !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement);
     let mut refunded = 0i128;
+    let mut payouts: Vec<(Address, i128)> = Vec::new(env);
     for i in 0..table.players.len() {
         let mut player = table
             .players
             .get(i)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        let balance = player.stack + player.committed;
-        let refund = balance;
+        let refund = if hand_live {
+            player.stack + player.committed
+        } else {
+            player.stack
+        };
         if refund > 0 {
-            token.transfer(&env.current_contract_address(), &player.address, &refund);
+            payouts.push_back((player.address.clone(), refund));
             refunded += refund;
         }
         player.stack = 0;
@@ -132,6 +160,10 @@ fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, Poker
     table.phase = GamePhase::Settlement;
     table.settlement_entered_ledger = env.ledger().sequence();
     table.last_action_ledger = env.ledger().sequence();
+
+    for payout in payouts.iter() {
+        token.transfer(&env.current_contract_address(), &payout.0, &payout.1);
+    }
     Ok(refunded)
 }
 
@@ -217,6 +249,46 @@ fn require_not_paused(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
         return Err(PokerTableError::ContractPaused);
     }
     Ok(())
+}
+
+/// Most table ids `get_player_positions` accepts in one call. Each id costs a
+/// table read, so this bounds the call's footprint and CPU.
+pub const MAX_POSITIONS_BATCH: u32 = 20;
+
+/// Build the [`PlayerPosition`] of `player` at `table_id`.
+fn player_position(env: &Env, player: &Address, table_id: u32) -> PlayerPosition {
+    let empty = |exists: bool, phase: GamePhase, hand_number: u32| PlayerPosition {
+        table_id,
+        exists,
+        seated: false,
+        seat_index: 0,
+        stack: 0,
+        committed: 0,
+        total_buy_in: 0,
+        phase,
+        hand_number,
+    };
+    let Ok(table) = load_table(env, table_id) else {
+        return empty(false, GamePhase::Waiting, 0);
+    };
+    for i in 0..table.players.len() {
+        if let Some(p) = table.players.get(i) {
+            if constant_time::address_eq(env, &p.address, player) {
+                return PlayerPosition {
+                    table_id,
+                    exists: true,
+                    seated: true,
+                    seat_index: p.seat_index,
+                    stack: p.stack,
+                    committed: p.committed,
+                    total_buy_in: p.total_buy_in,
+                    phase: table.phase.clone(),
+                    hand_number: table.hand_number,
+                };
+            }
+        }
+    }
+    empty(true, table.phase.clone(), table.hand_number)
 }
 
 pub(crate) fn load_table(env: &Env, table_id: u32) -> Result<TableState, PokerTableError> {
@@ -452,6 +524,26 @@ fn compute_rit_board_indices(
     Ok(())
 }
 
+/// The `count` deck indices after the first `skip` that `dealt` has not used,
+/// in ascending order: how `reveal_board_valid` picks the next board cards.
+fn next_unused_indices(env: &Env, dealt: &Vec<u32>, skip: u32, count: u32) -> Vec<u32> {
+    let mut used = [false; 52];
+    for idx in dealt.iter() {
+        if idx < 52 {
+            used[idx as usize] = true;
+        }
+    }
+    let mut out = Vec::new(env);
+    for idx in (0..52u32)
+        .filter(|&i| !used[i as usize])
+        .skip(skip as usize)
+        .take(count as usize)
+    {
+        out.push_back(idx);
+    }
+    out
+}
+
 fn emit_queue_positions(env: &Env, table_id: u32, queue: &Vec<QueueEntry>) {
     for i in 0..queue.len() {
         if let Some(entry) = queue.get(i) {
@@ -542,6 +634,7 @@ fn seat_next_from_queue(env: &Env, table_id: u32) -> Result<(), PokerTableError>
     });
     save_table(env, &table);
     save_queue(env, table_id, &new_queue);
+    metrics::record_seats_added(env, 1);
 
     env.events().publish(
         (Symbol::new(env, "queue_seated"), table_id),
@@ -577,6 +670,7 @@ fn require_emergency_timelock(env: &Env, table: &TableState) -> Result<(), Poker
 
 fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let token = token::Client::new(env, &table.config.token);
+    let mut payouts: Vec<(Address, i128)> = Vec::new(env);
     for i in 0..table.players.len() {
         let mut player = table
             .players
@@ -584,7 +678,7 @@ fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(),
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
         let refund = player.stack + player.committed;
         if refund > 0 {
-            token.transfer(&env.current_contract_address(), &player.address, &refund);
+            payouts.push_back((player.address.clone(), refund));
         }
         player.stack = 0;
         player.bet_this_round = 0;
@@ -604,6 +698,10 @@ fn execute_emergency_withdrawal(env: &Env, table: &mut TableState) -> Result<(),
         (Symbol::new(env, "emergency_withdrawal"), table.id),
         table.hand_number,
     );
+
+    for payout in payouts.iter() {
+        token.transfer(&env.current_contract_address(), &payout.0, &payout.1);
+    }
     Ok(())
 }
 
@@ -674,6 +772,8 @@ impl PokerTableContract {
             .instance()
             .set(&Symbol::new(&env, "next_id"), &(table_id + 1));
 
+        rake_history::record_initial(&env, table_id, table.config.rake_bps, &admin);
+
         env.events()
             .publish((Symbol::new(&env, "table_created"), table_id), admin);
 
@@ -695,6 +795,7 @@ impl PokerTableContract {
     ) -> Result<u32, PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
+        sunset::require_not_sunset(&env, table_id)?;
 
         // Check if player is banned
         if ban_list::is_banned(&env, table_id, &player) {
@@ -747,6 +848,7 @@ impl PokerTableContract {
 
         save_table(&env, &table);
         index_player_table(&env, &player, table_id);
+        metrics::record_seats_added(&env, 1);
         // Initialize time bank for the new player if configured
         time_bank::init_for_player(&env, table_id, &player, None);
 
@@ -772,6 +874,29 @@ impl PokerTableContract {
             .persistent()
             .get(&DataKey::PlayerTables(player))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// A wallet's position at each of `table_ids`, in one call (view function),
+    /// so a multi-table dashboard need not fetch every table's full state.
+    ///
+    /// Returns one [`PlayerPosition`] per requested id, in request order
+    /// (duplicates included). A table that does not exist, or where the wallet
+    /// is not seated, still gets an entry (`exists` / `seated` say which) rather
+    /// than failing the whole batch. At most [`MAX_POSITIONS_BATCH`] ids are
+    /// accepted; more fails with `BatchTooLarge` before any table is read.
+    pub fn get_player_positions(
+        env: Env,
+        player: Address,
+        table_ids: Vec<u32>,
+    ) -> Result<Vec<PlayerPosition>, PokerTableError> {
+        if table_ids.len() > MAX_POSITIONS_BATCH {
+            return Err(PokerTableError::BatchTooLarge);
+        }
+        let mut positions: Vec<PlayerPosition> = Vec::new(&env);
+        for table_id in table_ids.iter() {
+            positions.push_back(player_position(&env, &player, table_id));
+        }
+        Ok(positions)
     }
 
     /// Number of tables a wallet is currently seated at.
@@ -800,6 +925,7 @@ impl PokerTableContract {
     ) -> Result<i128, PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
+        sunset::require_not_sunset(&env, table_id)?;
 
         let mut table = load_table(&env, table_id)?;
 
@@ -947,10 +1073,6 @@ impl PokerTableContract {
             if constant_time::address_eq(&env, &p.address, &player) {
                 found = true;
                 withdrawn = p.stack;
-                if withdrawn > 0 {
-                    let token = token::Client::new(&env, &table.config.token);
-                    token.transfer(&env.current_contract_address(), &player, &withdrawn);
-                }
             } else {
                 new_players.push_back(p);
             }
@@ -987,13 +1109,19 @@ impl PokerTableContract {
 
         save_table(&env, &table);
         unindex_player_table(&env, &player, table_id);
+        metrics::record_seats_removed(&env, 1);
 
         env.events().publish(
             (Symbol::new(&env, "player_left"), table_id),
-            (player, withdrawn),
+            (player.clone(), withdrawn),
         );
 
         seat_next_from_queue(&env, table_id)?;
+
+        if withdrawn > 0 {
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), &player, &withdrawn);
+        }
 
         Ok(withdrawn)
     }
@@ -1020,13 +1148,13 @@ impl PokerTableContract {
             return Err(PokerTableError::NotQueued);
         }
 
+        save_queue(&env, table_id, &new_queue);
+
         if refund > 0 {
             let table = load_table(&env, table_id)?;
             let token = token::Client::new(&env, &table.config.token);
             token.transfer(&env.current_contract_address(), &player, &refund);
         }
-
-        save_queue(&env, table_id, &new_queue);
 
         env.events().publish(
             (Symbol::new(&env, "queue_left"), table_id),
@@ -1045,6 +1173,7 @@ impl PokerTableContract {
     /// Start a new hand. Called after enough players are seated.
     pub fn start_hand(env: Env, table_id: u32) -> Result<(), PokerTableError> {
         require_not_paused(&env, table_id)?;
+        sunset::require_not_sunset(&env, table_id)?;
         let mut table = load_table(&env, table_id)?;
 
         if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
@@ -1150,15 +1279,25 @@ impl PokerTableContract {
         } else {
             table.current_turn = (table.dealer_seat + 3) % num_players;
         }
-        // Set action deadline for the first player to act (with optional time bank base)
-        let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
-        // Allow time-bank extension to apply at the very start if player has auto-extension enabled
-        table.action_deadline = crate::time_bank::apply_initial_deadline(
-            &env,
-            table.id,
-            table.current_turn,
-            base_deadline,
-        );
+        if game::bomb_pot_ante(&env, &table).is_some() {
+            // Bomb pot: the antes are in, so skip preflop betting and deal the flop.
+            betting::advance_to_next_phase(&env, &mut table)?;
+        } else {
+            // Blinds or antes can leave no one able to bet (run out the board) or
+            // the first seat to act all in (pass the turn on).
+            betting::skip_round_if_all_in(&env, &mut table)?;
+        }
+        if table.phase == GamePhase::Preflop {
+            // Set action deadline for the first player to act (with optional time bank base)
+            let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
+            // Allow time-bank extension to apply at the very start if player has auto-extension enabled
+            table.action_deadline = crate::time_bank::apply_initial_deadline(
+                &env,
+                table.id,
+                table.current_turn,
+                base_deadline,
+            );
+        }
 
         save_table(&env, &table);
 
@@ -1443,6 +1582,76 @@ impl PokerTableContract {
         Ok(())
     }
 
+    /// Rabbit hunt (#858): after a hand settles without a showdown, the
+    /// committee may reveal the board cards it would have dealt, with the
+    /// same reveal proof as a real street. Cards come in deal order (the next
+    /// unused deck indices, as `reveal_board_valid` picks them), over one or
+    /// more calls, up to the rest of the five-card board. Hole cards are never
+    /// revealed. The table state is not touched, so the cards cannot reach a
+    /// later hand, which is dealt from a new deck. Emits `rabbit_hunt`, not
+    /// `board_revealed`.
+    pub fn rabbit_hunt(
+        env: Env,
+        table_id: u32,
+        committee: Address,
+        cards: Vec<u32>,
+        indices: Vec<u32>,
+        proof: Bytes,
+        public_inputs: Bytes,
+    ) -> Result<(), PokerTableError> {
+        committee.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let table = load_table(&env, table_id)?;
+        if constant_time::address_ne(&env, &committee, &table.committee) {
+            return Err(PokerTableError::NotAuthorizedCommittee);
+        }
+
+        // The newest archived hand must be this one, settled without a showdown.
+        let settled_without_showdown = history::get_history(&env, table_id, 1)
+            .get(0)
+            .map(|r| r.hand_number == table.hand_number && !r.showdown)
+            .unwrap_or(false);
+        let key = DataKey::RabbitHunt(table_id);
+        let (hunted_hand, hunted): (u32, u32) =
+            env.storage().instance().get(&key).unwrap_or((0, 0));
+        let hunted = if hunted_hand == table.hand_number {
+            hunted
+        } else {
+            0
+        };
+        let remaining = BOARD_INDICES_COUNT.saturating_sub(table.board_cards.len() + hunted);
+        if !settled_without_showdown || remaining == 0 {
+            return Err(PokerTableError::RabbitHuntNotAvailable);
+        }
+        if cards.is_empty() || cards.len() != indices.len() || cards.len() > remaining {
+            return Err(PokerTableError::WrongCardCount);
+        }
+        if indices != next_unused_indices(&env, &table.dealt_indices, hunted, cards.len()) {
+            return Err(PokerTableError::InvalidRabbitHuntIndices);
+        }
+
+        let verifier_client = verifier::ZkVerifierClient::new(&env, &table.config.verifier);
+        if !verifier_client.verify_reveal(
+            &proof,
+            &public_inputs,
+            &table.deck_root,
+            &cards,
+            &indices,
+        ) {
+            return Err(PokerTableError::RevealProofVerificationFailed);
+        }
+
+        env.storage()
+            .instance()
+            .set(&key, &(table.hand_number, hunted + cards.len()));
+        env.events().publish(
+            (Symbol::new(&env, "rabbit_hunt"), table_id),
+            (table.hand_number, cards, indices),
+        );
+        Ok(())
+    }
+
     /// Submit showdown: reveal hole cards, verify winner, settle.
     /// Handles Run-It-Twice showdowns for both runs when active.
     ///
@@ -1581,6 +1790,12 @@ impl PokerTableContract {
         } else {
             // Normal showdown
             game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
+            // settle_showdown has checked winner_index is a seat; its proved hole cards:
+            let winner_cards = (
+                extract_u32_from_public_inputs(&public_inputs, 13 + winner_index),
+                extract_u32_from_public_inputs(&public_inputs, 19 + winner_index),
+            );
+            game::pay_seven_deuce_bounty(&env, &mut table, winner_index, tie_mask, winner_cards)?;
             save_table(&env, &table);
             Ok(())
         }
@@ -1624,6 +1839,46 @@ impl PokerTableContract {
     /// Read current table state (view function).
     pub fn get_table(env: Env, table_id: u32) -> Result<TableState, PokerTableError> {
         load_table(&env, table_id)
+    }
+
+    /// Export a versioned full-table snapshot for replay tools (#570).
+    ///
+    /// Contains stacks, seats, phase, button (`dealer_seat`) and config in
+    /// the stable `TableExportV1` format (`version == TABLE_EXPORT_VERSION`).
+    /// Read-only view consumed by the hand replayer
+    /// (`scripts/replay-table.py`); it provides the initial state a
+    /// replayer seeds from before applying the on-chain action history.
+    pub fn export_table_state(env: Env, table_id: u32) -> Result<TableExportV1, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        let mut seats = Vec::new(&env);
+        for i in 0..table.players.len() {
+            let p = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            seats.push_back(ExportSeat {
+                seat_index: p.seat_index,
+                address: p.address,
+                stack: p.stack,
+                bet_this_round: p.bet_this_round,
+                committed: p.committed,
+                folded: p.folded,
+                all_in: p.all_in,
+                sitting_out: p.sitting_out,
+            });
+        }
+        Ok(TableExportV1 {
+            version: TABLE_EXPORT_VERSION,
+            table_id: table.id,
+            phase: table.phase,
+            dealer_seat: table.dealer_seat,
+            current_turn: table.current_turn,
+            hand_number: table.hand_number,
+            pot: table.pot,
+            seats,
+            board_cards: table.board_cards,
+            config: table.config,
+        })
     }
 
     /// Configure an optional 2x/3x big-blind straddle for future hands (legacy entrypoint, backward compat).
@@ -1784,6 +2039,41 @@ impl PokerTableContract {
         env.storage()
             .instance()
             .get(&DataKey::ActiveStraddleState(table_id))
+    }
+
+    /// Make every `interval`-th hand a bomb pot (#857): each player antes
+    /// `ante`, there are no blinds or straddle, and betting starts on the
+    /// flop. `interval` 0 turns bomb pots off. Admin only, between hands.
+    pub fn configure_bomb_pot(
+        env: Env,
+        table_id: u32,
+        interval: u32,
+        ante: i128,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        if interval > 0 && ante <= 0 {
+            return Err(PokerTableError::InvalidBombPotConfig);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::BombPotConfig(table_id), &(interval, ante));
+        env.events().publish(
+            (Symbol::new(&env, "bomb_pot_configured"), table_id),
+            (interval, ante),
+        );
+        Ok(())
+    }
+
+    /// The table's bomb-pot `(interval, ante)`; `(0, 0)` when never set (view function).
+    pub fn get_bomb_pot_config(env: Env, table_id: u32) -> (u32, i128) {
+        env.storage()
+            .instance()
+            .get(&DataKey::BombPotConfig(table_id))
+            .unwrap_or((0, 0))
     }
 
     /// Approve recovery of every player's own stack and committed chips after
@@ -2101,6 +2391,124 @@ impl PokerTableContract {
             .get(&DataKey::TableClosure(table_id)))
     }
 
+    /// Freeze a table and hand back every residual balance (table admin only).
+    ///
+    /// The last step of the sunset runbook (`docs/contract-sunset-runbook.md`).
+    /// The table must be between hands with no chips left in any seat, which is
+    /// the state `execute_table_closure` leaves it in. In one call this:
+    ///
+    /// * refunds every escrowed waiting-list buy-in to its owner,
+    /// * pays the accrued house rake and the jackpot pool to the table admin,
+    /// * clears the seats and the wallet-to-table index, and
+    /// * writes the [`SunsetRecord`] that freezes the table: `join_table`,
+    ///   `buy_in_with_currency`, `rebuy` and `start_hand` fail with
+    ///   `TableSunset` from then on.
+    ///
+    /// Returns what was swept and refunded.
+    pub fn finalize_sunset(env: Env, table_id: u32) -> Result<SunsetRecord, PokerTableError> {
+        let mut table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        if sunset::is_sunset(&env, table_id) {
+            return Err(PokerTableError::TableSunset);
+        }
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) || table.pot != 0 {
+            return Err(PokerTableError::SunsetNotReady);
+        }
+        for i in 0..table.players.len() {
+            let player = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            // After settlement `committed` is a stale record of chips the pot
+            // already paid out, so only the stack is a live balance.
+            if player.stack != 0 {
+                return Err(PokerTableError::SunsetNotReady);
+            }
+        }
+
+        let token = token::Client::new(&env, &table.config.token);
+
+        // Waiting-list buy-ins are escrowed in this contract until seated.
+        let queue = load_queue(&env, table_id);
+        let mut queue_refunded = 0i128;
+        for i in 0..queue.len() {
+            let entry = queue.get(i).ok_or(PokerTableError::NotQueued)?;
+            if entry.buy_in > 0 {
+                token.transfer(
+                    &env.current_contract_address(),
+                    &entry.player,
+                    &entry.buy_in,
+                );
+                queue_refunded += entry.buy_in;
+            }
+        }
+        let queue_key = DataKey::Queue(table_id);
+        env.storage().persistent().remove(&queue_key);
+
+        let rake_swept = table.rake_balance;
+        let jackpot_swept = table.jackpot_balance;
+        // An unclaimed seven-deuce bounty goes back to the admin who funded it.
+        let bounty_key = DataKey::SevenDeuceBounty(table_id);
+        let bounty_swept: i128 = env.storage().instance().get(&bounty_key).unwrap_or(0);
+        env.storage().instance().remove(&bounty_key);
+        let payout = rake_swept + jackpot_swept + bounty_swept;
+        if payout > 0 {
+            token.transfer(&env.current_contract_address(), &table.admin, &payout);
+        }
+        table.rake_balance = 0;
+        table.jackpot_balance = 0;
+
+        let seats = table.players.len();
+        for i in 0..seats {
+            let player = table
+                .players
+                .get(i)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            unindex_player_table(&env, &player.address, table_id);
+        }
+        table.players = Vec::new(&env);
+        table.side_pots = Vec::new(&env);
+        table.dealer_seat = 0;
+        table.current_turn = 0;
+        save_table(&env, &table);
+        metrics::record_seats_removed(&env, seats);
+
+        // A closure notice that is still pending has nothing left to close.
+        let closure_key = DataKey::TableClosure(table_id);
+        env.storage().persistent().remove(&closure_key);
+
+        let record = SunsetRecord {
+            sunset_at_ledger: env.ledger().sequence(),
+            rake_swept,
+            jackpot_swept,
+            queue_refunded,
+        };
+        sunset::save_record(&env, table_id, &record);
+
+        env.events().publish(
+            (Symbol::new(&env, "table_sunset"), table_id),
+            (
+                table.admin.clone(),
+                rake_swept,
+                jackpot_swept,
+                queue_refunded,
+            ),
+        );
+        Ok(record)
+    }
+
+    /// True once `finalize_sunset` has frozen the table (view function).
+    pub fn is_table_sunset(env: Env, table_id: u32) -> bool {
+        sunset::is_sunset(&env, table_id)
+    }
+
+    /// What `finalize_sunset` swept and refunded, if the table was sunset
+    /// (view function).
+    pub fn get_sunset_record(env: Env, table_id: u32) -> Option<SunsetRecord> {
+        sunset::load_record(&env, table_id)
+    }
+
     /// Get the Game Hub address for a table.
     pub fn get_hub(env: Env, table_id: u32) -> Result<Address, PokerTableError> {
         let table = load_table(&env, table_id)?;
@@ -2260,6 +2668,39 @@ impl PokerTableContract {
         Ok(())
     }
 
+    pub fn propose_versioned_upgrade(
+        env: Env,
+        table_id: u32,
+        new_wasm_hash: BytesN<32>,
+        target_version: u32,
+        delay_seconds: u64,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+
+        if delay_seconds < MIN_UPGRADE_DELAY_SECONDS {
+            return Err(PokerTableError::UpgradeDelayTooShort);
+        }
+        contract_version::set_pending_target_version(&env, table_id, target_version)?;
+
+        let execute_after = env.ledger().timestamp() + delay_seconds;
+        let proposal = UpgradeProposal {
+            new_wasm_hash: new_wasm_hash.clone(),
+            execute_after,
+        };
+        let proposal_key = DataKey::UpgradeProposal(table_id);
+        env.storage().persistent().set(&proposal_key, &proposal);
+        env.storage()
+            .persistent()
+            .extend_ttl(&proposal_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+        env.events().publish(
+            (Symbol::new(&env, "versioned_upgrade_proposed"), table_id),
+            (new_wasm_hash, target_version, execute_after),
+        );
+        Ok(())
+    }
+
     /// Execute a previously proposed upgrade (admin only), once its delay
     /// has elapsed. Always upgrades to the hash committed at proposal time —
     /// there is no way to swap in a different hash at execution time.
@@ -2300,6 +2741,13 @@ impl PokerTableContract {
         env.storage()
             .persistent()
             .extend_ttl(&last_key, TABLE_TTL_THRESHOLD, TABLE_TTL_EXTEND);
+
+        let _migration_window = contract_version::complete_upgrade(
+            &env,
+            table_id,
+            proposal.new_wasm_hash.clone(),
+            contract_version::DEFAULT_MIGRATION_WINDOW_SECONDS,
+        )?;
 
         env.deployer()
             .update_current_contract_wasm(proposal.new_wasm_hash.clone());
@@ -2400,6 +2848,7 @@ impl PokerTableContract {
         }
 
         env.storage().persistent().remove(&key);
+        contract_version::rollback(&env, table_id)?;
         env.deployer()
             .update_current_contract_wasm(previous_hash.clone());
 
@@ -2446,6 +2895,39 @@ impl PokerTableContract {
             .get(&DataKey::UpgradeProposal(table_id))
     }
 
+    pub fn get_contract_version(env: Env, table_id: u32) -> u32 {
+        contract_version::get_contract_version(&env, table_id)
+    }
+
+    pub fn get_contract_version_record(
+        env: Env,
+        table_id: u32,
+    ) -> Option<contract_version::ContractVersionRecord> {
+        contract_version::get_contract_version_record(&env, table_id)
+    }
+
+    pub fn get_pending_contract_version(env: Env, table_id: u32) -> Option<u32> {
+        contract_version::get_pending_target_version(&env, table_id)
+    }
+
+    pub fn get_contract_migration_window(
+        env: Env,
+        table_id: u32,
+    ) -> Option<ContractMigrationWindow> {
+        contract_version::get_migration_window(&env, table_id)
+    }
+
+    pub fn close_contract_migration_window(env: Env, table_id: u32) -> Result<bool, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        let closed = contract_version::close_migration_window(&env, table_id);
+        env.events().publish(
+            (Symbol::new(&env, "contract_migration_closed"), table_id),
+            (),
+        );
+        Ok(closed)
+    }
+
     /// Update the rake (admin only). Capped at `MAX_RAKE_BPS` (5%).
     pub fn set_rake_bps(env: Env, table_id: u32, rake_bps: u32) -> Result<(), PokerTableError> {
         if rake_bps > pot::MAX_RAKE_BPS {
@@ -2453,8 +2935,14 @@ impl PokerTableContract {
         }
         let mut table = load_table(&env, table_id)?;
         table.admin.require_auth();
+        let previous_bps = table.config.rake_bps;
         table.config.rake_bps = rake_bps;
         save_table(&env, &table);
+        if rake_history::record_change(&env, table_id, previous_bps, rake_bps, &table.admin)
+            .is_some()
+        {
+            config_versioning::record_config_change(&env, table_id, symbol_short!("rake_bps"))?;
+        }
 
         env.events()
             .publish((Symbol::new(&env, "rake_bps_updated"), table_id), rake_bps);
@@ -2486,6 +2974,67 @@ impl PokerTableContract {
         Ok(())
     }
 
+    /// Contract-wide aggregate metrics: tables created, hands played, total
+    /// rake and active seats (view function).
+    ///
+    /// Reads two counters (the metrics record and the table id allocator), so
+    /// the cost does not depend on how many tables or hands exist. The counters
+    /// cover activity since the version that introduced them was deployed. See
+    /// `docs/contract-metrics.md` for what each one counts and what it costs to
+    /// keep up to date.
+    pub fn get_contract_metrics(env: Env) -> ContractMetrics {
+        let mut counters = metrics::load_contract(&env);
+        counters.tables_created = env
+            .storage()
+            .instance()
+            .get::<Symbol, u32>(&Symbol::new(&env, "next_id"))
+            .unwrap_or(0);
+        counters
+    }
+
+    /// Aggregate metrics for one table: hands played, total rake and seated
+    /// players (view function). Costs one table read and one counter read.
+    pub fn get_table_metrics(env: Env, table_id: u32) -> Result<TableMetrics, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        let totals = metrics::load_table_totals(&env, table_id);
+        Ok(TableMetrics {
+            hands_played: totals.hands_played,
+            total_rake: totals.total_rake,
+            active_seats: table.players.len(),
+        })
+    }
+
+    /// Rake configuration history for a table, oldest first (view function).
+    /// Entry 0 is the rake the table was created with; each later entry is a
+    /// `set_rake_bps` change with the time it took effect. Returns at most
+    /// `rake_history::MAX_PAGE_SIZE` entries per call; page with `start`.
+    pub fn get_rake_history(
+        env: Env,
+        table_id: u32,
+        start: u32,
+        limit: u32,
+    ) -> Result<Vec<rake_history::RakeChange>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::page(&env, table_id, start, limit))
+    }
+
+    /// Number of entries in a table's rake history (view function).
+    pub fn get_rake_history_len(env: Env, table_id: u32) -> Result<u32, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::len(&env, table_id))
+    }
+
+    /// The rake (basis points) that was in force at `timestamp` (view
+    /// function), or `None` if `timestamp` precedes the table's history.
+    pub fn get_rake_bps_at(
+        env: Env,
+        table_id: u32,
+        timestamp: u64,
+    ) -> Result<Option<u32>, PokerTableError> {
+        load_table(&env, table_id)?;
+        Ok(rake_history::rake_bps_at(&env, table_id, timestamp))
+    }
+
     /// Read the rake accumulated so far for a table (view function).
     pub fn get_rake_balance(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
         let table = load_table(&env, table_id)?;
@@ -2496,6 +3045,50 @@ impl PokerTableContract {
     pub fn get_jackpot_balance(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
         let table = load_table(&env, table_id)?;
         Ok(table.jackpot_balance)
+    }
+
+    /// Add `amount` to the table's seven-deuce bounty (#856). The table admin
+    /// funds it; the chips are escrowed outside the pot and paid to the next
+    /// player who wins a showdown outright with 7-2 offsuit. Returns the new
+    /// balance.
+    pub fn fund_seven_deuce_bounty(
+        env: Env,
+        table_id: u32,
+        amount: i128,
+    ) -> Result<i128, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        sunset::require_not_sunset(&env, table_id)?;
+        if amount <= 0 {
+            return Err(PokerTableError::InvalidBountyAmount);
+        }
+        let key = DataKey::SevenDeuceBounty(table_id);
+        let balance = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&key)
+            .unwrap_or(0)
+            .checked_add(amount)
+            .ok_or(PokerTableError::InvalidBountyAmount)?;
+        token::Client::new(&env, &table.config.token).transfer(
+            &table.admin,
+            env.current_contract_address(),
+            &amount,
+        );
+        env.storage().instance().set(&key, &balance);
+        env.events().publish(
+            (Symbol::new(&env, "seven_deuce_bounty_funded"), table_id),
+            (amount, balance),
+        );
+        Ok(balance)
+    }
+
+    /// The table's unclaimed seven-deuce bounty (view function).
+    pub fn get_seven_deuce_bounty(env: Env, table_id: u32) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SevenDeuceBounty(table_id))
+            .unwrap_or(0)
     }
 
     /// Read the jackpot configuration parameters for a table (view function).
@@ -2598,10 +3191,11 @@ impl PokerTableContract {
 
         let amount = table.rake_balance;
         if amount > 0 {
-            let token = token::Client::new(&env, &table.config.token);
-            token.transfer(&env.current_contract_address(), &table.admin, &amount);
             table.rake_balance = 0;
             save_table(&env, &table);
+
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), &table.admin, &amount);
         }
 
         env.events().publish(
@@ -2651,7 +3245,6 @@ impl PokerTableContract {
             return Err(PokerTableError::DeadChipsAlreadySwept);
         }
 
-        let token = token::Client::new(&env, &table.config.token);
         let mut total_swept: i128 = 0;
         let mut swept_amounts: Vec<(Address, i128)> = Vec::new(&env);
 
@@ -2663,7 +3256,6 @@ impl PokerTableContract {
                 .ok_or(PokerTableError::InvalidPlayerIndex)?;
             let amount = player.stack;
             if amount > 0 {
-                token.transfer(&env.current_contract_address(), treasury_addr, &amount);
                 total_swept += amount;
                 swept_amounts.push_back((player.address.clone(), amount));
                 player.stack = 0;
@@ -2673,7 +3265,6 @@ impl PokerTableContract {
 
         // Sweep any remaining pot (should be 0 in Settlement, but just in case)
         if table.pot > 0 {
-            token.transfer(&env.current_contract_address(), treasury_addr, &table.pot);
             total_swept += table.pot;
             table.pot = 0;
         }
@@ -2682,7 +3273,6 @@ impl PokerTableContract {
         for i in 0..table.side_pots.len() {
             if let Some(pot) = table.side_pots.get(i) {
                 if pot.amount > 0 {
-                    token.transfer(&env.current_contract_address(), treasury_addr, &pot.amount);
                     total_swept += pot.amount;
                 }
             }
@@ -2703,6 +3293,11 @@ impl PokerTableContract {
         // Update table state
         table.phase = GamePhase::Settlement; // Already in Settlement, but explicit
         save_table(&env, &table);
+
+        if total_swept > 0 {
+            let token = token::Client::new(&env, &table.config.token);
+            token.transfer(&env.current_contract_address(), treasury_addr, &total_swept);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "dead_chips_swept"), table_id),
@@ -2873,6 +3468,7 @@ impl PokerTableContract {
     ) -> Result<u32, PokerTableError> {
         player.require_auth();
         require_not_paused(&env, table_id)?;
+        sunset::require_not_sunset(&env, table_id)?;
 
         let table = load_table(&env, table_id)?;
 

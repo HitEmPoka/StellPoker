@@ -1,0 +1,12 @@
+{
+  "last_updated": "2026-10-20T00:00:00Z",
+  "summary": {
+    "total_tests_monitored": 20,
+    "flaky_tests_count": 0,
+    "quarantined_count": 0,
+    "rerun_only_failures_count": 0,
+    "overall_flake_rate": 0.0
+  },
+  "flaky_tests": [],
+  "history": []
+}

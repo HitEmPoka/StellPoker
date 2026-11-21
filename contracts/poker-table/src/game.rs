@@ -62,11 +62,28 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     }
 
     let level = current_blind_level(table)?;
+    let bomb_ante = bomb_pot_ante(env, table);
 
     let num_players = table.players.len() as u32;
 
-    // Check for returning players who missed blinds and mark them as owing dead blinds
-    detect_and_mark_missed_blinds(table);
+    // Collect antes from every seated player before blinds. Antes go
+    // straight to the pot and do not count toward `bet_this_round` (unlike
+    // blinds), matching standard tournament ante semantics: they aren't
+    // part of what a player must call to stay in the hand.
+    let ante_amount = match level.ante {
+        AnteMode::Fixed(a) => a,
+        AnteMode::Percentage(p) => {
+            if p > 100 {
+                return Err(PokerTableError::InvalidAntePercentage);
+            }
+            (level.big_blind * p as i128) / 100
+        }
+        AnteMode::None => 0,
+    };
+    // A bomb pot takes its own ante in place of the blinds (below), not this one.
+    if bomb_ante.is_none() {
+        post_antes(table, ante_amount)?;
+    }
 
     // Post blinds first to determine who the big blind is
     let active_players = active_player_count_for_new_hand(table);
@@ -86,8 +103,14 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         bb_seat = next_active_seat(table, sb_seat).unwrap();
     }
 
-    post_blind(table, sb_seat, level.small_blind)?;
-    post_blind(table, bb_seat, level.big_blind)?;
+    match bomb_ante {
+        // Bomb pot: every player antes instead of posting blinds, and no straddle.
+        Some(ante) => post_antes(table, ante)?,
+        None => {
+            post_blind(table, sb_seat, level.small_blind)?;
+            post_blind(table, bb_seat, level.big_blind)?;
+        }
+    }
 
     // Update last_blind_posted for small and big blind
     if let Some(mut p) = table.players.get(sb_seat) {
@@ -144,7 +167,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         .instance()
         .get::<DataKey, StraddleConfig>(&DataKey::StraddleConfig(table.id))
     {
-        if straddle.multiplier != 0 {
+        if straddle.multiplier != 0 && bomb_ante.is_none() {
             // Resolve seat and raw amount based on position
             let resolved: Option<(u32, i128, bool)> = match straddle.position.clone() {
                 StraddlePosition::BigBlind => Some((
@@ -261,6 +284,16 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     Ok(())
 }
 
+/// The bomb-pot ante when the current hand is a bomb pot (#857): every
+/// `interval`-th hand set by `configure_bomb_pot`. `None` otherwise.
+pub(crate) fn bomb_pot_ante(env: &Env, table: &TableState) -> Option<i128> {
+    let (interval, ante): (u32, i128) = env
+        .storage()
+        .instance()
+        .get(&DataKey::BombPotConfig(table.id))?;
+    (interval > 0 && table.hand_number.is_multiple_of(interval)).then_some(ante)
+}
+
 /// The blinds/ante level currently active for `table`.
 pub(crate) fn current_blind_level(table: &TableState) -> Result<BlindLevel, PokerTableError> {
     table
@@ -325,6 +358,20 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
     }
 }
 
+/// Collect `amount` as an ante from every player who has chips.
+fn post_antes(table: &mut TableState, amount: i128) -> Result<(), PokerTableError> {
+    if amount > 0 {
+        for i in 0..table.players.len() {
+            if let Some(p) = table.players.get(i) {
+                if !p.sitting_out && p.stack > 0 {
+                    post_ante(table, p.seat_index, amount)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Collect an ante from a seat: deducted from stack straight into the pot,
 /// without affecting `bet_this_round` (see call site for why).
 fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), PokerTableError> {
@@ -332,7 +379,8 @@ fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Poke
         .players
         .get(seat)
         .ok_or(PokerTableError::InvalidPlayerIndex)?;
-    let actual = if player.stack < amount {
+    // An ante that empties the stack is all in, so side pots cap this player.
+    let actual = if player.stack <= amount {
         player.all_in = true;
         player.stack
     } else {
@@ -635,6 +683,38 @@ fn process_bad_beat_jackpot(
         (winner_seat, loser_seat, jackpot, loser_share, winner_share),
     );
 
+    Ok(())
+}
+
+/// Pay the table's seven-deuce bounty (#856) to `winner_seat` when it won the
+/// showdown outright (no other seat in `tie_mask`) holding 7-2 offsuit.
+///
+/// The bounty is escrowed outside the pot, so rake never touches it. It is
+/// paid once, from the hand's single settlement, and the balance is cleared.
+pub fn pay_seven_deuce_bounty(
+    env: &Env,
+    table: &mut TableState,
+    winner_seat: u32,
+    tie_mask: u32,
+    winner_cards: (u32, u32),
+) -> Result<(), PokerTableError> {
+    let key = DataKey::SevenDeuceBounty(table.id);
+    let bounty: i128 = env.storage().instance().get(&key).unwrap_or(0);
+    let outright = (tie_mask & !(1u32 << winner_seat)) == 0;
+    if bounty <= 0 || !outright || !pot::is_seven_deuce_offsuit(winner_cards.0, winner_cards.1) {
+        return Ok(());
+    }
+
+    env.storage().instance().remove(&key);
+    credit_player_by_seat(table, winner_seat, bounty)?;
+    let winner = table
+        .players
+        .get(winner_seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
+    env.events().publish(
+        (Symbol::new(env, "seven_deuce_bounty_paid"), table.id),
+        (table.hand_number, winner.address, bounty),
+    );
     Ok(())
 }
 

@@ -1,0 +1,43 @@
+name: Migration Safety
+
+on:
+  pull_request:
+    paths:
+      - "services/coordinator/migrations/**"
+      - "scripts/db/check_migration_safety.py"
+      - "scripts/db/check-migration-safety.sh"
+
+jobs:
+  check:
+    name: Blue-green safety check on changed migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect changed migration base names
+        id: changed
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          # Strip the .up.sql / .down.sql suffix and dedupe so we check each
+          # migration pair once.
+          names=$(git diff --name-only --diff-filter=AM "$base" "$head" \
+            -- 'services/coordinator/migrations/*.sql' \
+            | sed -E 's|services/coordinator/migrations/||; s/\.(up|down)\.sql$//' \
+            | sort -u \
+            | tr '\n' ' ')
+          echo "names=$names" >>"$GITHUB_OUTPUT"
+
+      - name: Run safety check
+        if: steps.changed.outputs.names != ''
+        run: ./scripts/db/check-migration-safety.sh ${{ steps.changed.outputs.names }}
+
+      - name: Nothing to check
+        if: steps.changed.outputs.names == ''
+        run: echo "No changed migration files in this PR."

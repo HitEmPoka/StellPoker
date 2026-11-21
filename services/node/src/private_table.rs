@@ -283,6 +283,8 @@ pub async fn dispatch_share_payloads(
     let total_parties = u32::try_from(peer_http_endpoints.len())
         .map_err(|_| "too many peer endpoints".to_string())?;
     let client = crate::pool::peer_client();
+    // Forward the caller's trace so peer `/shares` handlers join it (Issue #672).
+    let trace = crate::trace_context::current();
 
     let mut handles = Vec::with_capacity(peer_http_endpoints.len());
     for (party_id_usize, endpoint) in peer_http_endpoints.iter().enumerate() {
@@ -308,9 +310,9 @@ pub async fn dispatch_share_payloads(
         let circuit_name = circuit_name.to_string();
         let client = client.clone();
         let nonce = rand::random::<u64>();
+        let trace = trace.clone();
         let handle = tokio::spawn(async move {
-            let response = client
-                .post(&url)
+            let response = crate::trace_context::inject(client.post(&url), trace.as_ref())
                 .json(&serde_json::json!({
                     "circuit_name": circuit_name,
                     "share_data": share_data,
@@ -699,6 +701,9 @@ async fn refresh_all_shares(
     for table_id in &active_table_ids {
         let refreshed = generate_refresh_mask(node_id);
         let share_set_id = new_share_set_id(*table_id);
+        // Background rounds have no caller; give each table's round its own
+        // trace so all peers' refresh logs correlate (Issue #672).
+        let trace = crate::trace_context::TraceContext::new_root();
 
         {
             let mut guard = tables.write().await;
@@ -731,9 +736,9 @@ async fn refresh_all_shares(
                 let client = client.clone();
                 let share_set_id = share_set_id.clone();
                 let total = peer_http_endpoints.len() as u32;
+                let trace = trace.clone();
                 tokio::spawn(async move {
-                    let _ = client
-                        .post(&url)
+                    let _ = crate::trace_context::inject(client.post(&url), Some(&trace))
                         .json(&serde_json::json!({
                             "circuit_name": "refresh",
                             "share_data": "",

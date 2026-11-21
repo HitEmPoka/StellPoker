@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "description": "Stable machine-readable error codes for the StellPoker coordinator API. Single source of truth: the backend embeds this file for error responses, the OpenAPI specs reference the code enum, and the frontend maps each code to an i18n message.",
+  "errors": [
+    {
+      "code": "bad_request",
+      "http_status": 400,
+      "retryable": false,
+      "description": "The request was malformed or failed validation."
+    },
+    {
+      "code": "unauthorized",
+      "http_status": 401,
+      "retryable": false,
+      "description": "Authentication is required or the supplied credentials are invalid."
+    },
+    {
+      "code": "invalid_signature",
+      "http_status": 401,
+      "retryable": false,
+      "description": "The request signature could not be verified."
+    },
+    {
+      "code": "forbidden",
+      "http_status": 403,
+      "retryable": false,
+      "description": "The authenticated principal is not permitted to perform this action."
+    },
+    {
+      "code": "not_found",
+      "http_status": 404,
+      "retryable": false,
+      "description": "The requested resource does not exist."
+    },
+    {
+      "code": "conflict",
+      "http_status": 409,
+      "retryable": false,
+      "description": "The request conflicts with the current state of the resource."
+    },
+    {
+      "code": "nonce_replay",
+      "http_status": 409,
+      "retryable": false,
+      "description": "The authentication nonce has already been used."
+    },
+    {
+      "code": "mpc_node_unavailable",
+      "http_status": 409,
+      "retryable": true,
+      "description": "An MPC committee node became unavailable during proof generation; start a fresh session."
+    },
+    {
+      "code": "rate_limited",
+      "http_status": 429,
+      "retryable": true,
+      "description": "Too many requests; retry after a short delay."
+    },
+    {
+      "code": "internal_error",
+      "http_status": 500,
+      "retryable": false,
+      "description": "An unexpected internal error occurred."
+    },
+    {
+      "code": "upstream_unavailable",
+      "http_status": 502,
+      "retryable": true,
+      "description": "The MPC committee or Soroban RPC could not be reached."
+    },
+    {
+      "code": "service_unavailable",
+      "http_status": 503,
+      "retryable": true,
+      "description": "The coordinator is temporarily unable to serve the request."
+    },
+    {
+      "code": "soroban_not_configured",
+      "http_status": 503,
+      "retryable": false,
+      "description": "Soroban RPC / contract is not configured on this deployment."
+    },
+    {
+      "code": "maintenance",
+      "http_status": 503,
+      "retryable": true,
+      "description": "The coordinator is in maintenance mode."
+    },
+    {
+      "code": "draining",
+      "http_status": 503,
+      "retryable": true,
+      "description": "The coordinator is draining for a blue-green cutover; retry against the incoming instance."
+    }
+  ]
+}

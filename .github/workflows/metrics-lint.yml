@@ -1,0 +1,28 @@
+name: Metrics Naming Lint
+
+on:
+  pull_request:
+    paths:
+      - "services/**/*.rs"
+      - "load-testing/prometheus-alerting-rules.yml"
+      - "load-testing/prometheus.yml"
+      - "load-testing/grafana/**"
+      - "scripts/lint_metrics.py"
+      - "docs/metrics-naming.md"
+      - ".github/workflows/metrics-lint.yml"
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint metric names
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run metrics lint
+        run: python3 scripts/lint_metrics.py

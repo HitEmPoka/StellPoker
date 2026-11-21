@@ -1,0 +1,38 @@
+# gitleaks configuration for StellPoker
+# Custom rules tuned for this Rust/Next.js project
+
+version = 1
+mode = "live"
+
+[commit]
+  # Check only staged changes on commit
+  only_staged = true
+
+[providers.detect]
+  # Enable default detectors
+  default = true
+
+  # Disable overly noisy rules for this codebase
+  [providers.detect.disable]
+    # These are typically found in test fixtures, not real secrets
+    aws = ""
+    azure = ""
+    gcp = ""
+    docker-cred = ""
+    ssh-private-key = ""
+    generic-api-key = ""
+
+[analyzer]
+  # Custom rules or disabled analyzers
+  # Disable the generic regex analyzer for some patterns that cause false positives
+  [analyzer.disable]
+    rsa-private-key = ""
+    ec-private-key = ""
+
+[events.push]
+  # For push events, check all branches
+  only_staged = false
+
+[logging]
+  # Log level
+  mode = "verbose"

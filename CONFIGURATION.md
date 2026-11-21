@@ -36,6 +36,7 @@ This document lists all environment variables, CLI flags, and configuration opti
 
 ## Frontend (Next.js) Variables
 - `NEXT_PUBLIC_COORDINATOR_URL`: (string) URL of the coordinator service. Default: `http://localhost:8080`
+- `CSP_REPORT_URI`: (string) CSP report endpoint URI. Default: `/api/csp-report`
 
 ## Feature Flags
 Feature flags can be enabled by setting their value to `1`, `true`, `yes`, or `on`. Disable with `0`, `false`, `no`, or `off`.

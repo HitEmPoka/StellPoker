@@ -219,21 +219,26 @@ export function ActionPanel({
             max={maxBet}
             value={betAmount || minBet}
             onChange={(e) => setBetAmount(Number(e.target.value))}
+            aria-label="Bet amount"
+            aria-valuetext={`${betAmount || minBet} chips`}
             className="flex-1"
             style={{
               accentColor: "#f1c40f",
               height: "4px",
             }}
           />
-          <div className="flex gap-1">
+          <div className="flex gap-1" role="group" aria-label="Bet presets">
             {[
+              { label: "½ POT", value: Math.floor(pot / 2), ariaLabel: "Set bet to half the pot" },
+              { label: "POT", value: pot, ariaLabel: "Set bet to the pot" },
               { label: "50%", value: Math.floor(myStack * 0.5) },
               { label: "75%", value: Math.floor(myStack * 0.75) },
               { label: "MAX", value: myStack },
             ].map((preset) => (
               <button
                 key={preset.label}
-                onClick={() => setBetAmount(Math.max(preset.value, minBet))}
+                aria-label={preset.ariaLabel}
+                onClick={() => setBetAmount(Math.min(Math.max(preset.value, minBet), maxBet))}
                 className="pixel-btn text-[8px]"
                 style={{
                   padding: "4px 8px",

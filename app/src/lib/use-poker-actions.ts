@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameState, GamePhase } from "@/lib/game-state";
 import * as api from "@/lib/api";
 import { joinTableOnChain, playerActionOnChain } from "@/lib/onchain";
@@ -76,6 +76,7 @@ export function usePokerActions(config: PokerActionsConfig) {
     action: string;
     amount?: number;
   } | null>(null);
+  const optimisticSnapshot = useRef<GameState | null>(null);
 
   const joinTableSim = useJoinTableSimulation(wallet, async () => {
     await syncOnChainState();
@@ -85,7 +86,18 @@ export function usePokerActions(config: PokerActionsConfig) {
   const playerActionSim = usePlayerActionSimulation(wallet, async () => {
     await syncOnChainState();
     setPendingAction(null);
+    optimisticSnapshot.current = null;
   });
+
+  // Failed simulation/submission must never leave the table showing a bet that
+  // did not reach the chain.
+  useEffect(() => {
+    if (playerActionSim.error && optimisticSnapshot.current) {
+      setGame(optimisticSnapshot.current);
+      optimisticSnapshot.current = null;
+      setPendingAction(null);
+    }
+  }, [playerActionSim.error, setGame]);
 
   const claimedWallets = (lobby?.seats ?? [])
     .map((seat) => seat.wallet_address)
@@ -171,6 +183,13 @@ export function usePokerActions(config: PokerActionsConfig) {
           pot: playMode === "single" ? 0 : prev.pot,
           lastTxHash: txHash,
           proofSize: result.proof_size,
+          // A new hand starts a fresh proof trail (#625).
+          proofTxHashes: txHash ? { deal: txHash } : {},
+          proofSizes: { deal: result.proof_size },
+          dealPublicInputs: {
+            deckRoot: result.deck_root,
+            handCommitments: result.hand_commitments,
+          },
           onChainConfirmed: !!txHash,
           players: playMode === "single"
             ? prev.players.map((p) => ({
@@ -223,6 +242,8 @@ export function usePokerActions(config: PokerActionsConfig) {
           boardCards: [...prev.boardCards, ...result.cards],
           lastTxHash: txHash ?? prev.lastTxHash,
           proofSize: result.proof_size,
+          proofTxHashes: txHash ? { ...prev.proofTxHashes, [phase]: txHash } : prev.proofTxHashes,
+          proofSizes: { ...prev.proofSizes, [phase]: result.proof_size },
           onChainConfirmed: !!txHash || prev.onChainConfirmed,
         }));
         await syncOnChainState();
@@ -274,6 +295,8 @@ export function usePokerActions(config: PokerActionsConfig) {
         phase: "settlement" as GamePhase,
         lastTxHash: txHash ?? prev.lastTxHash,
         proofSize: result.proof_size,
+        proofTxHashes: txHash ? { ...prev.proofTxHashes, showdown: txHash } : prev.proofTxHashes,
+        proofSizes: { ...prev.proofSizes, showdown: result.proof_size },
         onChainConfirmed: !!txHash || prev.onChainConfirmed,
       }));
       await syncOnChainState();
@@ -388,6 +411,21 @@ export function usePokerActions(config: PokerActionsConfig) {
               : undefined;
           
           // Store pending action and start simulation
+          optimisticSnapshot.current = game;
+          if (wallet && normalizedAmount !== undefined) {
+            setGame((prev) => {
+              const me = prev.players.find((player) => player.address === wallet.address);
+              if (!me) return prev;
+              const committed = action === "call" ? Math.min(normalizedAmount, me.stack) : normalizedAmount;
+              return {
+                ...prev,
+                pot: prev.pot + committed,
+                players: prev.players.map((player) => player.address === wallet.address
+                  ? { ...player, stack: Math.max(0, player.stack - committed), betThisRound: player.betThisRound + committed }
+                  : player),
+              };
+            });
+          }
           setPendingAction({ action: action as string, amount: normalizedAmount });
           playerActionSim.performAction(
             tableId,

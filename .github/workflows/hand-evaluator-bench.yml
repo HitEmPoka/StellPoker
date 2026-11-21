@@ -1,0 +1,133 @@
+name: Hand Evaluator Benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "stellar-zk-cards/**"
+      - "scripts/check_hand_evaluator_bench.py"
+      - "benchmark_data/hand_evaluator_baseline.json"
+      - "benchmark_data/hand_evaluator_history.csv"
+      - ".github/workflows/hand-evaluator-bench.yml"
+  push:
+    branches: [main]
+    paths:
+      - "stellar-zk-cards/**"
+      - "scripts/check_hand_evaluator_bench.py"
+      - "benchmark_data/hand_evaluator_baseline.json"
+      - "benchmark_data/hand_evaluator_history.csv"
+      - ".github/workflows/hand-evaluator-bench.yml"
+  schedule:
+    # Nightly on main so gradual regressions are caught even without a PR.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: hand-evaluator-bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Criterion regression check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-hand-eval-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-hand-eval-bench-
+
+      - name: Run Criterion hand evaluator benchmarks
+        run: cargo bench -p stellar-zk-cards --bench hand_eval -- --noplot
+
+      - name: Check for regression and record history
+        id: check
+        continue-on-error: true
+        env:
+          BASELINE_FILE: ${{ github.workspace }}/benchmark_data/hand_evaluator_baseline.json
+          COMMENT_PAYLOAD: ${{ runner.temp }}/hand-evaluator-comment.json
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HISTORY_FILE="$RUNNER_TEMP/hand_evaluator_history.csv"
+            python3 scripts/check_hand_evaluator_bench.py \
+              --record-history \
+              --history-file "$HISTORY_FILE"
+          else
+            python3 scripts/check_hand_evaluator_bench.py \
+              --record-history \
+              --history-file benchmark_data/hand_evaluator_history.csv \
+              --update-missing-baseline
+          fi
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hand-evaluator-bench-${{ github.run_id }}
+          path: |
+            target/criterion
+            ${{ runner.temp }}/hand_evaluator_history.csv
+            ${{ runner.temp }}/hand-evaluator-comment.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Post regression comment on PR
+        if: steps.check.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const commentPath = '${{ runner.temp }}/hand-evaluator-comment.json';
+            let body;
+            if (fs.existsSync(commentPath)) {
+              body = JSON.parse(fs.readFileSync(commentPath, 'utf8')).body;
+            } else {
+              body = [
+                '## Hand evaluator benchmark failure',
+                '',
+                'The benchmark check failed before it could produce a detailed report.',
+                'See the workflow logs and the uploaded `hand-evaluator-bench` artifact.'
+              ].join('\n');
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+      - name: Record baseline and history on main
+        if: steps.check.outcome == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark_data/hand_evaluator_baseline.json benchmark_data/hand_evaluator_history.csv
+          if git diff --cached --quiet; then
+            echo "No benchmark history changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(bench): record hand evaluator results [skip ci]"
+          git push
+
+      - name: Fail on regression
+        if: steps.check.outcome == 'failure'
+        run: |
+          echo "Hand evaluator benchmark regression detected; see the report above."
+          exit 1

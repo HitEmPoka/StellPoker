@@ -1,0 +1,17 @@
+{
+  "crateName": "stellpoker_coordinator_sdk",
+  "crateVersion": "0.1.0",
+  "packageName": "stellpoker-coordinator-sdk",
+  "packageVersion": "0.1.0",
+  "packageAuthors": "StellPoker Team <dev@stellpoker.com>",
+  "packageRepository": "https://github.com/HitEmPoka/StellPoker",
+  "packageDescription": "Auto-generated Rust client SDK for StellPoker Coordinator API",
+  "packageTitle": "StellPoker Coordinator SDK",
+  "packageLicense": "MIT",
+  "documentationUrl": "https://docs.stellpoker.com",
+  "edition": "2021",
+  "library": true,
+  "hideModels": false,
+  "supportAsync": true,
+  "support": "async"
+}

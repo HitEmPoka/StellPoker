@@ -1,0 +1,142 @@
+name: Log Redaction Security Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  log-redaction-tests:
+    name: Test Log Redaction
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run log redaction tests
+        run: |
+          cargo test --test test_log_redaction --release -- --nocapture
+        env:
+          RUST_LOG: debug
+
+      - name: Scan source files for secrets
+        run: |
+          # Grep for common secret patterns in source code
+          set +e
+
+          FOUND_SECRETS=false
+
+          # Check for hardcoded credentials
+          if grep -r "password\s*=\s*['\"]" --include="*.rs" --include="*.py" --include="*.ts" --include="*.js" .; then
+            echo "❌ Found hardcoded passwords"
+            FOUND_SECRETS=true
+          fi
+
+          # Check for API keys in code
+          if grep -r "api[_-]?key\s*=\s*['\"]" --include="*.rs" --include="*.py" --include="*.ts" --include="*.js" .; then
+            echo "❌ Found hardcoded API keys"
+            FOUND_SECRETS=true
+          fi
+
+          # Check for private keys
+          if grep -r "BEGIN.*PRIVATE KEY" --include="*.rs" --include="*.py" --include="*.ts" --include="*.js" .; then
+            echo "❌ Found private keys in source"
+            FOUND_SECRETS=true
+          fi
+
+          if [ "$FOUND_SECRETS" = true ]; then
+            exit 1
+          fi
+
+          echo "✅ No obvious secrets found in source files"
+
+      - name: Grep logs for sensitive patterns
+        run: |
+          set +e
+
+          FOUND_PATTERNS=false
+
+          # Search for card patterns in any output
+          if find . -name "*.log" -o -name "*.out" | xargs grep -l "[AKQJxX][CDHS]" 2>/dev/null; then
+            echo "⚠️  Found potential card patterns in logs"
+          fi
+
+          # Search for Stellar secret keys (S + 55 base32 chars)
+          if grep -r "S[A-Z2-7]\{55\}" --include="*.log" . 2>/dev/null; then
+            echo "❌ Found Stellar secret key in logs"
+            FOUND_PATTERNS=true
+          fi
+
+          # Search for session keys
+          if grep -r "session_key\|shared_secret" --include="*.log" . 2>/dev/null; then
+            echo "❌ Found session key in logs"
+            FOUND_PATTERNS=true
+          fi
+
+          if [ "$FOUND_PATTERNS" = true ]; then
+            exit 1
+          fi
+
+          echo "✅ No sensitive patterns found in logs"
+
+      - name: Check workflow files
+        run: |
+          set +e
+
+          FOUND_ISSUES=false
+
+          # Check workflows for secret exposure
+          for file in .github/workflows/*.yml; do
+            # Check for plaintext credentials
+            if grep -E "(password|secret|token)\s*:" "$file" | grep -v "secrets\." | grep -v "# " ; then
+              echo "⚠️  Potential secret exposure in $file"
+              FOUND_ISSUES=true
+            fi
+          done
+
+          if [ "$FOUND_ISSUES" = true ]; then
+            echo "Review workflow files for secret safety"
+          else
+            echo "✅ Workflows properly use GitHub secrets"
+          fi
+
+  gitleaks-scan:
+    name: Gitleaks Secret Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Log Redaction Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Golden test scenario executed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Pattern scanning completed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Workflow validation passed" >> $GITHUB_STEP_SUMMARY

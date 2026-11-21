@@ -1,0 +1,75 @@
+name: Coordinator Restart Chaos (Staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Active-load duration"
+        required: false
+        default: "2m"
+      vus:
+        description: "Concurrent virtual users"
+        required: false
+        default: "25"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coordinator-restart-chaos-staging
+  cancel-in-progress: false
+
+jobs:
+  restart-under-load:
+    name: Restart coordinator under active load
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    env:
+      COORDINATOR_URL: ${{ vars.STAGING_COORDINATOR_URL }}
+      KUBE_NAMESPACE: ${{ vars.STAGING_KUBE_NAMESPACE || 'stellpoker-staging' }}
+      COORDINATOR_DEPLOYMENT: ${{ vars.STAGING_COORDINATOR_DEPLOYMENT || 'coordinator' }}
+      DURATION: ${{ inputs.duration }}
+      VUS: ${{ inputs.vus }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Load staging kubeconfig
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.STAGING_KUBE_CONFIG_B64 }}
+        run: |
+          test -n "$KUBE_CONFIG_DATA"
+          mkdir -p "$RUNNER_TEMP/kube"
+          printf '%s' "$KUBE_CONFIG_DATA" | base64 --decode > "$RUNNER_TEMP/kube/config"
+          chmod 600 "$RUNNER_TEMP/kube/config"
+          echo "KUBECONFIG=$RUNNER_TEMP/kube/config" >> "$GITHUB_ENV"
+
+      - name: Run restart chaos test
+        run: |
+          chmod +x scripts/run-coordinator-restart-chaos.sh
+          ./scripts/run-coordinator-restart-chaos.sh
+
+      - name: Publish recovery summary
+        if: always()
+        run: |
+          if [ -f load-testing/results/coordinator-restart-chaos-summary.json ]; then
+            {
+              echo "## Coordinator restart chaos"
+              echo
+              cat load-testing/results/coordinator-restart-chaos-summary.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload chaos evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinator-restart-chaos-${{ github.run_id }}
+          path: load-testing/results/coordinator-restart-chaos-*
+          if-no-files-found: warn
+          retention-days: 30

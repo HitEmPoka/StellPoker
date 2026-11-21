@@ -34,6 +34,10 @@ pub const CHAT_EMOTES: [&str; 6] = ["😃", "😢", "😠", "😎", "🤔", "�
 pub const CHAT_RATE_LIMIT_MESSAGES: usize = 5;
 /// Sliding window for [`CHAT_RATE_LIMIT_MESSAGES`].
 pub const CHAT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10);
+/// Minimum spacing between frames from one connection.
+pub const CHAT_MIN_INTERVAL: Duration = Duration::from_millis(500);
+/// Identical frames are ignored briefly to stop accidental resend loops.
+pub const CHAT_DUPLICATE_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Deserialize)]
 struct IncomingChatFrame {
@@ -182,6 +186,7 @@ pub struct ChatRateLimiter {
     max_messages: usize,
     window: Duration,
     sent: VecDeque<Instant>,
+    last_payload: Option<(String, Instant)>,
 }
 
 impl Default for ChatRateLimiter {
@@ -196,6 +201,7 @@ impl ChatRateLimiter {
             max_messages,
             window,
             sent: VecDeque::with_capacity(max_messages),
+            last_payload: None,
         }
     }
 
@@ -212,6 +218,20 @@ impl ChatRateLimiter {
             return false;
         }
         self.sent.push_back(now);
+        true
+    }
+
+    pub fn allow_payload(&mut self, now: Instant, payload: &str) -> bool {
+        if let Some(previous) = self.sent.back() {
+            if now.duration_since(*previous) < CHAT_MIN_INTERVAL { return false; }
+        }
+        if let Some((previous, at)) = &self.last_payload {
+            if previous == payload && now.duration_since(*at) < CHAT_DUPLICATE_WINDOW {
+                return false;
+            }
+        }
+        if !self.allow(now) { return false; }
+        self.last_payload = Some((payload.to_owned(), now));
         true
     }
 }

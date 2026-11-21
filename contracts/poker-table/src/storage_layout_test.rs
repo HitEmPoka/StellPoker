@@ -22,7 +22,7 @@
 extern crate std;
 
 use crate::types::*;
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 /// (variant name, payload arity, is_persistent).
 /// `is_persistent == true` means `env.storage().persistent()`,
@@ -66,6 +66,20 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ActionCommitmentNonce", 3, true),
     ("ConfigVersion", 1, true),
     ("ConfigChangeLog", 2, true),
+    ("ContractMetrics", 0, false),
+    ("TableMetrics", 1, true),
+    ("TableSunset", 1, true),
+    ("RakeHistoryLen", 1, true),
+    ("RakeHistory", 2, true),
+    ("ContractVersion", 1, true),
+    ("ContractVersionRecord", 1, true),
+    ("PendingContractVersion", 1, true),
+    ("ContractVersionBeforeUpgrade", 1, true),
+    ("ContractVersionRecordPrev", 1, true),
+    ("ContractMigration", 1, true),
+    ("SevenDeuceBounty", 1, false),
+    ("BombPotConfig", 1, false),
+    ("RabbitHunt", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -110,6 +124,20 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ActionCommitmentNonce(table_id, 0, 0),
         DataKey::ConfigVersion(table_id),
         DataKey::ConfigChangeLog(table_id, 0),
+        DataKey::ContractMetrics,
+        DataKey::TableMetrics(table_id),
+        DataKey::TableSunset(table_id),
+        DataKey::RakeHistoryLen(table_id),
+        DataKey::RakeHistory(table_id, 0),
+        DataKey::ContractVersion(table_id),
+        DataKey::ContractVersionRecord(table_id),
+        DataKey::PendingContractVersion(table_id),
+        DataKey::ContractVersionBeforeUpgrade(table_id),
+        DataKey::ContractVersionRecordPrev(table_id),
+        DataKey::ContractMigration(table_id),
+        DataKey::SevenDeuceBounty(table_id),
+        DataKey::BombPotConfig(table_id),
+        DataKey::RabbitHunt(table_id),
     ]
 }
 
@@ -153,6 +181,20 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ActionCommitmentNonce(_, _, _) => "ActionCommitmentNonce",
         DataKey::ConfigVersion(_) => "ConfigVersion",
         DataKey::ConfigChangeLog(_, _) => "ConfigChangeLog",
+        DataKey::ContractMetrics => "ContractMetrics",
+        DataKey::TableMetrics(_) => "TableMetrics",
+        DataKey::TableSunset(_) => "TableSunset",
+        DataKey::RakeHistoryLen(_) => "RakeHistoryLen",
+        DataKey::RakeHistory(_, _) => "RakeHistory",
+        DataKey::ContractVersion(_) => "ContractVersion",
+        DataKey::ContractVersionRecord(_) => "ContractVersionRecord",
+        DataKey::PendingContractVersion(_) => "PendingContractVersion",
+        DataKey::ContractVersionBeforeUpgrade(_) => "ContractVersionBeforeUpgrade",
+        DataKey::ContractVersionRecordPrev(_) => "ContractVersionRecordPrev",
+        DataKey::ContractMigration(_) => "ContractMigration",
+        DataKey::SevenDeuceBounty(_) => "SevenDeuceBounty",
+        DataKey::BombPotConfig(_) => "BombPotConfig",
+        DataKey::RabbitHunt(_) => "RabbitHunt",
     }
 }
 
@@ -186,16 +228,29 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::AuthManager(_)
         | DataKey::RbacAudit(_)
         | DataKey::JackpotVerifier(_)
-        | DataKey::ConfigVersion(_) => 1,
+        | DataKey::ConfigVersion(_)
+        | DataKey::TableMetrics(_)
+        | DataKey::TableSunset(_)
+        | DataKey::RakeHistoryLen(_)
+        | DataKey::ContractVersion(_)
+        | DataKey::ContractVersionRecord(_)
+        | DataKey::PendingContractVersion(_)
+        | DataKey::ContractVersionBeforeUpgrade(_)
+        | DataKey::ContractVersionRecordPrev(_)
+        | DataKey::ContractMigration(_)
+        | DataKey::SevenDeuceBounty(_)
+        | DataKey::BombPotConfig(_)
+        | DataKey::RabbitHunt(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
         | DataKey::JackpotClaim(_, _)
-        | DataKey::ConfigChangeLog(_, _) => 2,
+        | DataKey::ConfigChangeLog(_, _)
+        | DataKey::RakeHistory(_, _) => 2,
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,
-        DataKey::HandTypeDistribution => 0,
+        DataKey::HandTypeDistribution | DataKey::ContractMetrics => 0,
     }
 }
 
@@ -241,7 +296,7 @@ fn storage_layout_domains_are_stable() {
         // the spec. If you move a key, update BOTH this table and
         // storage-layout-snapshot.json with a migration note.
         assert!(
-            *domain == "persistent" || *domain == "instance",
+            domain == "persistent" || domain == "instance",
             "invalid domain for {name}"
         );
     }

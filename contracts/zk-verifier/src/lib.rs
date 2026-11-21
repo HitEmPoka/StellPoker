@@ -159,6 +159,8 @@ pub enum StorageKey {
     // Multi-circuit VK registry by circuit ID
     VkById(u32),
     CircuitStatus(u32),
+    /// Per-reason failure counter, incremented on each verification failure.
+    FailureCounter(FailureReason),
 }
 
 /// Versioned registry entry for a circuit verification key. The content hash
@@ -184,8 +186,52 @@ pub struct PendingUpgrade {
     pub started_ledger: u32,
 }
 
+/// Labeled failure categories for proof-verification metrics.
+///
+/// `BadVk` covers missing/unparsable verification keys, `BadProof` covers
+/// invalid proof size and failed UltraHonk verification, and
+/// `MalformedInputs` covers public-input layout/mismatch rejections.
+///
+/// `Budget` is reserved for out-of-budget (OOG) rejections: the Soroban host
+/// traps and aborts the invocation on OOG, so the aborting call cannot write
+/// an on-chain counter itself. Budget anomalies are alerted off-chain from
+/// RPC failure rates (see `docs/proof-verification-metrics.md`); the counter
+/// exists so monitoring can keep one labeled series per reason.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FailureReason {
+    BadVk,
+    BadProof,
+    MalformedInputs,
+    Budget,
+}
+
 #[contractimpl]
 impl ZkVerifierContract {
+    /// Increment the labeled failure counter for `reason` and emit
+    /// `proof_verification_failed` with the reason and new count. Called on
+    /// every verification failure path so dashboards/alerts can break
+    /// failures down by reason code.
+    fn record_failure(env: &Env, reason: FailureReason) {
+        let key = StorageKey::FailureCounter(reason.clone());
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        let count = count.saturating_add(1);
+        env.storage().persistent().set(&key, &count);
+        env.storage().persistent().extend_ttl(&key, 600, 600);
+        env.events().publish(
+            (Symbol::new(env, "proof_verification_failed"), reason),
+            count,
+        );
+    }
+
+    /// Read the failure counter for a reason code (view function).
+    pub fn get_failure_count(env: Env, reason: FailureReason) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::FailureCounter(reason))
+            .unwrap_or(0)
+    }
+
     /// Initialize the verifier with an admin.
     pub fn initialize(env: Env, admin: Address) -> Result<(), VerifierError> {
         if env.storage().instance().has(&StorageKey::Admin) {
@@ -263,8 +309,10 @@ impl ZkVerifierContract {
         }
         governance::validate_governance_config(&env, &signers, threshold, delay_ledgers)?;
         governance::store_governance_config(&env, signers, threshold, delay_ledgers);
-        env.events()
-            .publish((Symbol::new(&env, "governance_configured"),), (threshold, delay_ledgers));
+        env.events().publish(
+            (Symbol::new(&env, "governance_configured"),),
+            (threshold, delay_ledgers),
+        );
         Ok(())
     }
 
@@ -298,7 +346,8 @@ impl ZkVerifierContract {
         let pending = governance::load_pending(&env)?;
         let wasm_hash = pending.wasm_hash.clone();
         governance::can_execute(&env, &wasm_hash)?;
-        env.deployer().update_current_contract_wasm(wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(wasm_hash.clone());
         governance::clear_pending(&env);
         env.events()
             .publish((Symbol::new(&env, "upgrade_executed"),), wasm_hash);
@@ -408,6 +457,12 @@ impl ZkVerifierContract {
     /// 2. Validates proof size (14,624 bytes = 457 fields * 32)
     /// 3. Runs full UltraHonk verification (sumcheck + shplonk pairing)
     /// 4. Stores proof hash for auditability
+    ///
+    /// Returns `Ok(true)` on success. Countable verification failures (bad VK,
+    /// bad proof) increment the labeled failure counter and return `Ok(false)`
+    /// rather than `Err` — a failed call that returns `Err` is rolled back by
+    /// the host, which would also erase the counter write and its event.
+    /// `Err` is reserved for operational rejections (e.g. paused).
     pub fn verify_proof(
         env: Env,
         circuit: CircuitType,
@@ -426,24 +481,37 @@ impl ZkVerifierContract {
 
         // Check proof size
         if proof.len() as usize != PROOF_BYTES {
-            return Err(VerifierError::ProofSizeError);
+            Self::record_failure(&env, FailureReason::BadProof);
+            return Ok(false);
         }
 
         // Load VK for this circuit
-        let vk_entry: VerificationKeyEntry = env
+        let vk_entry: VerificationKeyEntry = match env
             .storage()
             .persistent()
             .get(&StorageKey::Vk(circuit))
-            .ok_or(VerifierError::NoVkForCircuit)?;
+        {
+            Some(vk) => vk,
+            None => {
+                Self::record_failure(&env, FailureReason::BadVk);
+                return Ok(false);
+            }
+        };
 
         // Parse VK and create verifier
-        let verifier = UltraHonkVerifier::new(&env, &vk_entry.vk_data)
-            .map_err(|_| VerifierError::VkParseError)?;
+        let verifier = match UltraHonkVerifier::new(&env, &vk_entry.vk_data) {
+            Ok(v) => v,
+            Err(_) => {
+                Self::record_failure(&env, FailureReason::BadVk);
+                return Ok(false);
+            }
+        };
 
         // Run full UltraHonk verification
-        verifier
-            .verify(&proof, &public_inputs)
-            .map_err(|_| VerifierError::VerificationFailed)?;
+        if verifier.verify(&proof, &public_inputs).is_err() {
+            Self::record_failure(&env, FailureReason::BadProof);
+            return Ok(false);
+        }
 
         // Store proof hash for auditability
         let proof_hash = env.crypto().keccak256(&proof);
@@ -513,6 +581,9 @@ impl ZkVerifierContract {
     ///   [0]  num_players
     ///   [1]  deck_root
     ///   [2..8)  hand_commitments[0..6]
+    ///
+    /// Malformed-input rejections increment the labeled failure counter and
+    /// return `Ok(false)` (see `verify_proof` for the rollback rationale).
     pub fn verify_deal(
         env: Env,
         proof: Bytes,
@@ -521,24 +592,32 @@ impl ZkVerifierContract {
         hand_commitments: Vec<BytesN<32>>,
     ) -> Result<bool, VerifierError> {
         if public_inputs.len() != DEAL_BYTES {
-            return Err(VerifierError::PublicInputSizeError);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
         if hand_commitments.len() > MAX_PLAYERS {
-            return Err(VerifierError::WrongCommitmentCount);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // deck_root at field index 1
         if !Self::check_bytes32_field(&public_inputs, 1, &deck_root) {
-            return Err(VerifierError::PublicInputMismatch);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // hand_commitments at field indices 2 .. 2 + len
         for i in 0..hand_commitments.len() {
-            let expected = hand_commitments
-                .get(i)
-                .ok_or(VerifierError::PublicInputMismatch)?;
+            let expected = match hand_commitments.get(i) {
+                Some(c) => c,
+                None => {
+                    Self::record_failure(&env, FailureReason::MalformedInputs);
+                    return Ok(false);
+                }
+            };
             if !Self::check_bytes32_field(&public_inputs, 2 + i, &expected) {
-                return Err(VerifierError::PublicInputMismatch);
+                Self::record_failure(&env, FailureReason::MalformedInputs);
+                return Ok(false);
             }
         }
 
@@ -565,35 +644,48 @@ impl ZkVerifierContract {
         revealed_indices: Vec<u32>,
     ) -> Result<bool, VerifierError> {
         if public_inputs.len() != REVEAL_BYTES {
-            return Err(VerifierError::PublicInputSizeError);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
         let num_revealed = revealed_cards.len();
         if num_revealed != revealed_indices.len() || num_revealed > 3 {
-            return Err(VerifierError::PublicInputMismatch);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // deck_root at field index 0 (public input)
         if !Self::check_bytes32_field(&public_inputs, 0, &deck_root) {
-            return Err(VerifierError::PublicInputMismatch);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // revealed_cards at field indices 19 .. 19 + num_revealed
         for i in 0..num_revealed {
-            let expected = revealed_cards
-                .get(i)
-                .ok_or(VerifierError::PublicInputMismatch)?;
+            let expected = match revealed_cards.get(i) {
+                Some(c) => c,
+                None => {
+                    Self::record_failure(&env, FailureReason::MalformedInputs);
+                    return Ok(false);
+                }
+            };
             if !Self::check_u32_field(&public_inputs, 19 + i, expected) {
-                return Err(VerifierError::PublicInputMismatch);
+                Self::record_failure(&env, FailureReason::MalformedInputs);
+                return Ok(false);
             }
         }
 
         // revealed_indices at field indices 22 .. 22 + num_revealed
         for i in 0..num_revealed {
-            let expected = revealed_indices
-                .get(i)
-                .ok_or(VerifierError::PublicInputMismatch)?;
+            let expected = match revealed_indices.get(i) {
+                Some(idx) => idx,
+                None => {
+                    Self::record_failure(&env, FailureReason::MalformedInputs);
+                    return Ok(false);
+                }
+            };
             if !Self::check_u32_field(&public_inputs, 22 + i, expected) {
-                return Err(VerifierError::PublicInputMismatch);
+                Self::record_failure(&env, FailureReason::MalformedInputs);
+                return Ok(false);
             }
         }
 
@@ -624,38 +716,52 @@ impl ZkVerifierContract {
         deck_root: BytesN<32>,
     ) -> Result<bool, VerifierError> {
         if public_inputs.len() != SHOWDOWN_BYTES {
-            return Err(VerifierError::PublicInputSizeError);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
         if hand_commitments.len() > MAX_PLAYERS {
-            return Err(VerifierError::WrongCommitmentCount);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
         if board_indices.len() != BOARD_INDICES_COUNT {
-            return Err(VerifierError::WrongBoardIndicesCount);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // 1. Verify hand_commitments at field indices 1..7 match stored
         for i in 0..hand_commitments.len() {
-            let expected = hand_commitments
-                .get(i)
-                .ok_or(VerifierError::PublicInputMismatch)?;
+            let expected = match hand_commitments.get(i) {
+                Some(c) => c,
+                None => {
+                    Self::record_failure(&env, FailureReason::MalformedInputs);
+                    return Ok(false);
+                }
+            };
             if !Self::check_bytes32_field(&public_inputs, 1 + i, &expected) {
-                return Err(VerifierError::PublicInputMismatch);
+                Self::record_failure(&env, FailureReason::MalformedInputs);
+                return Ok(false);
             }
         }
 
         // 2. Verify board_indices at field indices 7..12 match on-chain dealt indices
         for i in 0..BOARD_INDICES_COUNT {
-            let expected = board_indices
-                .get(i)
-                .ok_or(VerifierError::PublicInputMismatch)?;
+            let expected = match board_indices.get(i) {
+                Some(idx) => idx,
+                None => {
+                    Self::record_failure(&env, FailureReason::MalformedInputs);
+                    return Ok(false);
+                }
+            };
             if !Self::check_u32_field(&public_inputs, 7 + i, expected) {
-                return Err(VerifierError::PublicInputMismatch);
+                Self::record_failure(&env, FailureReason::MalformedInputs);
+                return Ok(false);
             }
         }
 
         // 3. Verify deck_root at field index 12 matches stored
         if !Self::check_bytes32_field(&public_inputs, 12, &deck_root) {
-            return Err(VerifierError::PublicInputMismatch);
+            Self::record_failure(&env, FailureReason::MalformedInputs);
+            return Ok(false);
         }
 
         // 4. Run the UltraHonk verification
@@ -737,9 +843,10 @@ impl ZkVerifierContract {
             .persistent()
             .set(&StorageKey::VkById(circuit_id), &entry);
 
-        env.storage()
-            .persistent()
-            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Active);
+        env.storage().persistent().set(
+            &StorageKey::CircuitStatus(circuit_id),
+            &CircuitStatus::Active,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "vk_updated"), circuit_id),
@@ -761,20 +868,12 @@ impl ZkVerifierContract {
 
     /// Mark a verification key / circuit ID as stale (admin only).
     /// Calls with this circuit_id will subsequently return `VerifierError::StaleCircuitId`.
-    pub fn mark_vk_stale(
-        env: Env,
-        admin: Address,
-        circuit_id: u32,
-    ) -> Result<(), VerifierError> {
+    pub fn mark_vk_stale(env: Env, admin: Address, circuit_id: u32) -> Result<(), VerifierError> {
         Self::deprecate_vk(env, admin, circuit_id)
     }
 
     /// Deprecate/retire a circuit ID (admin only).
-    pub fn deprecate_vk(
-        env: Env,
-        admin: Address,
-        circuit_id: u32,
-    ) -> Result<(), VerifierError> {
+    pub fn deprecate_vk(env: Env, admin: Address, circuit_id: u32) -> Result<(), VerifierError> {
         admin.require_auth();
         let stored_admin: Address = env
             .storage()
@@ -789,9 +888,10 @@ impl ZkVerifierContract {
             return Err(VerifierError::UnknownCircuitId);
         }
 
-        env.storage()
-            .persistent()
-            .set(&StorageKey::CircuitStatus(circuit_id), &CircuitStatus::Stale);
+        env.storage().persistent().set(
+            &StorageKey::CircuitStatus(circuit_id),
+            &CircuitStatus::Stale,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "vk_deprecated"), circuit_id),
@@ -836,12 +936,9 @@ impl ZkVerifierContract {
     ///
     /// Returns `Err(VerifierError::UnknownCircuitId)` if ID is unknown.
     /// Returns `Err(VerifierError::StaleCircuitId)` if ID is marked stale/deprecated.
-    pub fn get_vk_by_id(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<VerificationKeyEntry, VerifierError> {
-        let entry = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+    pub fn get_vk_by_id(env: Env, circuit_id: u32) -> Result<VerificationKeyEntry, VerifierError> {
+        let entry =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
 
         let status = env
             .storage()
@@ -873,8 +970,8 @@ impl ZkVerifierContract {
         circuit_id: u32,
         version: u32,
     ) -> Result<VerificationKeyEntry, VerifierError> {
-        let entry = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+        let entry =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
 
         let status = env
             .storage()
@@ -897,10 +994,7 @@ impl ZkVerifierContract {
     }
 
     /// Get current circuit status: Active, Stale, or Deprecated.
-    pub fn get_circuit_status(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<CircuitStatus, VerifierError> {
+    pub fn get_circuit_status(env: Env, circuit_id: u32) -> Result<CircuitStatus, VerifierError> {
         if Self::load_raw_vk_entry(&env, circuit_id).is_none() {
             return Err(VerifierError::UnknownCircuitId);
         }
@@ -933,12 +1027,9 @@ impl ZkVerifierContract {
     }
 
     /// Read full `CircuitEntry` containing id, VK, and status.
-    pub fn get_circuit_entry(
-        env: Env,
-        circuit_id: u32,
-    ) -> Result<CircuitEntry, VerifierError> {
-        let vk = Self::load_raw_vk_entry(&env, circuit_id)
-            .ok_or(VerifierError::UnknownCircuitId)?;
+    pub fn get_circuit_entry(env: Env, circuit_id: u32) -> Result<CircuitEntry, VerifierError> {
+        let vk =
+            Self::load_raw_vk_entry(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
         let status = env
             .storage()
             .persistent()
@@ -1195,7 +1286,12 @@ mod test {
         let (env, client, admin) = setup();
         let s1 = Address::generate(&env);
         let s2 = Address::generate(&env);
-        client.configure_upgrade_governance(&admin, &vec![&env, s1.clone(), s2.clone()], &2, &GOV_DELAY);
+        client.configure_upgrade_governance(
+            &admin,
+            &vec![&env, s1.clone(), s2.clone()],
+            &2,
+            &GOV_DELAY,
+        );
 
         let target = wasm_hash(&env, 1);
         // Signer 1 proposes; threshold (2) not yet reached.
@@ -1301,7 +1397,12 @@ mod test {
         );
         // Duplicate signer.
         assert_eq!(
-            client.try_configure_upgrade_governance(&admin, &vec![&env, s1.clone(), s1], &2, &GOV_DELAY),
+            client.try_configure_upgrade_governance(
+                &admin,
+                &vec![&env, s1.clone(), s1],
+                &2,
+                &GOV_DELAY
+            ),
             Err(Ok(VerifierError::InvalidGovernanceConfig))
         );
     }
@@ -1378,10 +1479,7 @@ mod test {
         client.mark_vk_stale(&admin, &circuit_id);
         assert!(!client.is_circuit_active(&circuit_id));
         assert!(client.is_circuit_stale(&circuit_id));
-        assert_eq!(
-            client.get_circuit_status(&circuit_id),
-            CircuitStatus::Stale
-        );
+        assert_eq!(client.get_circuit_status(&circuit_id), CircuitStatus::Stale);
 
         // get_vk_by_id fails with StaleCircuitId
         let res = client.try_get_vk_by_id(&circuit_id);
@@ -1421,7 +1519,10 @@ mod test {
         client.update_vk(&admin, &circuit_id, &vk, &1);
         let entry = client.get_vk_by_id(&circuit_id);
         assert_eq!(entry.version, 1);
-        assert_eq!(client.get_circuit_status(&circuit_id), CircuitStatus::Active);
+        assert_eq!(
+            client.get_circuit_status(&circuit_id),
+            CircuitStatus::Active
+        );
 
         // Monotonic version: updating with same or lower version fails with InvalidVkVersion
         let res_same_ver = client.try_update_vk(&admin, &circuit_id, &vk, &1);
@@ -1495,7 +1596,10 @@ mod test {
 
         // Deprecate circuit 2
         client.deprecate_vk(&admin, &2);
-        assert_eq!(client.try_get_vk_by_id(&2), Err(Ok(VerifierError::StaleCircuitId)));
+        assert_eq!(
+            client.try_get_vk_by_id(&2),
+            Err(Ok(VerifierError::StaleCircuitId))
+        );
         assert_eq!(client.get_vk_by_id(&1).version, 1);
         assert_eq!(client.get_vk_by_id(&3).version, 1);
         assert_eq!(client.get_vk_by_id(&4).version, 2);
@@ -1547,5 +1651,69 @@ mod test {
         // Admin update path must work while paused for emergency hot-swaps
         let res = client.try_update_vk(&admin, &circuit_id, &vk, &1);
         assert_eq!(res, Ok(Ok(())));
+    }
+
+    // ------------------------------------------------------------------
+    // Failure metrics (#687)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_failure_counter_bad_proof() {
+        let (env, client, _admin) = setup();
+        let proof = Bytes::new(&env);
+        let public_inputs = Bytes::new(&env);
+        // Countable failures return Ok(false) so the counter write persists.
+        let result = client.try_verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
+        assert_eq!(result, Ok(Ok(false)));
+        assert_eq!(client.get_failure_count(&FailureReason::BadProof), 1);
+        assert_eq!(client.get_failure_count(&FailureReason::BadVk), 0);
+        assert_eq!(client.get_failure_count(&FailureReason::MalformedInputs), 0);
+    }
+
+    #[test]
+    fn test_failure_counter_bad_vk() {
+        let (env, client, _admin) = setup();
+        // Building a full-size proof via push_back exceeds the default test
+        // budget; relax it the same way the poker-table suite does.
+        env.cost_estimate().budget().reset_unlimited();
+        // Correct proof size, no VK stored for this circuit → BadVk.
+        let mut proof = Bytes::new(&env);
+        for _ in 0..PROOF_BYTES {
+            proof.push_back(0u8);
+        }
+        let public_inputs = Bytes::new(&env);
+        let result = client.try_verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
+        assert_eq!(result, Ok(Ok(false)));
+        assert_eq!(client.get_failure_count(&FailureReason::BadVk), 1);
+        assert_eq!(client.get_failure_count(&FailureReason::BadProof), 0);
+    }
+
+    #[test]
+    fn test_failure_counter_malformed_inputs() {
+        let (env, client, _admin) = setup();
+        let proof = Bytes::new(&env);
+        let public_inputs = Bytes::new(&env);
+        let deck_root = BytesN::from_array(&env, &[0u8; 32]);
+        let commitments: Vec<BytesN<32>> = Vec::new(&env);
+        let result =
+            client.try_verify_deal(&proof, &public_inputs, &deck_root, &commitments);
+        assert_eq!(result, Ok(Ok(false)));
+        assert_eq!(client.get_failure_count(&FailureReason::MalformedInputs), 1);
+    }
+
+    #[test]
+    fn test_failure_counters_accumulate_and_paused_does_not_count() {
+        let (env, client, admin) = setup();
+        let proof = Bytes::new(&env);
+        let public_inputs = Bytes::new(&env);
+        client.verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
+        client.verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
+        assert_eq!(client.get_failure_count(&FailureReason::BadProof), 2);
+
+        // Paused rejections are operator actions, not verification anomalies.
+        client.pause(&admin);
+        let result = client.try_verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
+        assert_eq!(result, Err(Ok(VerifierError::ContractPaused)));
+        assert_eq!(client.get_failure_count(&FailureReason::BadProof), 2);
     }
 }

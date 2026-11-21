@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 use std::time::SystemTime;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct WarmedArtifact {
     hash: String,
     mtime: SystemTime,

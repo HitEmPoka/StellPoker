@@ -1,0 +1,20 @@
+{
+  "players": [
+    {
+      "address": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5V",
+      "hole_cards": ["AS", "KS"]
+    },
+    {
+      "address": "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBZZ",
+      "hole_cards": ["AH", "AD"]
+    },
+    {
+      "address": "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      "hole_cards": ["KH", "QH"]
+    }
+  ],
+  "board": ["2C", "3D", "4H", "5S", "6C"],
+  "expected_winner": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5V",
+  "scenario_name": "Three-player showdown, high-card wins",
+  "description": "Tests that hole cards and board cards do not appear in logs"
+}

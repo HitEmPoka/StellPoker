@@ -38,9 +38,16 @@
   --pixel-gold: #f1c40f;
   --pixel-blue: #3498db;
   --pixel-green: #27ae60;
+  /* Table felt — part of the public community theme contract. */
   --felt-dark: #1a5c2a;
   --felt-mid: #237a3a;
   --felt-light: #2d9648;
+  --felt-shadow: #0f3b1a;
+  /* Card deck back — part of the public community theme contract. */
+  --card-back-start: #1a3a5c;
+  --card-back-end: #0d2137;
+  --card-back-border: #2a5a8c;
+  --card-back-symbol: #3498db;
   --card-white: #fefefe;
   --card-shadow: #c0c0c0;
   --ui-panel: rgba(20, 12, 8, 0.85);
@@ -222,6 +229,17 @@ body {
   50% { box-shadow: 0 0 0 5px #f1c40f, 0 0 28px 10px rgba(241,196,15,0.65); }
 }
 
+/* Seat occupancy: a player who has just sat down settles into their seat (#622) */
+@keyframes seatArrive {
+  0% { transform: translateY(-10px) scale(0.92); opacity: 0; }
+  60% { transform: translateY(2px) scale(1.03); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.seat-arrive {
+  animation: seatArrive 0.6s ease-out;
+}
+
 /* Game Boy modal slide in */
 @keyframes gameboySlideIn {
   0% { transform: translateY(30px) scale(0.95); opacity: 0; }
@@ -297,7 +315,8 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-card-deal,
   .card-flip,
-  .card-flip-inner {
+  .card-flip-inner,
+  .seat-arrive {
     animation: none;
   }
   .card-flip {
@@ -975,3 +994,73 @@ textarea {
     min-height: 44px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Right-to-Left (RTL) Layout Support (Issue #621)
+   Logical CSS properties and bidirectional layout handling
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+
+html[dir="rtl"] body {
+  direction: rtl;
+}
+
+/* Logical positioning for floating controls */
+.app-top-controls {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  z-index: 9999;
+}
+
+/* RTL Proof Explorer Panel adjustments */
+html[dir="rtl"] .proof-panel {
+  right: auto;
+  left: 16px;
+}
+
+html[dir="rtl"] .proof-panel-resize {
+  left: auto;
+  right: -6px;
+}
+
+/* RTL Chat Drawer and toggle */
+html[dir="rtl"] .chat-toggle-btn {
+  right: auto !important;
+  left: 16px !important;
+}
+
+html[dir="rtl"] .chat-drawer {
+  right: auto !important;
+  left: 16px !important;
+}
+
+/* RTL Table header navigation */
+html[dir="rtl"] .table-header-left,
+html[dir="rtl"] .table-header-right {
+  flex-direction: row;
+}
+
+/* RTL text alignment and logical margins */
+html[dir="rtl"] .text-start {
+  text-align: right;
+}
+
+html[dir="rtl"] .text-end {
+  text-align: left;
+}
+
+[dir="rtl"] .ms-auto {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+[dir="rtl"] .me-auto {
+  margin-left: auto;
+  margin-right: 0;
+}
+

@@ -19,6 +19,8 @@ export const CHAT_MAX_SEAT_INDEX = 9;
 export const CHAT_EMOTES = ["😃", "😢", "😠", "😎", "🤔", "🎉"] as const;
 /** Messages a client may send per window (the server enforces the same). */
 export const CHAT_RATE_LIMIT = { maxMessages: 5, windowMs: 10_000 } as const;
+export const CHAT_MIN_INTERVAL_MS = 500;
+export const CHAT_DUPLICATE_WINDOW_MS = 2_000;
 
 export type ChatEmote = (typeof CHAT_EMOTES)[number];
 
@@ -127,12 +129,17 @@ export function createChatRateLimiter(
   now: () => number = Date.now,
 ) {
   const sent: number[] = [];
+  let lastMessage = "";
+  let lastMessageAt = -Infinity;
   return {
-    tryConsume(): boolean {
+    tryConsume(message?: string): boolean {
       const t = now();
       while (sent.length > 0 && t - sent[0] >= windowMs) sent.shift();
       if (sent.length >= maxMessages) return false;
+      if (message && message === lastMessage && t - lastMessageAt < CHAT_DUPLICATE_WINDOW_MS) return false;
+      if (message && sent.length > 0 && t - sent[sent.length - 1] < CHAT_MIN_INTERVAL_MS) return false;
       sent.push(t);
+      if (message) { lastMessage = message; lastMessageAt = t; }
       return true;
     },
   };

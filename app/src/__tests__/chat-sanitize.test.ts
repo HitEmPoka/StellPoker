@@ -104,4 +104,14 @@ describe("createChatRateLimiter", () => {
     t = 1000;
     expect(limiter.tryConsume()).toBe(true);
   });
+
+  it("rejects rapid duplicate messages without consuming the whole window", () => {
+    let t = 0;
+    const limiter = createChatRateLimiter({ maxMessages: 5, windowMs: 10_000 }, () => t);
+    expect(limiter.tryConsume("hello")).toBe(true);
+    t = 100;
+    expect(limiter.tryConsume("hello")).toBe(false);
+    t = 600;
+    expect(limiter.tryConsume("different")).toBe(true);
+  });
 });

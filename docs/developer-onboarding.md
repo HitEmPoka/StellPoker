@@ -5,6 +5,11 @@ before moving on, because everything below assumes it worked.
 
 Budget roughly an hour on a fast machine; the Rust and circuit builds dominate.
 
+**Automated check:** run `make preflight` to verify the toolchain, `.env`, and
+local service health in one pass. Every failure prints a fix hint, so use it
+instead of walking the checklist by hand whenever you want to confirm your
+environment.
+
 ---
 
 ## 0. Toolchain
@@ -22,6 +27,15 @@ Budget roughly an hour on a fast machine; the Rust and circuit builds dominate.
 > [flake.nix](../flake.nix). `nargo` and `co-noir` are not in nixpkgs and are
 > still installed via `noirup` / `cargo install` — the shell hook prints the
 > exact commands and keeps them in a project-local `.nix/` directory.
+
+> **Dev container / Codespaces:** "Reopen in Container" in VS Code (or
+> **Code → Codespaces → New** on GitHub) builds [.devcontainer/](../.devcontainer/)
+> with the same toolchain as the flake, including `nargo` at the pinned Noir
+> version, `co-noir` and `stellar`. The container runs
+> `scripts/dev-env-doctor.sh` on creation; run it again any time to check your
+> environment (it works in a Nix shell or a manual install too). The Nix flake
+> and the dev container must stay in sync — `scripts/check-devenv-parity.sh`
+> runs in CI and fails if the pinned versions or the package list drift.
 
 **Verify:** `rustc --version && node --version && nargo --version && stellar --version && co-noir --version`
 

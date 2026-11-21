@@ -16,3 +16,8 @@ soroban-sdk = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 proptest = "=1.5.0"
+criterion = "0.5"
+
+[[bench]]
+name = "hand_eval"
+harness = false

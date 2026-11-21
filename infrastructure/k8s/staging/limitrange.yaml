@@ -1,0 +1,39 @@
+# Per-container / per-PVC defaults and bounds for staging (Issue #674).
+#
+# - `defaultRequest` / `default` apply to any container that omits resources
+#   (ad-hoc debug pods, jobs, charts without a resources block), so nothing
+#   lands as BestEffort and every pod counts against the ResourceQuota.
+# - `max` is set above the largest chart (mpc-node: 2 CPU / 2Gi) so its
+#   documented "raise memory if OOMKilled" knob still has room up to 4Gi.
+# - `maxLimitRequestRatio` stops a tiny request paired with a huge limit, which
+#   would let one pod burst far past what the scheduler reserved.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: stellpoker-staging-limits
+  namespace: stellpoker-staging
+  labels:
+    app.kubernetes.io/part-of: stellpoker
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+      min:
+        cpu: 10m
+        memory: 16Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      maxLimitRequestRatio:
+        cpu: "10"
+        memory: "8"
+    - type: PersistentVolumeClaim
+      min:
+        storage: 1Gi
+      max:
+        storage: 50Gi

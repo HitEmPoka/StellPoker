@@ -158,6 +158,29 @@ If data exposure is suspected:
 3. Archive audit logs to cold storage
 4. Investigate root cause and patch
 
+## Audit Log WORM Export
+
+The tamper-evident audit log (`audit_logs`, hash-chained per record) can be
+exported to append-only (WORM) storage for compliance retention:
+
+```bash
+DATABASE_URL=postgres://... ./scripts/export_audit_worm.py --output-dir /var/lib/worm/audit-logs
+```
+
+- **Integrity**: the exporter recomputes every record hash and chain link
+  (same algorithm as `services/coordinator/src/audit_log.rs`) and refuses to
+  export if the chain does not verify.
+- **Append-only**: exports are exclusive-create JSONL files made read-only
+  (`chmod 444`); an existing export is never rewritten. Point `--output-dir`
+  at WORM-backed storage (e.g. an S3 Object Lock bucket mounted locally) for
+  immutable retention.
+- **Retention**: each export writes a manifest recording `retention_days`
+  (default 365) and `retain_until`; do not delete exports before that date.
+- **Scheduling**: run from cron, e.g.
+  `0 3 * * * cd /srv/stellpoker && DATABASE_URL=... ./scripts/export_audit_worm.py`
+- **Offline check**: `./scripts/export_audit_worm.py --self-test` verifies the
+  hash-chain logic and append-only behaviour without a database.
+
 ## References
 - [Rust coordinator cache module](../../coordinator/src/cache.rs)
 - [GDPR Article 17: Right to erasure](https://gdpr-info.eu/articles/right-to-erasure/)

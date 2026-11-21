@@ -320,11 +320,18 @@ def main() -> int:
     out_dir = args.output_dir if args.output_dir.is_absolute() else repo / args.output_dir
     budgets = load_budgets(budgets_path)
 
+    baseline_path = args.baseline
+    if not baseline_path:
+        default_base = repo / "circuits" / "baseline-constraints.json"
+        if default_base.exists():
+            baseline_path = default_base
+
     baseline = None
-    if args.baseline:
-        baseline_path = args.baseline if args.baseline.is_absolute() else repo / args.baseline
-        baseline_payload = read_json(baseline_path)
-        baseline = metrics_by_circuit(baseline_payload.get("metrics", []))
+    if baseline_path:
+        b_path = baseline_path if baseline_path.is_absolute() else repo / baseline_path
+        if b_path.exists():
+            baseline_payload = read_json(b_path)
+            baseline = metrics_by_circuit(baseline_payload.get("metrics", []))
 
     metrics = collect_metrics(repo, args.circuits, args.refresh)
     failures = compare(metrics, budgets, baseline)

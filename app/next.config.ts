@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
       "object-src 'none'; " +
       "upgrade-insecure-requests";
 
+    const cspReportUri =
+      process.env.CSP_REPORT_URI?.trim() || "/api/csp-report";
+
     return [
       {
         source: "/:path*",
@@ -42,7 +45,11 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Content-Security-Policy-Report-Only",
-            value: cspHeader,
+            value: `${cspHeader}; report-uri ${cspReportUri}; report-to csp-endpoint`,
+          },
+          {
+            key: "Reporting-Endpoints",
+            value: `csp-endpoint="${cspReportUri}"`,
           },
         ],
       },

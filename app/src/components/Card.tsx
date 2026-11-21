@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { decodeCard } from "@/lib/cards";
+import { isReducedDataMode } from "@/lib/reduced-data-mode";
+import { cardLabel, decodeCard } from "@/lib/cards";
 import type { HandStrength } from "@/lib/hand-strength";
 import { getHandStrengthColor, getHandStrengthLabel } from "@/lib/hand-strength";
 
@@ -56,7 +57,8 @@ function CardBack({ w, h }: { w: number; h: number }) {
       style={{
         width: `${w}px`,
         height: `${h}px`,
-        background: 'linear-gradient(180deg, #1a3a5c 0%, #0d2137 100%)',
+        background:
+          'linear-gradient(180deg, var(--card-back-start, #1a3a5c) 0%, var(--card-back-end, #0d2137) 100%)',
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -65,15 +67,15 @@ function CardBack({ w, h }: { w: number; h: number }) {
       <div style={{
         position: 'absolute',
         inset: '6px',
-        border: '2px solid #2a5a8c',
+        border: '2px solid var(--card-back-border, #2a5a8c)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
       }}>
         <div style={{
-          color: '#3498db',
+          color: 'var(--card-back-symbol, #3498db)',
           fontSize: '10px',
-          textShadow: '1px 1px 0 #0d2137',
+          textShadow: '1px 1px 0 var(--card-back-end, #0d2137)',
         }}>
           S
         </div>
@@ -160,19 +162,20 @@ function CardFace({ value, d, className, strength }: { value: number; d: CardDim
  */
 export function Card({ value, faceDown = false, size = "md", flip = false, flipDelay = 0, dealFrom, strength = null }: CardProps) {
   const d = DIMS[size];
+  const reducedData = isReducedDataMode();
 
   if (faceDown || value === undefined) {
     return (
-      <div className="card-responsive inline-block">
+      <div className="card-responsive inline-block" role="img" aria-label="Face down card">
         <CardBack w={d.w} h={d.h} />
       </div>
     );
   }
 
   // 3D flip: render both faces and rotate from back (180deg) to front (0deg).
-  if (flip) {
+  if (flip && !reducedData) {
     return (
-      <div className="card-responsive inline-block">
+      <div className="card-responsive inline-block" role="img" aria-label={cardLabel(value)}>
         <div
           className="card-flip"
           style={{
@@ -197,8 +200,8 @@ export function Card({ value, faceDown = false, size = "md", flip = false, flipD
   }
 
   return (
-    <div className="card-responsive inline-block">
-      <CardFace value={value} d={d} className="animate-card-deal" strength={strength} />
+    <div className="card-responsive inline-block" role="img" aria-label={cardLabel(value)}>
+      <CardFace value={value} d={d} className={reducedData ? undefined : "animate-card-deal"} strength={strength} />
     </div>
   );
 }

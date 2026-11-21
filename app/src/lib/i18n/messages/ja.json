@@ -1,0 +1,201 @@
+{
+  "app": {
+    "title": "Poker on Stellar",
+    "back": "← 戻る",
+    "loading": "読み込み中…"
+  },
+  "nav": {
+    "history": "履歴",
+    "keys": "操作キー [?]",
+    "chat": "チャット",
+    "tables": "テーブル一覧",
+    "stats": "戦績統計",
+    "language": "言語"
+  },
+  "table": {
+    "title": "テーブル #{id}",
+    "hand": "ハンド #{n}",
+    "waitingToJoin": "参加待機中...",
+    "connectWallet": "ウォレット接続",
+    "emptySeat": "空席",
+    "mpcStatus": "MPC: 3/3 ノード | TACEO CO-NOIR REP3",
+    "viewTx": "TXを確認 ↗",
+    "explorer": "エクスプローラー ↗",
+    "joinTable": "テーブルに参加"
+  },
+  "seat": {
+    "you": "— あなた —",
+    "aiBot": "— AI BOT —",
+    "yourTurn": "▼ あなたの手番 ▼",
+    "theirTurn": "▼ 相手の手番 ▼",
+    "winner": "★ 勝者 ★",
+    "chips": "チップ",
+    "bet": "ベット",
+    "folded": "フォールド",
+    "allIn": "オールイン！",
+    "editAlias": "プレイヤー名を変更",
+    "edit": "[編集]",
+    "dealer": "[D]",
+    "editAvatar": "アバターをカスタマイズ"
+  },
+  "stats": {
+    "title": "オンチェーン戦績",
+    "global": "全体",
+    "handsPlayed": "プレイしたハンド数",
+    "biggestPot": "最大ポット",
+    "playersJoined": "参加プレイヤー数",
+    "leaderboard": "リーダーボード",
+    "ratingLeaderboard": "ELOレーティング",
+    "noHands": "まだハンド履歴がありません。",
+    "player": "プレイヤー",
+    "handsWon": "勝利ハンド数",
+    "rating": "レーティング",
+    "rank": "順位",
+    "cachedAt": "{time} 時点のキャッシュ · 30秒ごとに更新",
+    "vpip": "VPIP",
+    "pfr": "PFR",
+    "aggression": "AF",
+    "hands": "ハンド数",
+    "loadingStats": "戦績を読み込み中…",
+    "minHandsNote": "リーダーボード掲載には一定以上のオンチェーンハンドが必要です。"
+  },
+  "minimap": {
+    "title": "テーブル概要",
+    "collapse": "非表示",
+    "expand": "マップ",
+    "seats": "{seated}/{max} 席",
+    "chips": "{chips} チップ",
+    "phase": "フェーズ: {phase}",
+    "current": "現在地",
+    "empty": "テーブルが見つかりません",
+    "refresh": "更新"
+  },
+  "home": {
+    "connect": "ウォレット接続",
+    "createTable": "テーブル作成",
+    "joinOpen": "公開テーブルに参加",
+    "playSolo": "AIと対戦 (ソロ)",
+    "viewStats": "戦績を確認"
+  },
+  "actions": {
+    "fold": "フォールド",
+    "check": "チェック",
+    "call": "コール",
+    "bet": "ベット",
+    "raise": "レイズ",
+    "allIn": "オールイン",
+    "deal": "カードを配る"
+  },
+  "settings": {
+    "volume": "音量",
+    "language": "言語",
+    "english": "English",
+    "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
+    "logout": "ログアウト",
+    "autoDetect": "自動 (ブラウザ設定)"
+  },
+  "dealer": {
+    "shuffling": "シャッフル＆ディール証明を生成中... (~30-60秒){timer}",
+    "revealProof": "カード公開証明を生成中... (~20-40秒){timer}",
+    "showdown": "ショーダウン検証中 — 2〜4分かかります。お待ちください。{timer}",
+    "oneMoment": "少々お待ちください...{timer}",
+    "dealingFlop": "ベットラウンド終了。ディーラーがフロップを開きます...",
+    "dealingTurn": "ベットラウンド終了。ディーラーがターンを開きます...",
+    "dealingRiver": "ベットラウンド終了。ディーラーがリバーを開きます...",
+    "resolvingShowdown": "ベット終了。ディーラーがショーダウンを判定中...",
+    "joinPrompt": "オンチェーン席は {seats} です。「テーブルに参加」を押してください。",
+    "soloStart": "AI対戦は模擬チップ(各100)を使用します。「カードを配る」を押してください。",
+    "headsUpWait": "ヘッズアップは2ウォレットが必要です。テーブルIDを共有してお待ちください。",
+    "headsUpReady": "ヘッズアップの準備が整いました。「カードを配る」を押してください。",
+    "multiWait": "3〜6人モードには最低3名のウォレット参加が必要です。",
+    "multiReady": "マルチプレイヤーテーブルの準備が整いました。「カードを配る」を押してください。",
+    "dealing": "カードを配っています。",
+    "preflop": "プリフロップ中。ベットしてください。次のストリートに進みます。",
+    "flop": "フロップが開きました。ベットしてください。ターンに進みます。",
+    "turn": "ターンが開きました。ベットしてください。リバーに進みます。",
+    "river": "リバーが開きました。最終ベットラウンドです。ショーダウンに進みます。",
+    "showdownLive": "ショーダウン進行中。",
+    "youWin": "ハンド終了。あなたの勝利です！",
+    "aiWins": "ハンド終了。AIの勝利です！",
+    "winner": "ハンド終了。勝者: {addr}。",
+    "handComplete": "ハンド終了。準備ができたら次のハンドを開始してください。",
+    "ready": "準備完了。"
+  },
+  "common": {
+    "cancel": "キャンセル",
+    "submitting": "送信中…"
+  },
+  "avatar": {
+    "title": "アバターカスタマイズ",
+    "connectWallet": "先にウォレットを接続してください。",
+    "resetDesc": "カスタムアバターを消去し、デフォルトのピクセルIdenticonに戻します。",
+    "rawSvg": "SVGコード直接入力",
+    "chooseTemplate": "テンプレートを選択",
+    "nftContract": "NFTコントラクトアドレス",
+    "nftTokenId": "NFTトークンID",
+    "nftNote": "管理者承認済みコントラクトのNFTのみ対応しています。",
+    "saveSvg": "SVGアバターを保存",
+    "linkNft": "NFTを連携",
+    "resetConfirm": "IDENTICONにリセット"
+  },
+  "diagnostics": {
+    "title": "トランザクション診断",
+    "simulationFailed": "トランザクションの事前シミュレーションに失敗しました",
+    "executionFailed": "トランザクションの実行に失敗しました",
+    "viewDocs": "Stellar公式ドキュメントを見る ↗",
+    "simulationLogs": "シミュレーションログ",
+    "hideLogs": "ログを非表示",
+    "commonCauses": "主な原因",
+    "suggestedAction": "推奨される対処方法",
+    "insufficient_balance": {
+      "title": "残高不足 (Insufficient Balance)",
+      "description": "バイインおよびネットワーク手数料に必要なXLM残高が不足しています。",
+      "cause": "口座残高がバイイン額とStellarの基本準備金(Base Reserve)の合計を下回っています。",
+      "action": "ウォレットにXLMを追加で入金し、テーブルバイインと必要準備金を確保してください。"
+    },
+    "timeout": {
+      "title": "タイムアウト (Timeout)",
+      "description": "トランザクションまたはRPCリクエストが制限時間内に確定しませんでした。",
+      "cause": "ネットワーク混雑またはRPCノードの一時的な遅延により制限時間を超過しました。",
+      "action": "通信環境を確認して再試行してください。残高は差し引かれていません。"
+    },
+    "seq": {
+      "title": "シーケンス番号不整合 (Sequence Mismatch)",
+      "description": "トランザクションのシーケンス番号が最新のオンチェーン状態と一致しません。",
+      "cause": "同じアカウントから別のトランザクションが同時に送信され、シーケンスが進んだ可能性があります。",
+      "action": "テーブル画面を更新して最新のアカウントシーケンスを取得し、再試行してください。"
+    },
+    "expired": {
+      "title": "トランザクション期限切れ (Expired)",
+      "description": "トランザクションがレジャーに取り込まれる前に有効期限またはレジャー上限を超過しました。",
+      "cause": "指定された有効時間内にレジャーへの取り込みが完了しませんでした。",
+      "action": "最新のレジャー有効期限で新しくトランザクションを発行してください。"
+    },
+    "budget": {
+      "title": "リソース予算超過 (Budget Exceeded)",
+      "description": "コントラクト呼び出しがSorobanのCPUまたはメモリ使用制限を超過しました。",
+      "cause": "スマートコントラクトの処理演算量またはストレージ読み書き量が許容量を超えました。",
+      "action": "引数やアクションを確認するか、ネットワークの予算調整をお待ちください。"
+    },
+    "unknown": {
+      "title": "トランザクションエラー",
+      "description": "予期せぬトランザクション失敗が発生しました。",
+      "cause": "コントラクトのパニックまたは未定義のエラーが発生しました。",
+      "action": "下記のシミュレーションログを確認するか、操作をやり直してください。"
+    }
+  },
+  "offline": {
+    "cachedView": "キャッシュ表示 (閲覧専用)",
+    "disconnected": "ウォレット未接続",
+    "lastUpdated": "最終更新: {time}",
+    "stale": "古いデータ",
+    "reconnect": "ウォレットを再接続",
+    "viewingCached": "ウォレット未接続のため、キャッシュされたテーブルデータを閲覧しています。",
+    "offlineNotice": "オフラインモード: 保存されたロビー状態を表示中。"
+  }
+}

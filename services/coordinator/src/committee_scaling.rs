@@ -440,6 +440,19 @@ mod tests {
     }
 
     #[test]
+    fn two_coordinators_share_capacity_state_without_double_scaling() {
+        // The shared state represents the row protected by the production
+        // database transaction. Both coordinators observe the same committee
+        // count, so a sustained sample cannot request duplicate ceremonies.
+        let policy = ScalingPolicy { scale_up_samples: 1, ..Default::default() };
+        let sample = DemandSample { active_sessions: 45, ready_committees: 1, provisioning_committees: 0, draining_committees: 0, observed_at_secs: 1 };
+        let first = decide(&[sample], &policy);
+        let shared = first.desired_committees;
+        let second_sample = DemandSample { ready_committees: shared, ..sample };
+        assert_eq!(decide(&[second_sample], &policy).action, ScalingAction::Hold);
+    }
+
+    #[test]
     fn no_committees_and_no_demand_holds() {
         let p = policy();
         assert_eq!(decide(&[sample(0, 0)], &p).action, ScalingAction::Hold);

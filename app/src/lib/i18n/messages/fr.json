@@ -1,0 +1,201 @@
+{
+  "app": {
+    "title": "Poker on Stellar",
+    "back": "← Retour",
+    "loading": "Chargement…"
+  },
+  "nav": {
+    "history": "HISTORIQUE",
+    "keys": "TOUCHES [?]",
+    "chat": "CHAT",
+    "tables": "TABLES",
+    "stats": "STATISTIQUES",
+    "language": "LANGUE"
+  },
+  "table": {
+    "title": "TABLE #{id}",
+    "hand": "MAIN #{n}",
+    "waitingToJoin": "EN ATTENTE POUR REJOINDRE...",
+    "connectWallet": "CONNECTER PORTEFEUILLE",
+    "emptySeat": "SIÈGE VIDE",
+    "mpcStatus": "MPC: 3/3 NŒUDS | TACEO CO-NOIR REP3",
+    "viewTx": "VOIR TX ↗",
+    "explorer": "EXPLORATEUR ↗",
+    "joinTable": "REJOINDRE LA TABLE"
+  },
+  "seat": {
+    "you": "— VOUS —",
+    "aiBot": "— BOT IA —",
+    "yourTurn": "▼ À VOTRE TOUR ▼",
+    "theirTurn": "▼ TOUR ADVERSE ▼",
+    "winner": "★ GAGNANT ★",
+    "chips": "JETONS",
+    "bet": "MISE",
+    "folded": "COUCHÉ",
+    "allIn": "TAPIS !",
+    "editAlias": "Modifier le pseudo",
+    "edit": "[MODIFIER]",
+    "dealer": "[D]",
+    "editAvatar": "Cliquer pour personnaliser l'avatar"
+  },
+  "stats": {
+    "title": "Statistiques Onchain",
+    "global": "Global",
+    "handsPlayed": "Mains Jouées",
+    "biggestPot": "Plus Gros Pot",
+    "playersJoined": "Joueurs Inscrits",
+    "leaderboard": "Classement",
+    "ratingLeaderboard": "Classement ELO",
+    "noHands": "Aucune main jouée pour l'instant.",
+    "player": "Joueur",
+    "handsWon": "Mains Gagnées",
+    "rating": "Score",
+    "rank": "Rang",
+    "cachedAt": "Enregistré à {time} · actualisé toutes les 30s",
+    "vpip": "VPIP",
+    "pfr": "PFR",
+    "aggression": "AF",
+    "hands": "Mains",
+    "loadingStats": "Chargement des stats…",
+    "minHandsNote": "Le classement exige un minimum de mains jouées on-chain."
+  },
+  "minimap": {
+    "title": "APERÇU DE LA TABLE",
+    "collapse": "MASQUER",
+    "expand": "CARTE",
+    "seats": "{seated}/{max} sièges",
+    "chips": "{chips} jetons",
+    "phase": "Phase: {phase}",
+    "current": "VOUS ÊTES ICI",
+    "empty": "Aucune table trouvée",
+    "refresh": "ACTUALISER"
+  },
+  "home": {
+    "connect": "CONNECTER PORTEFEUILLE",
+    "createTable": "CRÉER UNE TABLE",
+    "joinOpen": "REJOINDRE UNE TABLE OUVERTE",
+    "playSolo": "SOLO VS IA",
+    "viewStats": "VOIR LES STATISTIQUES"
+  },
+  "actions": {
+    "fold": "SE COUCHER",
+    "check": "PAROLE",
+    "call": "SUIVRE",
+    "bet": "MISER",
+    "raise": "RELANCER",
+    "allIn": "TAPIS",
+    "deal": "DISTRIBUER"
+  },
+  "settings": {
+    "volume": "VOLUME",
+    "language": "LANGUE",
+    "english": "English",
+    "spanish": "Español",
+    "german": "Deutsch",
+    "french": "Français",
+    "japanese": "日本語",
+    "chinese": "中文",
+    "arabic": "العربية",
+    "logout": "DÉCONNEXION",
+    "autoDetect": "Auto (navigateur)"
+  },
+  "dealer": {
+    "shuffling": "MÉLANGE & GÉNÉRATION DE PREUVE... (~30-60s){timer}",
+    "revealProof": "GÉNÉRATION DE PREUVE DE RÉVÉLATION... (~20-40s){timer}",
+    "showdown": "VÉRIFICATION DU SHOWDOWN — CECI PREND 2-4 MINUTES. PATIENTEZ.{timer}",
+    "oneMoment": "Un instant...{timer}",
+    "dealingFlop": "Tour d'enchères terminé. Le croupier dévoile le flop...",
+    "dealingTurn": "Tour d'enchères terminé. Le croupier dévoile le turn...",
+    "dealingRiver": "Tour d'enchères terminé. Le croupier dévoile la river...",
+    "resolvingShowdown": "Mises terminées. Le croupier résout le showdown...",
+    "joinPrompt": "Les places on-chain sont {seats}. Cliquez sur REJOINDRE LA TABLE avec ce portefeuille.",
+    "soloStart": "Le mode Solo vs IA utilise des jetons fictifs (100 chacun). Cliquez sur DISTRIBUER pour commencer.",
+    "headsUpWait": "Le mode duel nécessite 2 portefeuilles. Partagez l'ID de table et attendez.",
+    "headsUpReady": "Le duel est prêt. Cliquez sur DISTRIBUER.",
+    "multiWait": "Le mode 3-6 joueurs nécessite au moins 3 portefeuilles connectés.",
+    "multiReady": "La table multi-joueurs est prête. Cliquez sur DISTRIBUER.",
+    "dealing": "Distribution des cartes en cours.",
+    "preflop": "Préflop en direct. Placez votre mise ; le croupier révélera la suite.",
+    "flop": "Le flop est posé. Placez votre mise ; le croupier révélera le turn.",
+    "turn": "Le turn est posé. Placez votre mise ; le croupier révélera la river.",
+    "river": "La river est posée. Dernier tour d'enchères ; le croupier lance le showdown.",
+    "showdownLive": "Showdown en cours.",
+    "youWin": "Main terminée. VOUS GAGNEZ !",
+    "aiWins": "Main terminée. L'IA GAGNE !",
+    "winner": "Main terminée. Gagnant: {addr}.",
+    "handComplete": "Main terminée. Lancez la suivante dès que vous êtes prêt.",
+    "ready": "Prêt quand vous l'êtes."
+  },
+  "common": {
+    "cancel": "ANNULER",
+    "submitting": "ENVOI EN COURS…"
+  },
+  "avatar": {
+    "title": "PERSONNALISER L'AVATAR",
+    "connectWallet": "Connectez d'abord un portefeuille.",
+    "resetDesc": "Effacer l'avatar personnalisé et revenir à l'Identicon de pixels.",
+    "rawSvg": "SVG brut",
+    "chooseTemplate": "Choisir un modèle",
+    "nftContract": "Adresse du contrat NFT",
+    "nftTokenId": "ID du token NFT",
+    "nftNote": "Seuls les NFT de contrats approuvés par l'administrateur sont acceptés.",
+    "saveSvg": "ENREGISTRER L'AVATAR SVG",
+    "linkNft": "LIER LE NFT",
+    "resetConfirm": "RÉINITIALISER SUR L'IDENTICON"
+  },
+  "diagnostics": {
+    "title": "Diagnostics de Transaction",
+    "simulationFailed": "Échec de la simulation de transaction",
+    "executionFailed": "Échec de l'exécution de la transaction",
+    "viewDocs": "Voir la documentation Stellar ↗",
+    "simulationLogs": "Journaux de Simulation",
+    "hideLogs": "Masquer les Journaux",
+    "commonCauses": "Causes Courantes",
+    "suggestedAction": "Action Suggérée",
+    "insufficient_balance": {
+      "title": "Solde Insuffisant",
+      "description": "Votre portefeuille ne contient pas assez de XLM pour couvrir la cave et la réserve réseau.",
+      "cause": "Le solde du compte est inférieur au montant requis plus la réserve de base Stellar.",
+      "action": "Déposez des XLM supplémentaires sur votre portefeuille pour couvrir la cave et le solde minimum."
+    },
+    "timeout": {
+      "title": "Délai Dépassé",
+      "description": "La transaction ou la requête RPC a expiré avant de recevoir une confirmation.",
+      "cause": "La congestion du réseau ou la latence des nœuds RPC a dépassé le délai imparti.",
+      "action": "Vérifiez votre connexion et réessayez la transaction. Vos fonds n'ont pas été débités."
+    },
+    "seq": {
+      "title": "Discordance du Numéro de Séquence",
+      "description": "Le numéro de séquence de la transaction ne correspond pas à la séquence du compte on-chain.",
+      "cause": "Une autre transaction a été émise simultanément depuis ce compte, avançant la séquence.",
+      "action": "Actualisez la table pour obtenir le numéro de séquence à jour et réessayez."
+    },
+    "expired": {
+      "title": "Transaction Expirée",
+      "description": "La transaction a dépassé ses limites de temps ou de séquence de registre avant inclusion.",
+      "cause": "La transaction est restée en attente au-delà de la limite de validité du registre.",
+      "action": "Soumettez une nouvelle transaction avec des bornes de registre actuelles."
+    },
+    "budget": {
+      "title": "Budget de Ressources Dépassé",
+      "description": "L'appel du contrat a dépassé le budget d'instructions CPU ou mémoire de Soroban.",
+      "cause": "L'exécution du contrat intelligent a consommé plus d'instructions de calcul ou de stockage que prévu.",
+      "action": "Vérifiez les paramètres de l'opération ou attendez l'ajustement des frais avant de réexaminer."
+    },
+    "unknown": {
+      "title": "Erreur de Transaction",
+      "description": "Un échec inattendu de la transaction s'est produit.",
+      "cause": "Une erreur inconnue ou une panique du contrat s'est produite lors de l'exécution.",
+      "action": "Consultez les journaux de simulation ci-dessous ou réessayez l'opération."
+    }
+  },
+  "offline": {
+    "cachedView": "VUE EN CACHE (LECTURE SEULE)",
+    "disconnected": "Portefeuille déconnecté",
+    "lastUpdated": "Dernière mise à jour: {time}",
+    "stale": "PÉRIMÉ",
+    "reconnect": "RECONNECTER PORTEFEUILLE",
+    "viewingCached": "Vous consultez les données de table en cache pendant que le portefeuille est déconnecté.",
+    "offlineNotice": "Mode hors ligne: affichage de l'état du salon en cache."
+  }
+}

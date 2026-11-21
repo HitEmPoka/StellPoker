@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Card } from "./Card";
 import { stellarExpertUrl } from "@/lib/explorer";
@@ -48,6 +49,12 @@ function downloadHandHistory(entries: HandHistoryEntry[], format: ExportFormat) 
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/**
+ * Rows rendered per page. Long sessions can hold 10k+ hands, so the list grows
+ * in pages and offscreen rows skip layout via `content-visibility` (#613).
+ */
+export const HISTORY_PAGE_SIZE = 50;
+
 const EXPORT_BUTTON_STYLE: React.CSSProperties = {
   fontFamily: "'Press Start 2P', monospace",
   fontSize: "7px",
@@ -63,7 +70,11 @@ const EXPORT_BUTTON_STYLE: React.CSSProperties = {
  * @param props(object) - props(object).
  */
 export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHistoryPanelProps) {
+  const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE_SIZE);
   if (!open) return null;
+
+  const visibleEntries = entries.slice(0, visibleCount);
+  const remaining = entries.length - visibleEntries.length;
 
   return (
     <div
@@ -91,6 +102,7 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
           </span>
           <button
             onClick={onClose}
+            aria-label="Close hand history"
             className="text-[11px]"
             style={{ background: "none", border: "none", color: "#e74c3c", cursor: "pointer" }}
           >
@@ -129,11 +141,16 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
         )}
 
         <div className="flex flex-col gap-3">
-          {entries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <div
               key={`${entry.tableId}-${entry.handNumber}-${entry.timestamp}`}
               className="pixel-border-thin"
-              style={{ padding: "8px", background: "rgba(255,255,255,0.03)" }}
+              style={{
+                padding: "8px",
+                background: "rgba(255,255,255,0.03)",
+                contentVisibility: "auto",
+                containIntrinsicSize: "auto 180px",
+              }}
             >
               {/* Header row: hand number + time + replay button */}
               <div className="flex items-center justify-between">
@@ -249,6 +266,16 @@ export function HandHistoryPanel({ open, onClose, entries, onReplay }: HandHisto
             </div>
           ))}
         </div>
+
+        {remaining > 0 && (
+          <button
+            onClick={() => setVisibleCount((n) => n + HISTORY_PAGE_SIZE)}
+            className="w-full mt-3"
+            style={EXPORT_BUTTON_STYLE}
+          >
+            SHOW {Math.min(remaining, HISTORY_PAGE_SIZE)} MORE ({remaining} LEFT)
+          </button>
+        )}
       </div>
     </div>
   );

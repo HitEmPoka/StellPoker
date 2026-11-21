@@ -204,6 +204,8 @@ The poker-table contract sets every TTL through the policies in `contracts/poker
 | `TableClosure(table_id)` | Persistent | `TABLE` |
 | `UpgradeProposal(table_id)`, `LastUpgrade(table_id)` | Persistent | `TABLE` |
 | `DeadChipSweep(table_id)` | Persistent | `TABLE` |
+| `TableMetrics(table_id)` | Persistent | `TABLE` (per-table hand and rake totals, issue #563) |
+| `TableSunset(table_id)` | Persistent | `TABLE` (the record that freezes a sunset table, issue #564) |
 | `JackpotClaim(table_id, hand_number)` | Persistent | `TABLE` (a replay guard must not expire before the table) |
 | Ban list, currency whitelist | Persistent | `TABLE` |
 | `HandRecord(table_id, slot)` | Persistent | `HISTORY` |
@@ -238,6 +240,7 @@ Is the data read on nearly every call?
 | `RakeBalance(table_id)` | Persistent | Separate from `TableState` to allow cheap rake reads |
 | `HandRecord(table_id, slot)` | Persistent | One key per archived hand, so settling writes a single record regardless of history depth |
 | `HandHistoryMeta(table_id)` | Persistent | Circular-buffer cursor; read on archive and on every history query |
+| `ContractMetrics` | Instance | Four running counters read by `get_contract_metrics`; fixed size, never grows with table count (issue #563) |
 | Verification key (VK) | Persistent (in zk-verifier) | Large (~KB); rarely changes |
 | Committee epoch | Persistent (in committee-registry) | Epoch-scoped; managed separately |
 

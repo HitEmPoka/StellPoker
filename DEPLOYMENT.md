@@ -67,3 +67,26 @@ If a deployment fails or introduces critical bugs:
 1. **Frontend**: Revert the deployment to the previous commit via your hosting provider's dashboard.
 2. **Coordinator**: Stop the service, checkout the previous release tag, and restart. (Note: Database rollbacks require manual intervention and restoring from a backup).
 3. **Contracts**: Contracts are typically immutable or have specific upgrade paths. Follow the `MAINNET_MIGRATION.md` for safe contract upgrades/rollbacks if implemented.
+
+## 8. Container Image Signing and Verification (cosign)
+
+CI signs every GHCR image keylessly with [cosign](https://docs.sigstore.dev/) in
+`.github/workflows/docker-build-push.yml`. The signing certificate identity is
+this workflow running on `main`, so only images built by CI verify.
+
+### Verify before deploy
+
+```bash
+./scripts/verify-image-signature.sh ghcr.io/<org>/stellpoker/coordinator:<tag>
+```
+
+Run it for every image referenced by the Helm charts before `helm install` /
+`helm upgrade` (also documented in `infrastructure/helm/README.md`).
+
+### Failure mode (documented): unsigned images are refused
+
+- The verify script is **fail-closed**: any image that is unsigned, signed by a
+  different workflow/repo, or unverifiable causes a non-zero exit.
+- On failure the deploy **must abort** — do not bypass with `|| true`, an
+  insecure flag, or by skipping the check.
+- To remediate, re-push the image through CI so it is signed, then retry.
