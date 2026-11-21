@@ -537,6 +537,8 @@ fn seat_next_from_queue(env: &Env, table_id: u32) -> Result<(), PokerTableError>
         seat_index: seat,
         total_buy_in: next.buy_in,
         rebuy_count: 0,
+        last_blind_posted: None,
+        owes_dead_blind: false,
     });
     save_table(env, &table);
     save_queue(env, table_id, &new_queue);
@@ -739,6 +741,8 @@ impl PokerTableContract {
             seat_index: seat,
             total_buy_in: buy_in,
             rebuy_count: 0,
+            last_blind_posted: None,
+            owes_dead_blind: false,
         });
 
         save_table(&env, &table);
@@ -841,6 +845,48 @@ impl PokerTableContract {
         );
 
         Ok(new_stack)
+    }
+
+    /// Post a dead blind payment to satisfy blind obligations for a returning
+    /// player. Dead blinds are added to the pot but do not count toward the
+    /// player's committed amount, so they cannot win money from the dead blind.
+    /// This is only needed when a player has missed blind levels while sitting
+    /// out and is marked as owing a dead blind.
+    pub fn post_dead_blind_payment(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<(), PokerTableError> {
+        player.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let mut table = load_table(&env, table_id)?;
+
+        // Dead blinds can only be posted between hands
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::NotInBettingPhase);
+        }
+
+        let seat = find_seat(&env, &table, &player)?;
+        let p = table
+            .players
+            .get(seat)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+
+        if !p.owes_dead_blind {
+            // Player doesn't owe a dead blind, nothing to do
+            return Ok(());
+        }
+
+        game::post_dead_blind(&mut table, seat)?;
+        save_table(&env, &table);
+
+        env.events().publish(
+            (Symbol::new(&env, "dead_blind_posted"), table_id),
+            (player, seat),
+        );
+
+        Ok(())
     }
 
     /// Chips a seated player has deposited this session (initial buy-in plus

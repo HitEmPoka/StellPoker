@@ -124,9 +124,13 @@ pub struct TableConfig {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum AnteMode {
-    Fixed(i128),
-    Percentage(u32), // percentage of big blind
     None,
+    /// Per-player ante: every seated player posts this amount.
+    /// The amount can be fixed or computed as a percentage of the big blind.
+    PerPlayer { amount: i128 },
+    /// Big-blind ante: only the big blind posts a single ante for the table.
+    /// The amount is charged to the big blind in addition to their blind.
+    BigBlind { amount: i128 },
 }
 
 /// A single blinds/ante level in a table's schedule.
@@ -593,6 +597,13 @@ pub struct PlayerState {
     pub total_buy_in: i128,
     /// Rebuys used this session, checked against `TableConfig::max_rebuys`.
     pub rebuy_count: u32,
+    /// Last blind level this player posted when they were active. Used to
+    /// detect missed blinds when a player sits out and returns. `None` means
+    /// the player has never posted blinds at this table.
+    pub last_blind_posted: Option<u32>,
+    /// If true, this player owes a dead blind (missed blind payment) before
+    /// being dealt in. Dead blinds go to the pot but don't count as committed.
+    pub owes_dead_blind: bool,
 }
 
 #[contracttype]
