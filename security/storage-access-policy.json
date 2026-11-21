@@ -124,6 +124,26 @@
           ],
           "auth_model": "committee_require_auth",
           "admin_multisig_required": false
+        },
+        "DataKey::SitOutNextBb": {
+          "authorized_functions": [
+            "sit_out_next_big_blind",
+            "leave_table",
+            "start_hand",
+            "get_player_positions"
+          ],
+          "auth_model": "player_require_auth",
+          "admin_multisig_required": false
+        },
+        "DataKey::LastAggressor": {
+          "authorized_functions": [
+            "player_action",
+            "reveal_action",
+            "submit_showdown",
+            "get_showdown_order"
+          ],
+          "auth_model": "player_require_auth",
+          "admin_multisig_required": false
         }
       }
     },

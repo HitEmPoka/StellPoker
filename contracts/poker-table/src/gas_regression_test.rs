@@ -533,11 +533,9 @@ fn showdown_args(g: &G, h: &Hand) -> ShowdownArgs {
     let mut hole_cards: Vec<(u32, u32)> = Vec::new(&g.env);
     let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&g.env);
     let mut winner = None;
-    for i in 0..table.players.len() {
+    // Hole cards go in showdown reveal order (#866).
+    for i in g.client.get_showdown_order(&h.table_id).iter() {
         let p = table.players.get(i).unwrap();
-        if p.folded {
-            continue;
-        }
         winner.get_or_insert(p.seat_index);
         write_u32_field(&mut public_inputs, 13 + p.seat_index, 30 + p.seat_index);
         write_u32_field(&mut public_inputs, 19 + p.seat_index, 40 + p.seat_index);
