@@ -104,7 +104,7 @@ accepted if:
 
 | Coordinator API | Coordinator crate | `contracts/*` | `circuits/*` | Compatible |
 |---|---|---|---|---|
-| `v1` | 0.1.0 | 0.1.0 | (Protocol 25/26 UltraHonk format, see `circuits/BENCHMARKS.md`) | Yes — current release train |
+| `v1` | 0.1.0 | 0.1.0 | (Protocol 25/26 UltraHonk format, see `../circuits/BENCHMARKS.md`) | Yes — current release train |
 
 Update this table whenever any of the four columns changes independently
 (e.g. a contract-only fix that doesn't touch the coordinator still gets a

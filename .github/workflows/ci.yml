@@ -440,3 +440,17 @@ jobs:
         run: cd app && npm run build
         env:
           NEXT_PUBLIC_COORDINATOR_URL: http://localhost:8080
+
+  link-check:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify all local markdown links resolve
+        run: python3 scripts/check-links.py
