@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Symbol, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::constant_time;
 use crate::game_hub;
@@ -9,6 +9,31 @@ use crate::types::*;
 /// Initialize state for a new hand.
 pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     table.hand_number += 1;
+
+    // A player who sat out the last hand for the big blind is dealt back in
+    // and owes that blind (#859). Seats are bits: at most 6 seats.
+    let mut requests = sit_out_requests(env, table.id);
+    let mut returning: u32 = 0;
+    for i in 0..table.players.len() {
+        let mut p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        if !p.sitting_out {
+            continue;
+        }
+        if let Some(r) = requests.first_index_of(&p.address) {
+            requests.remove(r);
+            p.sitting_out = false;
+            returning |= 1 << i;
+            table.players.set(i, p);
+        }
+    }
+    if returning != 0 {
+        env.storage()
+            .instance()
+            .set(&DataKey::SitOutNextBb(table.id), &requests);
+    }
 
     // Rotate dealer button
     let previous_dealer = table.dealer_seat;
@@ -29,7 +54,8 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
             .players
             .get(i)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        p.folded = false;
+        // A sitting-out seat is not dealt into the hand.
+        p.folded = p.sitting_out;
         p.all_in = false;
         p.bet_this_round = 0;
         p.committed = 0;
@@ -66,6 +92,23 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
 
     let num_players = table.players.len() as u32;
 
+    // The big blind skips a player who asked to sit it out (#859), as long as
+    // two other players are left to play the hand.
+    loop {
+        let (_, bb) = blind_seats(table)?;
+        let mut p = table
+            .players
+            .get(bb)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        // The request stays listed while they sit out, marking them as returning.
+        if !requests.contains(&p.address) || active_player_count_for_new_hand(table) < 3 {
+            break;
+        }
+        p.sitting_out = true;
+        p.folded = true;
+        table.players.set(bb, p);
+    }
+
     // Collect antes from every seated player before blinds. Antes go
     // straight to the pot and do not count toward `bet_this_round` (unlike
     // blinds), matching standard tournament ante semantics: they aren't
@@ -86,22 +129,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     }
 
     // Post blinds
-    let active_players = active_player_count_for_new_hand(table);
-    if active_players < 2 {
-        return Err(PokerTableError::NotEnoughPlayers);
-    }
-
-    let is_heads_up = active_players == 2;
-    let sb_seat;
-    let bb_seat;
-
-    if is_heads_up {
-        sb_seat = table.dealer_seat;
-        bb_seat = next_active_seat(table, table.dealer_seat).unwrap();
-    } else {
-        sb_seat = next_active_seat(table, table.dealer_seat).unwrap();
-        bb_seat = next_active_seat(table, sb_seat).unwrap();
-    }
+    let (sb_seat, bb_seat) = blind_seats(table)?;
 
     match bomb_ante {
         // Bomb pot: every player antes instead of posting blinds, and no straddle.
@@ -109,6 +137,16 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         None => {
             post_blind(table, sb_seat, level.small_blind)?;
             post_blind(table, bb_seat, level.big_blind)?;
+        }
+    }
+    // commit_deal opens preflop left of here when a seat sits out (#859).
+    table.current_turn = bb_seat;
+
+    // A returning player posts the big blind they skipped, dead (into the pot,
+    // not their bet), unless they post it as the big blind now (#859).
+    for seat in 0..num_players {
+        if returning & (1 << seat) != 0 && (bomb_ante.is_some() || seat != bb_seat) {
+            post_ante(table, seat, level.big_blind)?;
         }
     }
 
@@ -411,6 +449,55 @@ pub(crate) fn active_player_count_for_new_hand(table: &TableState) -> u32 {
         }
     }
     count
+}
+
+/// Players at `table_id` who asked to sit out the next big blind (#859).
+pub(crate) fn sit_out_requests(env: &Env, table_id: u32) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::SitOutNextBb(table_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Small- and big-blind seats for a new hand: heads-up the button posts the
+/// small blind, otherwise the two active seats after the button do.
+fn blind_seats(table: &TableState) -> Result<(u32, u32), PokerTableError> {
+    let active_players = active_player_count_for_new_hand(table);
+    if active_players < 2 {
+        return Err(PokerTableError::NotEnoughPlayers);
+    }
+    let sb_seat = if active_players == 2 {
+        table.dealer_seat
+    } else {
+        next_active_seat(table, table.dealer_seat).ok_or(PokerTableError::NotEnoughPlayers)?
+    };
+    let bb_seat = next_active_seat(table, sb_seat).ok_or(PokerTableError::NotEnoughPlayers)?;
+    Ok((sb_seat, bb_seat))
+}
+
+/// Seats in the order they show their hole cards at showdown (#866): the last
+/// bettor or raiser on the river first or, when the river was checked through,
+/// the first player left of the button; then clockwise, skipping folded seats.
+pub(crate) fn showdown_order(env: &Env, table: &TableState) -> Vec<u32> {
+    let num_players = table.players.len();
+    let first = match env
+        .storage()
+        .instance()
+        .get::<DataKey, (u32, u32)>(&DataKey::LastAggressor(table.id))
+    {
+        Some((hand, seat)) if hand == table.hand_number => seat,
+        _ => table.dealer_seat + 1,
+    };
+    let mut order = Vec::new(env);
+    for k in 0..num_players {
+        let seat = (first + k) % num_players;
+        if let Some(p) = table.players.get(seat) {
+            if !p.folded {
+                order.push_back(seat);
+            }
+        }
+    }
+    order
 }
 
 pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32> {

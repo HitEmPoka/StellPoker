@@ -614,6 +614,10 @@ pub struct PlayerPosition {
     pub committed: i128,
     /// Total buy-in including rebuys.
     pub total_buy_in: i128,
+    /// Sitting out (not dealt in) this hand.
+    pub sitting_out: bool,
+    /// Asked to sit out the next big blind (#859).
+    pub sit_out_next_bb: bool,
     pub phase: GamePhase,
     pub hand_number: u32,
 }
@@ -1193,6 +1197,11 @@ pub enum DataKey {
     BombPotConfig(u32),
     /// Rabbit-hunt progress `(hand_number, cards_revealed)` for a table (#858).
     RabbitHunt(u32),
+    /// Players who asked to sit out the next big blind (#859). A listed player
+    /// who is also `sitting_out` is sitting that hand out.
+    SitOutNextBb(u32),
+    /// `(hand_number, seat)` of the last bet or raise on the river (#866).
+    LastAggressor(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

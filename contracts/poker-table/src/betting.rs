@@ -184,6 +184,15 @@ pub fn process_action(
         }
     }
 
+    // A river bet, raise or all-in that tops the highest bet makes this seat
+    // the one to show first at showdown (#866).
+    if matches!(table.phase, GamePhase::River) && p.bet_this_round > current_bet {
+        env.storage().instance().set(
+            &DataKey::LastAggressor(table.id),
+            &(table.hand_number, seat),
+        );
+    }
+
     // Emit a per-action event so the frontend can react without polling. The
     // amount is the chips added to the pot by this action (0 for fold/check).
     emit_action(env, table, player, action, table.pot - pot_before);
