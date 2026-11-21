@@ -539,7 +539,7 @@ fn oversized_raise_is_rejected_not_overflowed() {
         let (mut table, actor) = preflop_table(&env, 1_000, BettingStructure::NoLimit);
         // to_call is 10, so `to_call + raise` exceeds i128::MAX for these.
         assert_eq!(
-            act(&env, &mut table, &actor, Action::Raise(raise)),
+            act(&env, &mut table, &actor, Action::RaiseBy(raise)),
             Err(PokerTableError::NotEnoughChips),
             "raise={raise}"
         );
@@ -583,13 +583,13 @@ fn pot_limit_raise_math_survives_a_near_max_pot() {
     table.pot = MAX / 2;
     // A raise above `pot + to_call` is refused; one at the limit goes through.
     assert_eq!(
-        act(&env, &mut table, &actor, Action::Raise(MAX / 2 + 11)),
+        act(&env, &mut table, &actor, Action::RaiseBy(MAX / 2 + 11)),
         Err(PokerTableError::NotEnoughChips)
     );
     let (mut table, actor) = preflop_table(&env, MAX / 8, BettingStructure::PotLimit);
     table.pot = MAX / 2;
     assert_eq!(
-        act(&env, &mut table, &actor, Action::Raise(MAX / 8 - 10)),
+        act(&env, &mut table, &actor, Action::RaiseBy(MAX / 8 - 10)),
         Ok(())
     );
     assert_eq!(table.players.get(0).unwrap().stack, 0);

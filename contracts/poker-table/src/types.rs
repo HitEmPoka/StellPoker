@@ -594,6 +594,11 @@ pub enum PokerTableError {
     RabbitHuntNotAvailable = 125,
     /// Rabbit-hunt cards must be the next unused deck indices, in order.
     InvalidRabbitHuntIndices = 126,
+    // --- Raise intent validation (#868) ---
+    /// Legacy/ambiguous `Action::Raise` payload rejected at contract boundary.
+    AmbiguousRaiseIntent = 127,
+    /// Raise increment is non-positive or `RaiseTo` does not exceed `current_bet`.
+    IllegalRaiseIncrement = 128,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -674,7 +679,12 @@ pub enum Action {
     Check,
     Call,
     Bet(i128),
+    /// Legacy/ambiguous raise payload; rejected at the contract boundary (#868).
     Raise(i128),
+    /// Raise to a target total street bet (#868).
+    RaiseTo(i128),
+    /// Raise by an explicit increment over the current highest bet (#868).
+    RaiseBy(i128),
     AllIn,
 }
 

@@ -713,7 +713,7 @@ mod test {
 
         // Player raises by 20 on top of calling the big blind
         s.client
-            .player_action(&table_id, &raiser.address, &1u32, &Action::Raise(20));
+            .player_action(&table_id, &raiser.address, &1u32, &Action::RaiseBy(20));
 
         // Other player calls the raise
         let table = s.client.get_table(&table_id);
@@ -1365,7 +1365,7 @@ mod test {
         let table = s.client.get_table(&table_id);
         let raiser = table.players.get(table.current_turn).unwrap();
         s.client
-            .player_action(&table_id, &raiser.address, &1u32, &Action::Raise(200));
+            .player_action(&table_id, &raiser.address, &1u32, &Action::RaiseBy(200));
 
         let table = s.client.get_table(&table_id);
         let folder = table.players.get(table.current_turn).unwrap();
@@ -2549,8 +2549,8 @@ mod test {
         // big blind (seat 0) calls, and the button folds with 30 committed.
         let mut seqs = [0u32; 6];
         assert_eq!(s.client.get_table(&table_id).current_turn, 1);
-        act(&s, table_id, &mut seqs, Action::Raise(20));
-        act(&s, table_id, &mut seqs, Action::Raise(40));
+        act(&s, table_id, &mut seqs, Action::RaiseBy(20));
+        act(&s, table_id, &mut seqs, Action::RaiseBy(40));
         act(&s, table_id, &mut seqs, Action::Call);
         act(&s, table_id, &mut seqs, Action::Fold);
         let folder = s.client.get_table(&table_id).players.get(1).unwrap();
@@ -2694,7 +2694,7 @@ mod test {
         call_down_to(&s, table_id, &mut seqs, GamePhase::River);
         assert_eq!(s.client.get_table(&table_id).current_turn, 0);
         act(&s, table_id, &mut seqs, Action::Bet(20));
-        act(&s, table_id, &mut seqs, Action::Raise(20));
+        act(&s, table_id, &mut seqs, Action::RaiseBy(20));
         act(&s, table_id, &mut seqs, Action::Call);
         assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Showdown);
         assert_eq!(

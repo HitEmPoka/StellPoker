@@ -190,7 +190,7 @@ fn raise_below_big_blind_rejected() {
     let (mut table, p0, _p1) = two_player_table(&env, &poker, &hub, 1_000, big_blind);
 
     // p0 is SB and must at least call BB (20). A raise of 5 (< big_blind=20) must fail.
-    let err = act(&env, &poker, &mut table, &p0, &Action::Raise(5)).unwrap_err();
+    let err = act(&env, &poker, &mut table, &p0, &Action::RaiseBy(5)).unwrap_err();
     assert_eq!(err, PokerTableError::RaiseTooSmall);
 }
 
@@ -202,7 +202,7 @@ fn raise_equal_to_big_blind_accepted() {
     let (mut table, p0, _p1) = two_player_table(&env, &poker, &hub, 1_000, big_blind);
 
     // p0 raises exactly the big blind — that's the minimum legal raise.
-    act(&env, &poker, &mut table, &p0, &Action::Raise(big_blind))
+    act(&env, &poker, &mut table, &p0, &Action::RaiseBy(big_blind))
         .expect("raise equal to big blind must succeed");
     // last_raise_size must now reflect the raise.
     assert_eq!(table.last_raise_size, big_blind);
@@ -217,11 +217,11 @@ fn re_raise_must_match_prior_raise_size() {
     let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
 
     // p0 (SB) raises 40 (> BB=10).
-    act(&env, &poker, &mut table, &p0, &Action::Raise(40)).expect("initial raise");
+    act(&env, &poker, &mut table, &p0, &Action::RaiseBy(40)).expect("initial raise");
     assert_eq!(table.last_raise_size, 40);
 
     // p1 (BB) attempts a re-raise of only 20 — smaller than the prior raise of 40.
-    let err = act(&env, &poker, &mut table, &p1, &Action::Raise(20)).unwrap_err();
+    let err = act(&env, &poker, &mut table, &p1, &Action::RaiseBy(20)).unwrap_err();
     assert_eq!(err, PokerTableError::RaiseTooSmall);
 }
 
@@ -233,10 +233,10 @@ fn re_raise_matching_prior_size_accepted() {
     let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
 
     // p0 raises 40.
-    act(&env, &poker, &mut table, &p0, &Action::Raise(40)).expect("initial raise");
+    act(&env, &poker, &mut table, &p0, &Action::RaiseBy(40)).expect("initial raise");
 
     // p1 re-raises exactly 40 — exactly matching prior raise. Must be accepted.
-    act(&env, &poker, &mut table, &p1, &Action::Raise(40))
+    act(&env, &poker, &mut table, &p1, &Action::RaiseBy(40))
         .expect("re-raise equal to prior raise must succeed");
     assert_eq!(table.last_raise_size, 40);
 }
@@ -325,10 +325,10 @@ fn raise_on_betless_street_uses_big_blind_not_last_raise_size() {
     table.last_raise_size = 100;
     table.current_turn = 0;
 
-    let err = act(&env, &poker, &mut table, &p0, &Action::Raise(big_blind - 1)).unwrap_err();
+    let err = act(&env, &poker, &mut table, &p0, &Action::RaiseBy(big_blind - 1)).unwrap_err();
     assert_eq!(err, PokerTableError::RaiseTooSmall);
 
-    act(&env, &poker, &mut table, &p0, &Action::Raise(big_blind))
+    act(&env, &poker, &mut table, &p0, &Action::RaiseBy(big_blind))
         .expect("opening action of exactly 1 BB on a bet-less street must succeed");
 }
 
@@ -350,9 +350,68 @@ fn min_raise_after_bet_boundary() {
     let opening_bet = 50i128;
     act(&env, &poker, &mut table, &p0, &Action::Bet(opening_bet)).expect("opening bet");
 
-    let err = act(&env, &poker, &mut table, &p1, &Action::Raise(opening_bet - 1)).unwrap_err();
+    let err = act(&env, &poker, &mut table, &p1, &Action::RaiseBy(opening_bet - 1)).unwrap_err();
     assert_eq!(err, PokerTableError::RaiseTooSmall);
 
-    act(&env, &poker, &mut table, &p1, &Action::Raise(opening_bet))
+    act(&env, &poker, &mut table, &p1, &Action::RaiseBy(opening_bet))
         .expect("raise equal to opening bet must succeed");
+}
+
+#[test]
+fn ambiguous_raise_intent_reverts_with_typed_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let poker = env.register(PokerTableContract, ());
+    let hub = env.register(NoopGameHub, ());
+    let (mut table, p0, _p1) = two_player_table(&env, &poker, &hub, 1_000, 10);
+
+    let err = act(&env, &poker, &mut table, &p0, &Action::Raise(20)).unwrap_err();
+    assert_eq!(err, PokerTableError::AmbiguousRaiseIntent);
+}
+
+#[test]
+fn illegal_raise_increment_and_raise_to_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let poker = env.register(PokerTableContract, ());
+    let hub = env.register(NoopGameHub, ());
+    let big_blind = 10i128;
+    let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 1_000, big_blind);
+
+    // RaiseBy(0) or negative increment -> IllegalRaiseIncrement
+    assert_eq!(
+        act(&env, &poker, &mut table, &p0, &Action::RaiseBy(0)).unwrap_err(),
+        PokerTableError::IllegalRaiseIncrement
+    );
+    assert_eq!(
+        act(&env, &poker, &mut table, &p0, &Action::RaiseBy(-5)).unwrap_err(),
+        PokerTableError::IllegalRaiseIncrement
+    );
+
+    // RaiseTo at or below current_bet (10) -> IllegalRaiseIncrement
+    assert_eq!(
+        act(&env, &poker, &mut table, &p0, &Action::RaiseTo(big_blind)).unwrap_err(),
+        PokerTableError::IllegalRaiseIncrement
+    );
+    assert_eq!(
+        act(&env, &poker, &mut table, &p0, &Action::RaiseTo(big_blind - 1)).unwrap_err(),
+        PokerTableError::IllegalRaiseIncrement
+    );
+
+    // RaiseTo above current_bet but below min_raise (10 + 10 = 20) -> RaiseTooSmall
+    assert_eq!(
+        act(&env, &poker, &mut table, &p0, &Action::RaiseTo(15)).unwrap_err(),
+        PokerTableError::RaiseTooSmall
+    );
+
+    // RaiseTo(20) is a legal raise by 10 over the 10 big blind.
+    act(&env, &poker, &mut table, &p0, &Action::RaiseTo(20))
+        .expect("RaiseTo(20) over BB=10 must succeed");
+    assert_eq!(table.players.get(0).unwrap().bet_this_round, 20);
+    assert_eq!(table.last_raise_size, 10);
+
+    // Next player RaiseTo(30) raises by 10 over 20.
+    act(&env, &poker, &mut table, &p1, &Action::RaiseTo(30))
+        .expect("RaiseTo(30) over 20 must succeed");
+    assert_eq!(table.players.get(1).unwrap().bet_this_round, 30);
 }

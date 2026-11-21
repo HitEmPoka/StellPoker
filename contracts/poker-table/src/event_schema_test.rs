@@ -277,7 +277,7 @@ fn emitted_events_match_their_schemas() {
     t.client.start_hand(&t.table_id);
     t.capture();
     t.deal();
-    t.act(|_| Action::Raise(100));
+    t.act(|_| Action::RaiseBy(100));
     t.act(|_| Action::Fold);
     t.act(|_| Action::Fold);
     assert_eq!(t.phase(), GamePhase::Settlement);
