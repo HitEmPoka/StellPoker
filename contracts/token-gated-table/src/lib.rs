@@ -1,4 +1,8 @@
 #![no_std]
+// Soroban entrypoints include `Env` and the authenticated caller in addition
+// to the policy fields, so the generated client methods exceed clippy's
+// default seven-argument threshold without reducing contract clarity.
+#![allow(clippy::too_many_arguments)]
 
 //! Token-gated table admission contract.
 //!
@@ -256,11 +260,10 @@ impl TokenAllowlistContract {
         if Self::sac_balance(&env, &token_address, &player) < policy.min_balance {
             return false;
         }
-        let nft_gate_ok = match (policy.nft_token, policy.nft_token_id) {
+        match (policy.nft_token, policy.nft_token_id) {
             (Some(nft), Some(token_id)) => Self::owns_nft(&env, &nft, &player, token_id),
             _ => true,
-        };
-        nft_gate_ok
+        }
     }
 
     /// Authenticated variant for callers that want the player to prove their
@@ -507,7 +510,8 @@ mod test {
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &99);
 
-        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
 
         assert!(!s.client.can_join(&player, &s.token));
     }
@@ -523,7 +527,8 @@ mod test {
         let nft = MockMembershipNftClient::new(&s.env, &nft_id);
         nft.initialize(&other, &7);
 
-        s.client.set_gate_policy(&s.admin, &s.token, &100, &Some(nft_id), &Some(7), &0, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &Some(nft_id), &Some(7), &0, &true);
 
         assert!(!s.client.can_join(&player, &s.token));
     }
@@ -535,7 +540,8 @@ mod test {
         s.sac.mint(&player, &100);
         let expires_at = s.env.ledger().timestamp() + 60;
 
-        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &expires_at, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &expires_at, &true);
         assert!(s.client.can_join(&player, &s.token));
 
         s.env.ledger().set_timestamp(expires_at + 1);
@@ -547,7 +553,8 @@ mod test {
         let s = setup();
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &100);
-        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
         assert!(s.client.can_join(&player, &s.token));
 
         s.client.set_gate_enabled(&s.admin, &s.token, &false);
@@ -599,7 +606,8 @@ mod test {
     #[test]
     fn policy_changes_emit_events() {
         let s = setup();
-        s.client.set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
         assert!(!s.env.events().all().events().is_empty());
 
         s.client.revoke_gate_policy(&s.admin, &s.token);
@@ -610,7 +618,9 @@ mod test {
     fn non_admin_cannot_change_policy() {
         let s = setup();
         let stranger = Address::generate(&s.env);
-        let result = s.client.try_set_gate_policy(&stranger, &s.token, &1, &None, &None, &0, &true);
+        let result = s
+            .client
+            .try_set_gate_policy(&stranger, &s.token, &1, &None, &None, &0, &true);
         assert!(result.is_err());
     }
 
@@ -619,7 +629,8 @@ mod test {
         let s = setup();
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &1);
-        s.client.set_gate_policy(&s.admin, &s.token, &1, &None, &None, &0, &true);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &1, &None, &None, &0, &true);
         assert!(s.client.verify_join(&player, &s.token));
     }
 }

@@ -588,7 +588,9 @@ mod test {
         // No reporter signature is present, so the reporter cannot be
         // authenticated and neither lifecycle entrypoint may mutate state.
         env.mock_auths(&[]);
-        assert!(client.try_start_game(&game_id, &42, &player1, &player2, &100, &100).is_err());
+        assert!(client
+            .try_start_game(&game_id, &42, &player1, &player2, &100, &100)
+            .is_err());
         assert!(client.get_session(&42).is_none());
 
         // Authorized path still works end to end.
@@ -621,7 +623,9 @@ mod test {
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
         env.mock_auths(&[]);
-        assert!(client.try_start_game(&game_id, &7, &player1, &player2, &10, &10).is_err());
+        assert!(client
+            .try_start_game(&game_id, &7, &player1, &player2, &10, &10)
+            .is_err());
         assert!(client.get_session(&7).is_none());
 
         // Rotation admin is authorized; the new reporter is now the only
