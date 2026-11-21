@@ -407,6 +407,7 @@ mod test {
         contract, contractimpl, contracttype,
         testutils::{Address as _, Events as _, Ledger},
         token::StellarAssetClient,
+        Event,
     };
 
     #[contracttype]
@@ -451,6 +452,7 @@ mod test {
     struct Setup<'a> {
         env: Env,
         client: TokenAllowlistContractClient<'a>,
+        contract_id: Address,
         admin: Address,
         token: Address,
         sac: StellarAssetClient<'a>,
@@ -475,6 +477,7 @@ mod test {
         Setup {
             env,
             client,
+            contract_id,
             admin,
             token: sac_address,
             sac,
@@ -608,10 +611,23 @@ mod test {
         let s = setup();
         s.client
             .set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
-        assert!(!s.env.events().all().events().is_empty());
+        let set_event = GatePolicySet {
+            admin: s.admin.clone(),
+            token_address: s.token.clone(),
+            min_balance: 5,
+            expires_at: 0,
+            enabled: true,
+        }
+        .to_xdr(&s.env, &s.contract_id);
+        assert!(s.env.events().all().events().contains(&set_event));
 
         s.client.revoke_gate_policy(&s.admin, &s.token);
-        assert!(s.env.events().all().events().len() >= 2);
+        let revoke_event = GatePolicyRevoked {
+            admin: s.admin.clone(),
+            token_address: s.token.clone(),
+        }
+        .to_xdr(&s.env, &s.contract_id);
+        assert!(s.env.events().all().events().contains(&revoke_event));
     }
 
     #[test]
