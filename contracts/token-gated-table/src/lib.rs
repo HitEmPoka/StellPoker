@@ -164,16 +164,7 @@ impl TokenAllowlistContract {
         Self::require_admin(&env, &admin);
         let decimals = token::Client::new(&env, &token_address).decimals();
         assert!(decimals >= min_decimals, "token decimals below minimum");
-        Self::set_gate_policy(
-            env,
-            admin,
-            token_address,
-            1,
-            None,
-            None,
-            0,
-            true,
-        );
+        Self::set_gate_policy(env, admin, token_address, 1, None, None, 0, true);
     }
 
     /// Permanently revoke a policy. A revoked token can never be used to join
@@ -215,7 +206,9 @@ impl TokenAllowlistContract {
         env.storage().instance().set(&key, &policy);
 
         let token_key = AllowlistKey::Token(token_address.clone());
-        if let Some(mut info) = env.storage().instance().get::<AllowlistKey, TokenInfo>(&token_key) {
+        if let Some(mut info) =
+            env.storage().instance().get::<AllowlistKey, TokenInfo>(&token_key)
+        {
             info.enabled = enabled;
             env.storage().instance().set(&token_key, &info);
         }
@@ -293,7 +286,7 @@ impl TokenAllowlistContract {
         env.storage()
             .instance()
             .get::<AllowlistKey, TokenInfo>(&AllowlistKey::Token(token_address))
-            .map_or(false, |info| info.enabled)
+            .is_some_and(|info| info.enabled)
     }
 
     pub fn list_tokens(env: Env) -> Vec<Address> {
@@ -514,8 +507,7 @@ mod test {
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &99);
 
-        s.client
-            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
 
         assert!(!s.client.can_join(&player, &s.token));
     }
@@ -531,15 +523,7 @@ mod test {
         let nft = MockMembershipNftClient::new(&s.env, &nft_id);
         nft.initialize(&other, &7);
 
-        s.client.set_gate_policy(
-            &s.admin,
-            &s.token,
-            &100,
-            &Some(nft_id),
-            &Some(7),
-            &0,
-            &true,
-        );
+        s.client.set_gate_policy(&s.admin, &s.token, &100, &Some(nft_id), &Some(7), &0, &true);
 
         assert!(!s.client.can_join(&player, &s.token));
     }
@@ -551,8 +535,7 @@ mod test {
         s.sac.mint(&player, &100);
         let expires_at = s.env.ledger().timestamp() + 60;
 
-        s.client
-            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &expires_at, &true);
+        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &expires_at, &true);
         assert!(s.client.can_join(&player, &s.token));
 
         s.env.ledger().set_timestamp(expires_at + 1);
@@ -564,12 +547,10 @@ mod test {
         let s = setup();
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &100);
-        s.client
-            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+        s.client.set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
         assert!(s.client.can_join(&player, &s.token));
 
-        s.client
-            .set_gate_enabled(&s.admin, &s.token, &false);
+        s.client.set_gate_enabled(&s.admin, &s.token, &false);
         assert!(!s.client.can_join(&player, &s.token));
 
         s.client.set_gate_enabled(&s.admin, &s.token, &true);
@@ -618,8 +599,7 @@ mod test {
     #[test]
     fn policy_changes_emit_events() {
         let s = setup();
-        s.client
-            .set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
+        s.client.set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
         assert!(!s.env.events().all().events().is_empty());
 
         s.client.revoke_gate_policy(&s.admin, &s.token);
@@ -630,15 +610,7 @@ mod test {
     fn non_admin_cannot_change_policy() {
         let s = setup();
         let stranger = Address::generate(&s.env);
-        let result = s.client.try_set_gate_policy(
-            &stranger,
-            &s.token,
-            &1,
-            &None,
-            &None,
-            &0,
-            &true,
-        );
+        let result = s.client.try_set_gate_policy(&stranger, &s.token, &1, &None, &None, &0, &true);
         assert!(result.is_err());
     }
 
@@ -647,8 +619,7 @@ mod test {
         let s = setup();
         let player = Address::generate(&s.env);
         s.sac.mint(&player, &1);
-        s.client
-            .set_gate_policy(&s.admin, &s.token, &1, &None, &None, &0, &true);
+        s.client.set_gate_policy(&s.admin, &s.token, &1, &None, &None, &0, &true);
         assert!(s.client.verify_join(&player, &s.token));
     }
 }
