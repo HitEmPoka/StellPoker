@@ -1,20 +1,45 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
-/// Token Allowlist Governance contract.
-///
-/// Manages a governance-controlled allowlist of SAC (Stellar Asset Contract)
-/// tokens that are accepted for buy-ins. Tables reference this contract to
-/// gate which assets players may use.
+//! Token-gated table admission contract.
+//!
+//! Intended semantics (issue #1008): a table may only admit a player when the
+//! player (a) holds at least `min_balance` units of the configured Stellar
+//! Asset Contract (SAC) buy-in token and, optionally, (b) owns the configured
+//! NFT token id (for example a `table-nft` membership pass). Policies are
+//! governed by an admin, can be time-bounded (`expires_at`) and can be revoked
+//! at any time. No policy means no admission.
+//!
+//! `can_join` itself is a read-only view: a table calls it on-chain and does
+//! not ask the player to sign a second time. All state-changing policy calls
+//! require `admin.require_auth()`, and the authenticated `verify_join`
+//! entrypoint lets a table ask the player to prove their identity explicitly.
+
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, token, Address, Env, InvokeError, IntoVal,
+    Symbol, Val, Vec,
+};
+
 #[contract]
 pub struct TokenAllowlistContract;
 
+/// A token admission policy. `expires_at == 0` means "no time limit".
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GatePolicy {
+    pub token_address: Address,
+    pub min_balance: i128,
+    pub nft_token: Option<Address>,
+    pub nft_token_id: Option<u32>,
+    pub expires_at: u64,
+    pub enabled: bool,
+}
+
+/// Kept for backwards compatibility with existing allowlist consumers.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenInfo {
     pub token_address: Address,
     pub enabled: bool,
-    /// Minimum decimals the token must report. Used for metadata validation.
     pub min_decimals: u32,
 }
 
@@ -23,12 +48,46 @@ pub struct TokenInfo {
 pub enum AllowlistKey {
     Admin,
     Token(Address),
+    Policy(Address),
     AllTokens,
+}
+
+#[contractevent]
+pub struct AllowlistInitialized {
+    pub admin: Address,
+}
+
+#[contractevent]
+pub struct GatePolicySet {
+    pub admin: Address,
+    pub token_address: Address,
+    pub min_balance: i128,
+    pub expires_at: u64,
+    pub enabled: bool,
+}
+
+#[contractevent]
+pub struct GatePolicyRevoked {
+    pub admin: Address,
+    pub token_address: Address,
+}
+
+#[contractevent]
+pub struct GatePolicyStatusChanged {
+    pub admin: Address,
+    pub token_address: Address,
+    pub enabled: bool,
+}
+
+#[contractevent]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
 }
 
 #[contractimpl]
 impl TokenAllowlistContract {
-    /// Initialize the allowlist with an admin.
+    /// Initialize the policy administrator. Must be called once.
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
         assert!(
@@ -36,130 +95,207 @@ impl TokenAllowlistContract {
             "already initialized"
         );
         env.storage().instance().set(&AllowlistKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&AllowlistKey::AllTokens, &Vec::<Address>::new(&env));
+        AllowlistInitialized { admin }.publish(&env);
     }
 
-    /// Add a token to the allowlist. Validates that the token contract exists
-    /// by querying its decimals. Admin only.
+    /// Create or replace an admission policy for a SAC token.
+    ///
+    /// Set `nft_token`/`nft_token_id` to `Some` to additionally require NFT
+    /// ownership. `expires_at` is a unix timestamp; `0` disables expiry.
+    pub fn set_gate_policy(
+        env: Env,
+        admin: Address,
+        token_address: Address,
+        min_balance: i128,
+        nft_token: Option<Address>,
+        nft_token_id: Option<u32>,
+        expires_at: u64,
+        enabled: bool,
+    ) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+        assert!(min_balance > 0, "min_balance must be positive");
+        assert!(
+            nft_token.is_some() == nft_token_id.is_some(),
+            "nft_token and nft_token_id must be set together"
+        );
+
+        // Verify the buy-in token is a real SAC before trusting its balance.
+        let decimals = token::Client::new(&env, &token_address).decimals();
+
+        let policy = GatePolicy {
+            token_address: token_address.clone(),
+            min_balance,
+            nft_token,
+            nft_token_id,
+            expires_at,
+            enabled,
+        };
+        env.storage()
+            .instance()
+            .set(&AllowlistKey::Policy(token_address.clone()), &policy);
+
+        Self::track_token(&env, &token_address);
+        env.storage().instance().set(
+            &AllowlistKey::Token(token_address.clone()),
+            &TokenInfo {
+                token_address: token_address.clone(),
+                enabled,
+                min_decimals: decimals,
+            },
+        );
+
+        GatePolicySet {
+            admin,
+            token_address,
+            min_balance,
+            expires_at,
+            enabled,
+        }
+        .publish(&env);
+    }
+
+    /// Backwards-compatible helper: allowlist a SAC with a 1-unit threshold.
     pub fn add_token(env: Env, admin: Address, token_address: Address, min_decimals: u32) {
         admin.require_auth();
         Self::require_admin(&env, &admin);
-
-        let key = AllowlistKey::Token(token_address.clone());
-        assert!(
-            !env.storage().instance().has(&key),
-            "token already allowlisted"
-        );
-
-        // Validate the token contract exists by calling decimals().
-        let token_client = token::Client::new(&env, &token_address);
-        let decimals = token_client.decimals();
-        assert!(
-            decimals >= min_decimals,
-            "token decimals below minimum"
-        );
-
-        let info = TokenInfo {
-            token_address: token_address.clone(),
-            enabled: true,
-            min_decimals,
-        };
-        env.storage().instance().set(&key, &info);
-
-        // Track in the all-tokens list.
-        let mut all: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AllowlistKey::AllTokens)
-            .unwrap_or_else(|| Vec::new(&env));
-        all.push_back(token_address.clone());
-        env.storage().instance().set(&AllowlistKey::AllTokens, &all);
-
-        env.events().publish(
-            (Symbol::new(&env, "token_added"),),
-            (token_address, min_decimals),
+        let decimals = token::Client::new(&env, &token_address).decimals();
+        assert!(decimals >= min_decimals, "token decimals below minimum");
+        Self::set_gate_policy(
+            env,
+            admin,
+            token_address,
+            1,
+            None,
+            None,
+            0,
+            true,
         );
     }
 
-    /// Remove a token from the allowlist. Admin only.
-    pub fn remove_token(env: Env, admin: Address, token_address: Address) {
+    /// Permanently revoke a policy. A revoked token can never be used to join
+    /// until a new policy is explicitly configured.
+    pub fn revoke_gate_policy(env: Env, admin: Address, token_address: Address) {
         admin.require_auth();
         Self::require_admin(&env, &admin);
-
-        let key = AllowlistKey::Token(token_address.clone());
         assert!(
-            env.storage().instance().has(&key),
-            "token not allowlisted"
+            env.storage()
+                .instance()
+                .has(&AllowlistKey::Policy(token_address.clone())),
+            "policy not found"
         );
-
-        env.storage().instance().remove(&key);
-
-        // Remove from the all-tokens list.
-        let all: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AllowlistKey::AllTokens)
-            .unwrap_or_else(|| Vec::new(&env));
-        let mut new_all = Vec::new(&env);
-        for i in 0..all.len() {
-            let addr = all.get(i).unwrap();
-            if addr != token_address {
-                new_all.push_back(addr);
-            }
-        }
         env.storage()
             .instance()
-            .set(&AllowlistKey::AllTokens, &new_all);
-
-        env.events().publish(
-            (Symbol::new(&env, "token_removed"),),
+            .remove(&AllowlistKey::Policy(token_address.clone()));
+        env.storage()
+            .instance()
+            .remove(&AllowlistKey::Token(token_address.clone()));
+        Self::untrack_token(&env, &token_address);
+        GatePolicyRevoked {
+            admin,
             token_address,
-        );
+        }
+        .publish(&env);
     }
 
-    /// Enable or disable a token without removing it. Admin only.
-    pub fn set_token_enabled(env: Env, admin: Address, token_address: Address, enabled: bool) {
+    /// Temporarily enable/disable a policy without deleting its parameters.
+    pub fn set_gate_enabled(env: Env, admin: Address, token_address: Address, enabled: bool) {
         admin.require_auth();
         Self::require_admin(&env, &admin);
-
-        let key = AllowlistKey::Token(token_address.clone());
-        let mut info: TokenInfo = env
+        let key = AllowlistKey::Policy(token_address.clone());
+        let mut policy: GatePolicy = env
             .storage()
             .instance()
             .get(&key)
-            .expect("token not allowlisted");
-        info.enabled = enabled;
-        env.storage().instance().set(&key, &info);
+            .expect("policy not found");
+        policy.enabled = enabled;
+        env.storage().instance().set(&key, &policy);
 
-        env.events().publish(
-            (Symbol::new(&env, "token_status_changed"),),
-            (token_address, enabled),
-        );
+        let token_key = AllowlistKey::Token(token_address.clone());
+        if let Some(mut info) = env.storage().instance().get::<AllowlistKey, TokenInfo>(&token_key) {
+            info.enabled = enabled;
+            env.storage().instance().set(&token_key, &info);
+        }
+
+        GatePolicyStatusChanged {
+            admin,
+            token_address,
+            enabled,
+        }
+        .publish(&env);
     }
 
-    /// Check if a token is on the allowlist and enabled.
-    pub fn is_allowed(env: Env, token_address: Address) -> bool {
-        let key = AllowlistKey::Token(token_address);
+    /// Transfer policy administration to another address.
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
+        current_admin.require_auth();
+        Self::require_admin(&env, &current_admin);
         env.storage()
             .instance()
-            .get::<AllowlistKey, TokenInfo>(&key)
-            .map(|info| info.enabled)
-            .unwrap_or(false)
+            .set(&AllowlistKey::Admin, &new_admin);
+        AdminTransferred {
+            previous_admin: current_admin,
+            new_admin,
+        }
+        .publish(&env);
     }
 
-    /// Check if a player can join a table with a given buy-in token.
-    /// Rejects non-allowlisted assets.
-    pub fn can_join(env: Env, _player: Address, token_address: Address) -> bool {
-        Self::is_allowed(env, token_address)
+    /// Read-only admission check used by tables. Returns `false` (never an
+    /// error) for unknown, disabled, expired, revoked or unmet policies.
+    pub fn can_join(env: Env, player: Address, token_address: Address) -> bool {
+        let policy: GatePolicy = match env
+            .storage()
+            .instance()
+            .get(&AllowlistKey::Policy(token_address.clone()))
+        {
+            Some(policy) => policy,
+            None => return false,
+        };
+
+        if !policy.enabled {
+            return false;
+        }
+        if policy.expires_at != 0 && env.ledger().timestamp() >= policy.expires_at {
+            return false;
+        }
+        if Self::sac_balance(&env, &token_address, &player) < policy.min_balance {
+            return false;
+        }
+        let nft_gate_ok = match (policy.nft_token, policy.nft_token_id) {
+            (Some(nft), Some(token_id)) => Self::owns_nft(&env, &nft, &player, token_id),
+            _ => true,
+        };
+        nft_gate_ok
     }
 
-    /// Get token info for an allowlisted token.
+    /// Authenticated variant for callers that want the player to prove their
+    /// identity as part of the join request.
+    pub fn verify_join(env: Env, player: Address, token_address: Address) -> bool {
+        player.require_auth();
+        Self::can_join(env, player, token_address)
+    }
+
+    pub fn get_gate_policy(env: Env, token_address: Address) -> Option<GatePolicy> {
+        env.storage()
+            .instance()
+            .get(&AllowlistKey::Policy(token_address))
+    }
+
     pub fn get_token_info(env: Env, token_address: Address) -> Option<TokenInfo> {
         env.storage()
             .instance()
             .get(&AllowlistKey::Token(token_address))
     }
 
-    /// List all allowlisted token addresses.
+    pub fn is_allowed(env: Env, token_address: Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<AllowlistKey, TokenInfo>(&AllowlistKey::Token(token_address))
+            .map_or(false, |info| info.enabled)
+    }
+
     pub fn list_tokens(env: Env) -> Vec<Address> {
         env.storage()
             .instance()
@@ -167,23 +303,19 @@ impl TokenAllowlistContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// List all enabled token addresses.
     pub fn list_enabled_tokens(env: Env) -> Vec<Address> {
-        let all: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&AllowlistKey::AllTokens)
-            .unwrap_or_else(|| Vec::new(&env));
+        let all: Vec<Address> = Self::list_tokens(env.clone());
         let mut enabled = Vec::new(&env);
         for i in 0..all.len() {
             let addr = all.get(i).unwrap();
-            let key = AllowlistKey::Token(addr.clone());
-            if let Some(info) = env
+            if let Some(policy) = env
                 .storage()
                 .instance()
-                .get::<AllowlistKey, TokenInfo>(&key)
+                .get::<AllowlistKey, GatePolicy>(&AllowlistKey::Policy(addr.clone()))
             {
-                if info.enabled {
+                if policy.enabled
+                    && (policy.expires_at == 0 || env.ledger().timestamp() < policy.expires_at)
+                {
                     enabled.push_back(addr);
                 }
             }
@@ -191,17 +323,40 @@ impl TokenAllowlistContract {
         enabled
     }
 
-    /// Transfer admin to a new address. Current admin only.
-    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
-        current_admin.require_auth();
-        Self::require_admin(&env, &current_admin);
-        env.storage()
-            .instance()
-            .set(&AllowlistKey::Admin, &new_admin);
-        env.events().publish(
-            (Symbol::new(&env, "admin_transferred"),),
-            (current_admin, new_admin),
-        );
+    pub fn remove_token(env: Env, admin: Address, token_address: Address) {
+        Self::revoke_gate_policy(env, admin, token_address)
+    }
+
+    pub fn set_token_enabled(env: Env, admin: Address, token_address: Address, enabled: bool) {
+        Self::set_gate_enabled(env, admin, token_address, enabled)
+    }
+
+    fn sac_balance(env: &Env, token: &Address, player: &Address) -> i128 {
+        let mut args = Vec::<Val>::new(env);
+        args.push_back(player.into_val(env));
+        match env.try_invoke_contract::<i128, InvokeError>(
+            token,
+            &Symbol::new(env, "balance"),
+            args,
+        ) {
+            Ok(Ok(balance)) => balance,
+            _ => 0,
+        }
+    }
+
+    /// `table-nft` exposes `owner_of(token_id) -> Address`. Any contract using
+    /// that shape works; missing/failed calls simply fail the gate.
+    fn owns_nft(env: &Env, nft: &Address, player: &Address, token_id: u32) -> bool {
+        let mut args = Vec::<Val>::new(env);
+        args.push_back(token_id.into_val(env));
+        match env.try_invoke_contract::<Address, InvokeError>(
+            nft,
+            &Symbol::new(env, "owner_of"),
+            args,
+        ) {
+            Ok(Ok(owner)) => owner == *player,
+            _ => false,
+        }
     }
 
     fn require_admin(env: &Env, admin: &Address) {
@@ -212,196 +367,288 @@ impl TokenAllowlistContract {
             .expect("not initialized");
         assert!(admin == &stored, "not admin");
     }
+
+    fn track_token(env: &Env, token: &Address) {
+        let mut all: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&AllowlistKey::AllTokens)
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..all.len() {
+            if all.get(i).unwrap() == *token {
+                return;
+            }
+        }
+        all.push_back(token.clone());
+        env.storage()
+            .instance()
+            .set(&AllowlistKey::AllTokens, &all);
+    }
+
+    fn untrack_token(env: &Env, token: &Address) {
+        let all: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&AllowlistKey::AllTokens)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut remaining = Vec::new(env);
+        for i in 0..all.len() {
+            let addr = all.get(i).unwrap();
+            if addr != *token {
+                remaining.push_back(addr);
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&AllowlistKey::AllTokens, &remaining);
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use soroban_sdk::{
-        testutils::Address as _,
-        token::{StellarAssetClient, TokenClient},
-        Address, Env,
+        contract, contractimpl, contracttype,
+        testutils::{Address as _, Events as _, Ledger},
+        token::StellarAssetClient,
     };
+
+    #[contracttype]
+    enum NftKey {
+        Owner(u32),
+    }
+
+    /// Minimal membership NFT with the `owner_of(u32)` interface used by
+    /// `table-nft`.
+    #[contract]
+    pub struct MockMembershipNft;
+
+    #[contractimpl]
+    impl MockMembershipNft {
+        pub fn initialize(env: Env, owner: Address, token_id: u32) {
+            env.storage()
+                .persistent()
+                .set(&NftKey::Owner(token_id), &owner);
+        }
+
+        pub fn owner_of(env: Env, token_id: u32) -> Address {
+            env.storage()
+                .persistent()
+                .get(&NftKey::Owner(token_id))
+                .expect("token not found")
+        }
+
+        pub fn transfer_owner(env: Env, from: Address, to: Address, token_id: u32) {
+            from.require_auth();
+            let owner: Address = env
+                .storage()
+                .persistent()
+                .get(&NftKey::Owner(token_id))
+                .expect("token not found");
+            assert!(owner == from, "not owner");
+            env.storage()
+                .persistent()
+                .set(&NftKey::Owner(token_id), &to);
+        }
+    }
 
     struct Setup<'a> {
         env: Env,
         client: TokenAllowlistContractClient<'a>,
         admin: Address,
-        token_addr: Address,
-        _token_client: TokenClient<'a>,
+        token: Address,
+        sac: StellarAssetClient<'a>,
     }
 
     fn setup() -> Setup<'static> {
         let env = Env::default();
         env.mock_all_auths();
+        env.ledger().set_timestamp(1_000_000);
 
         let contract_id = env.register(TokenAllowlistContract, ());
         let client = TokenAllowlistContractClient::new(&env, &contract_id);
-
-        let token_admin = Address::generate(&env);
-        let sac = env.register_stellar_asset_contract_v2(token_admin);
-        let token_client = TokenClient::new(&env, &sac.address());
-
         let admin = Address::generate(&env);
         client.initialize(&admin);
+
+        let token_admin = Address::generate(&env);
+        let sac_address = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let sac = StellarAssetClient::new(&env, &sac_address);
 
         Setup {
             env,
             client,
             admin,
-            token_addr: sac.address(),
-            _token_client: token_client,
+            token: sac_address,
+            sac,
         }
     }
 
     #[test]
-    fn add_token_and_check_allowed() {
-        let s = setup();
-        assert!(!s.client.is_allowed(&s.token_addr));
-
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-        assert!(s.client.is_allowed(&s.token_addr));
-    }
-
-    #[test]
-    fn can_join_rejects_non_allowlisted() {
+    fn pass_when_balance_and_nft_are_held() {
         let s = setup();
         let player = Address::generate(&s.env);
-        assert!(!s.client.can_join(&player, &s.token_addr));
+        s.sac.mint(&player, &100);
+
+        let nft_id = s.env.register(MockMembershipNft, ());
+        let nft = MockMembershipNftClient::new(&s.env, &nft_id);
+        nft.initialize(&player, &7);
+
+        s.client.set_gate_policy(
+            &s.admin,
+            &s.token,
+            &100,
+            &Some(nft_id.clone()),
+            &Some(7),
+            &0,
+            &true,
+        );
+
+        assert!(s.client.can_join(&player, &s.token));
     }
 
     #[test]
-    fn can_join_accepts_allowlisted() {
+    fn fail_when_balance_below_threshold() {
         let s = setup();
         let player = Address::generate(&s.env);
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-        assert!(s.client.can_join(&player, &s.token_addr));
+        s.sac.mint(&player, &99);
+
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+
+        assert!(!s.client.can_join(&player, &s.token));
     }
 
     #[test]
-    fn remove_token_disallows() {
+    fn fail_when_nft_not_owned() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-        assert!(s.client.is_allowed(&s.token_addr));
+        let player = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        s.sac.mint(&player, &100);
 
-        s.client.remove_token(&s.admin, &s.token_addr);
-        assert!(!s.client.is_allowed(&s.token_addr));
+        let nft_id = s.env.register(MockMembershipNft, ());
+        let nft = MockMembershipNftClient::new(&s.env, &nft_id);
+        nft.initialize(&other, &7);
+
+        s.client.set_gate_policy(
+            &s.admin,
+            &s.token,
+            &100,
+            &Some(nft_id),
+            &Some(7),
+            &0,
+            &true,
+        );
+
+        assert!(!s.client.can_join(&player, &s.token));
     }
 
     #[test]
-    fn disable_then_enable_token() {
+    fn fail_when_policy_expired() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
+        let player = Address::generate(&s.env);
+        s.sac.mint(&player, &100);
+        let expires_at = s.env.ledger().timestamp() + 60;
 
-        s.client.set_token_enabled(&s.admin, &s.token_addr, &false);
-        assert!(!s.client.is_allowed(&s.token_addr));
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &expires_at, &true);
+        assert!(s.client.can_join(&player, &s.token));
 
-        s.client.set_token_enabled(&s.admin, &s.token_addr, &true);
-        assert!(s.client.is_allowed(&s.token_addr));
+        s.env.ledger().set_timestamp(expires_at + 1);
+        assert!(!s.client.can_join(&player, &s.token));
     }
 
     #[test]
-    fn list_tokens_returns_all() {
+    fn fail_when_policy_revoked_or_disabled() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
+        let player = Address::generate(&s.env);
+        s.sac.mint(&player, &100);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &100, &None, &None, &0, &true);
+        assert!(s.client.can_join(&player, &s.token));
 
-        let token_admin2 = Address::generate(&s.env);
-        let sac2 = s.env.register_stellar_asset_contract_v2(token_admin2);
-        s.client.add_token(&s.admin, &sac2.address(), &0);
+        s.client
+            .set_gate_enabled(&s.admin, &s.token, &false);
+        assert!(!s.client.can_join(&player, &s.token));
 
-        let all = s.client.list_tokens();
-        assert_eq!(all.len(), 2);
+        s.client.set_gate_enabled(&s.admin, &s.token, &true);
+        assert!(s.client.can_join(&player, &s.token));
+
+        s.client.revoke_gate_policy(&s.admin, &s.token);
+        assert!(!s.client.can_join(&player, &s.token));
+        assert!(s.client.get_gate_policy(&s.token).is_none());
     }
 
     #[test]
-    fn list_enabled_tokens_filters_disabled() {
+    fn nft_transfer_revokes_membership() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
+        let player = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        s.sac.mint(&player, &100);
 
-        let token_admin2 = Address::generate(&s.env);
-        let sac2 = s.env.register_stellar_asset_contract_v2(token_admin2);
-        s.client.add_token(&s.admin, &sac2.address(), &0);
+        let nft_id = s.env.register(MockMembershipNft, ());
+        let nft = MockMembershipNftClient::new(&s.env, &nft_id);
+        nft.initialize(&player, &7);
+        s.client.set_gate_policy(
+            &s.admin,
+            &s.token,
+            &100,
+            &Some(nft_id.clone()),
+            &Some(7),
+            &0,
+            &true,
+        );
+        assert!(s.client.can_join(&player, &s.token));
 
-        s.client.set_token_enabled(&s.admin, &s.token_addr, &false);
-
-        let enabled = s.client.list_enabled_tokens();
-        assert_eq!(enabled.len(), 1);
-        assert_eq!(enabled.get(0).unwrap(), sac2.address());
+        nft.transfer_owner(&player, &other, &7);
+        assert!(!s.client.can_join(&player, &s.token));
+        // `other` owns the NFT now but has no SAC balance, so still fails.
+        assert!(!s.client.can_join(&other, &s.token));
     }
 
     #[test]
-    #[should_panic(expected = "token already allowlisted")]
-    fn add_token_twice_reverts() {
+    fn unknown_token_fails_closed() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-        s.client.add_token(&s.admin, &s.token_addr, &0);
+        let player = Address::generate(&s.env);
+        let unknown = Address::generate(&s.env);
+        assert!(!s.client.can_join(&player, &unknown));
     }
 
     #[test]
-    #[should_panic(expected = "token not allowlisted")]
-    fn remove_nonexistent_token_reverts() {
+    fn policy_changes_emit_events() {
         let s = setup();
-        s.client.remove_token(&s.admin, &s.token_addr);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &5, &None, &None, &0, &true);
+        assert!(!s.env.events().all().events().is_empty());
+
+        s.client.revoke_gate_policy(&s.admin, &s.token);
+        assert!(s.env.events().all().events().len() >= 2);
     }
 
     #[test]
-    #[should_panic(expected = "not admin")]
-    fn non_admin_cannot_add_token() {
+    fn non_admin_cannot_change_policy() {
         let s = setup();
         let stranger = Address::generate(&s.env);
-        s.client.add_token(&stranger, &s.token_addr, &0);
+        let result = s.client.try_set_gate_policy(
+            &stranger,
+            &s.token,
+            &1,
+            &None,
+            &None,
+            &0,
+            &true,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
-    #[should_panic(expected = "not admin")]
-    fn non_admin_cannot_remove_token() {
+    fn verify_join_uses_player_auth() {
         let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-        let stranger = Address::generate(&s.env);
-        s.client.remove_token(&stranger, &s.token_addr);
-    }
-
-    #[test]
-    fn get_token_info_returns_details() {
-        let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &7);
-        let info = s.client.get_token_info(&s.token_addr).unwrap();
-        assert!(info.enabled);
-        assert_eq!(info.min_decimals, 7);
-    }
-
-    #[test]
-    fn get_token_info_none_for_unknown() {
-        let s = setup();
-        assert!(s.client.get_token_info(&s.token_addr).is_none());
-    }
-
-    #[test]
-    fn transfer_admin() {
-        let s = setup();
-        let new_admin = Address::generate(&s.env);
-        s.client.transfer_admin(&s.admin, &new_admin);
-
-        // Old admin can no longer add tokens.
-        let token_admin3 = Address::generate(&s.env);
-        let sac3 = s.env.register_stellar_asset_contract_v2(token_admin3);
-        // New admin can.
-        s.client.add_token(&new_admin, &sac3.address(), &0);
-        assert!(s.client.is_allowed(&sac3.address()));
-    }
-
-    #[test]
-    fn remove_token_cleans_up_list() {
-        let s = setup();
-        s.client.add_token(&s.admin, &s.token_addr, &0);
-
-        let token_admin2 = Address::generate(&s.env);
-        let sac2 = s.env.register_stellar_asset_contract_v2(token_admin2);
-        s.client.add_token(&s.admin, &sac2.address(), &0);
-
-        s.client.remove_token(&s.admin, &s.token_addr);
-        let all = s.client.list_tokens();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all.get(0).unwrap(), sac2.address());
+        let player = Address::generate(&s.env);
+        s.sac.mint(&player, &1);
+        s.client
+            .set_gate_policy(&s.admin, &s.token, &1, &None, &None, &0, &true);
+        assert!(s.client.verify_join(&player, &s.token));
     }
 }

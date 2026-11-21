@@ -71,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [poker-table, zk-verifier, committee-registry, game-hub, player-rating, protocol-treasury, governance, stellar-zk-cards, stellpoker-test-vectors]
+        package: [poker-table, zk-verifier, committee-registry, game-hub, token-gated-table, player-rating, protocol-treasury, governance, stellar-zk-cards, stellpoker-test-vectors]
     steps:
       - uses: actions/checkout@v4
 
@@ -224,7 +224,7 @@ jobs:
       # nargo has no `--all` and there is no workspace manifest, so check the
       # shared library and every circuit directory discovered by globbing
       # circuits/*/Nargo.toml. Adding a new circuit directory gets it checked
-      # automatically — no hardcoded list to keep in sync.
+      # automatically - no hardcoded list to keep in sync.
       - name: Check shared library and all circuits
         run: |
           nargo check --program-dir circuits/lib

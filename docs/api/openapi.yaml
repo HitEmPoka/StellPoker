@@ -1269,6 +1269,526 @@ paths:
         "503":
           description: Database not available
 
+  /api/tables/overview:
+    get:
+      operationId: listTableOverview
+      summary: List Table Overview
+      description: Derived from coordinator route registration (handler: list_table_overview).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/stats/player/{address}:
+    get:
+      operationId: getPlayerHudStats
+      summary: Get Player Hud Stats
+      description: Derived from coordinator route registration (handler: get_player_hud_stats).
+      tags:
+        - Coordinator
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/ratings/leaderboard:
+    get:
+      operationId: getRatingLeaderboard
+      summary: Get Rating Leaderboard
+      description: Derived from coordinator route registration (handler: get_rating_leaderboard).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/transfer-chips:
+    post:
+      operationId: transferChips
+      summary: Transfer Chips
+      description: Derived from coordinator route registration (handler: transfer_chips).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/rit-opt-in:
+    post:
+      operationId: ritOptIn
+      summary: Rit Opt In
+      description: Derived from coordinator route registration (handler: rit_opt_in).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/players:
+    get:
+      operationId: getPlayersPaginated
+      summary: Get Players Paginated
+      description: Derived from coordinator route registration (handler: get_players_paginated).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/hand-history/chunk:
+    get:
+      operationId: getHandHistoryChunk
+      summary: Get Hand History Chunk
+      description: Derived from coordinator route registration (handler: get_hand_history_chunk).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/mpc-status:
+    get:
+      operationId: getMpcStatus
+      summary: Get Mpc Status
+      description: Derived from coordinator route registration (handler: get_mpc_status).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/spectators:
+    get:
+      operationId: getSpectatorCount
+      summary: Get Spectator Count
+      description: Derived from coordinator route registration (handler: get_spectator_count).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/readyz:
+    get:
+      operationId: readiness
+      summary: Readiness
+      description: Derived from coordinator route registration (handler: readiness).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments:
+    get:
+      operationId: listTournaments
+      summary: List Tournaments
+      description: Derived from coordinator route registration (handler: list_tournaments).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    post:
+      operationId: createTournament
+      summary: Create Tournament
+      description: Derived from coordinator route registration (handler: create_tournament).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}:
+    get:
+      operationId: getTournament
+      summary: Get Tournament
+      description: Derived from coordinator route registration (handler: get_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/register:
+    post:
+      operationId: registerPlayer
+      summary: Register Player
+      description: Derived from coordinator route registration (handler: register_player).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/start:
+    post:
+      operationId: startTournament
+      summary: Start Tournament
+      description: Derived from coordinator route registration (handler: start_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-result:
+    post:
+      operationId: recordHandResult
+      summary: Record Hand Result
+      description: Derived from coordinator route registration (handler: record_hand_result).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/balancing:
+    get:
+      operationId: getBalancing
+      summary: Get Balancing
+      description: Derived from coordinator route registration (handler: get_balancing).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/cancel:
+    post:
+      operationId: cancelTournament
+      summary: Cancel Tournament
+      description: Derived from coordinator route registration (handler: cancel_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-for-hand:
+    post:
+      operationId: setHandForHand
+      summary: Set Hand For Hand
+      description: Derived from coordinator route registration (handler: set_hand_for_hand).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/tables/{table}/start-hand:
+    post:
+      operationId: startTableHand
+      summary: Start Table Hand
+      description: Derived from coordinator route registration (handler: start_table_hand).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-counts:
+    get:
+      operationId: getTableHandCounts
+      summary: Get Table Hand Counts
+      description: Derived from coordinator route registration (handler: get_table_hand_counts).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
 components:
   securitySchemes:
     WalletAuth:
