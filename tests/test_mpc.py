@@ -156,6 +156,16 @@ class TestPeerHeartbeat(unittest.TestCase):
         peer = MockPeer(peer_id=9)
         self.assertIs(peer._clock, time.monotonic)
 
+    def test_peer_heartbeat_timeout_stability_50_runs(self):
+        """Verify test_peer_heartbeat_timeout passes deterministically 50 times in a row."""
+        for i in range(50):
+            clock = FakeClock(start=100.0 + i)
+            peer = MockPeer(peer_id=2, heartbeat_interval=0.1, clock=clock)
+            peer.reset_heartbeat()
+            self.assertTrue(peer.check_heartbeat(timeout=0.3))
+            clock.advance(0.5)
+            self.assertFalse(peer.check_heartbeat(timeout=0.3))
+
     def test_peer_heartbeat_recovery(self):
         """A peer can recover from a timeout with a new heartbeat."""
         clock = FakeClock()
