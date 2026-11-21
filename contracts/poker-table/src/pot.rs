@@ -356,9 +356,10 @@ pub fn distribute_pots(
     Ok(payouts)
 }
 
-/// Distribute pots when the best hand is shared by multiple tied seats. For
-/// each pot, every tied winner eligible for that pot receives an equal share;
-/// any odd chip remainder is awarded one chip at a time to the earliest seat.
+/// Distribute pots when the best hand is shared by multiple tied seats (#862).
+/// For each pot, every tied winner eligible for that pot receives an equal
+/// share; any odd chip remainder is awarded one chip at a time clockwise
+/// starting from the first seat left of the button (`dealer_seat`).
 /// If none of the tied winners can win a side pot, the fallback ranking is used
 /// to award that side pot to the best eligible non-tied contender.
 pub fn distribute_pots_with_ties(
@@ -369,6 +370,7 @@ pub fn distribute_pots_with_ties(
     fallback_ranking: &Vec<u32>,
 ) -> Result<Vec<(u32, i128)>, PokerTableError> {
     let mut payouts: Vec<(u32, i128)> = Vec::new(env);
+    let num_players = table.players.len();
 
     for pi in 0..pots.len() {
         let pot = pots.get(pi).ok_or(PokerTableError::InvalidPlayerIndex)?;
@@ -376,7 +378,13 @@ pub fn distribute_pots_with_ties(
             continue;
         }
 
-        let recipients = eligible_tied_winners(env, tied_winner_seats, &pot.eligible_players);
+        let recipients = eligible_tied_winners(
+            env,
+            table.dealer_seat,
+            num_players,
+            tied_winner_seats,
+            &pot.eligible_players,
+        );
         if recipients.is_empty() {
             let winner_seat = best_eligible_winner(fallback_ranking, &pot.eligible_players)
                 .ok_or(PokerTableError::WinnerNotEligibleForPot)?;
@@ -403,20 +411,37 @@ pub fn distribute_pots_with_ties(
     Ok(payouts)
 }
 
-fn eligible_tied_winners(env: &Env, tied: &Vec<u32>, eligible: &Vec<u32>) -> Vec<u32> {
+/// Return the tied winners eligible for a pot, ordered clockwise starting from
+/// the first seat left of `dealer_seat` (`(dealer_seat + 1) % num_players`).
+fn eligible_tied_winners(
+    env: &Env,
+    dealer_seat: u32,
+    num_players: u32,
+    tied: &Vec<u32>,
+    eligible: &Vec<u32>,
+) -> Vec<u32> {
     let mut recipients = Vec::new(env);
-    for ei in 0..eligible.len() {
-        if let Some(seat) = eligible.get(ei) {
-            for ti in 0..tied.len() {
-                if tied
-                    .get(ti)
-                    .map(|candidate| constant_time::u32_eq(candidate, seat))
-                    .unwrap_or(false)
-                {
-                    recipients.push_back(seat);
-                    break;
-                }
-            }
+    if num_players == 0 {
+        return recipients;
+    }
+    for offset in 1..=num_players {
+        let seat = (dealer_seat + offset) % num_players;
+        let is_eligible = (0..eligible.len()).any(|ei| {
+            eligible
+                .get(ei)
+                .map(|candidate| constant_time::u32_eq(candidate, seat))
+                .unwrap_or(false)
+        });
+        if !is_eligible {
+            continue;
+        }
+        let is_tied = (0..tied.len()).any(|ti| {
+            tied.get(ti)
+                .map(|candidate| constant_time::u32_eq(candidate, seat))
+                .unwrap_or(false)
+        });
+        if is_tied {
+            recipients.push_back(seat);
         }
     }
     recipients
@@ -876,7 +901,7 @@ mod pot_test {
     }
 
     #[test]
-    fn distribute_tied_winners_odd_chip_to_earliest_seat() {
+    fn distribute_tied_winners_odd_chip_clockwise_from_button() {
         let env = Env::default();
         let players = Vec::from_array(
             &env,
@@ -887,14 +912,17 @@ mod pot_test {
             ],
         );
         let mut table = table_with(&env, players);
+        // Button at seat 1: clockwise order is 2, 0, 1.
+        // Tied winners are seats 0 and 2, so seat 2 (first left of button) gets the odd chip.
+        table.dealer_seat = 1;
         let pots = calculate_side_pots(&env, &table).unwrap();
-        let tied = seats(&env, &[1, 2]);
-        let ranking = seats(&env, &[1, 2, 0]);
+        let tied = seats(&env, &[0, 2]);
+        let ranking = seats(&env, &[0, 2, 1]);
         distribute_pots_with_ties(&env, &mut table, &pots, &tied, &ranking).unwrap();
 
-        assert_eq!(table.players.get(0).unwrap().stack, 0);
-        assert_eq!(table.players.get(1).unwrap().stack, 152);
-        assert_eq!(table.players.get(2).unwrap().stack, 151);
+        assert_eq!(table.players.get(0).unwrap().stack, 151);
+        assert_eq!(table.players.get(1).unwrap().stack, 0);
+        assert_eq!(table.players.get(2).unwrap().stack, 152);
     }
 
     #[test]
