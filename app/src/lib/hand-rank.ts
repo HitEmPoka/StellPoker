@@ -98,7 +98,7 @@ function evaluate5(cards: number[]): HandRank {
   return { category: 1, name: CATEGORY_NAMES[1], tiebreak: ranks };
 }
 
-function compareHandRank(a: HandRank, b: HandRank): number {
+export function compareHandRank(a: HandRank, b: HandRank): number {
   if (a.category !== b.category) return a.category - b.category;
   const len = Math.max(a.tiebreak.length, b.tiebreak.length);
   for (let i = 0; i < len; i++) {
