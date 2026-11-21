@@ -396,7 +396,7 @@ paths:
     get:
       operationId: listTableOverview
       summary: List Table Overview
-      description: Derived from coordinator route registration (handler: list_table_overview).
+      description: Derived from coordinator route registration (handler list_table_overview).
       tags:
         - Coordinator
       responses:
@@ -416,7 +416,7 @@ paths:
     get:
       operationId: getPlayerHudStats
       summary: Get Player Hud Stats
-      description: Derived from coordinator route registration (handler: get_player_hud_stats).
+      description: Derived from coordinator route registration (handler get_player_hud_stats).
       tags:
         - Coordinator
       parameters:
@@ -442,7 +442,7 @@ paths:
     get:
       operationId: getRatingLeaderboard
       summary: Get Rating Leaderboard
-      description: Derived from coordinator route registration (handler: get_rating_leaderboard).
+      description: Derived from coordinator route registration (handler get_rating_leaderboard).
       tags:
         - Coordinator
       responses:
@@ -462,7 +462,7 @@ paths:
     post:
       operationId: transferChips
       summary: Transfer Chips
-      description: Derived from coordinator route registration (handler: transfer_chips).
+      description: Derived from coordinator route registration (handler transfer_chips).
       tags:
         - Coordinator
       parameters:
@@ -488,7 +488,7 @@ paths:
     post:
       operationId: ritOptIn
       summary: Rit Opt In
-      description: Derived from coordinator route registration (handler: rit_opt_in).
+      description: Derived from coordinator route registration (handler rit_opt_in).
       tags:
         - Coordinator
       parameters:
@@ -514,7 +514,7 @@ paths:
     get:
       operationId: getPlayersPaginated
       summary: Get Players Paginated
-      description: Derived from coordinator route registration (handler: get_players_paginated).
+      description: Derived from coordinator route registration (handler get_players_paginated).
       tags:
         - Coordinator
       parameters:
@@ -540,7 +540,7 @@ paths:
     get:
       operationId: getHandHistoryChunk
       summary: Get Hand History Chunk
-      description: Derived from coordinator route registration (handler: get_hand_history_chunk).
+      description: Derived from coordinator route registration (handler get_hand_history_chunk).
       tags:
         - Coordinator
       parameters:
@@ -566,7 +566,7 @@ paths:
     get:
       operationId: getMpcStatus
       summary: Get Mpc Status
-      description: Derived from coordinator route registration (handler: get_mpc_status).
+      description: Derived from coordinator route registration (handler get_mpc_status).
       tags:
         - Coordinator
       parameters:
@@ -592,7 +592,7 @@ paths:
     get:
       operationId: getSpectatorCount
       summary: Get Spectator Count
-      description: Derived from coordinator route registration (handler: get_spectator_count).
+      description: Derived from coordinator route registration (handler get_spectator_count).
       tags:
         - Coordinator
       parameters:
@@ -618,7 +618,7 @@ paths:
     get:
       operationId: readiness
       summary: Readiness
-      description: Derived from coordinator route registration (handler: readiness).
+      description: Derived from coordinator route registration (handler readiness).
       tags:
         - Coordinator
       responses:
@@ -638,7 +638,7 @@ paths:
     get:
       operationId: listTournaments
       summary: List Tournaments
-      description: Derived from coordinator route registration (handler: list_tournaments).
+      description: Derived from coordinator route registration (handler list_tournaments).
       tags:
         - Coordinator
       responses:
@@ -657,7 +657,7 @@ paths:
     post:
       operationId: createTournament
       summary: Create Tournament
-      description: Derived from coordinator route registration (handler: create_tournament).
+      description: Derived from coordinator route registration (handler create_tournament).
       tags:
         - Coordinator
       responses:
@@ -677,7 +677,7 @@ paths:
     get:
       operationId: getTournament
       summary: Get Tournament
-      description: Derived from coordinator route registration (handler: get_tournament).
+      description: Derived from coordinator route registration (handler get_tournament).
       tags:
         - Coordinator
       parameters:
@@ -703,7 +703,7 @@ paths:
     post:
       operationId: registerPlayer
       summary: Register Player
-      description: Derived from coordinator route registration (handler: register_player).
+      description: Derived from coordinator route registration (handler register_player).
       tags:
         - Coordinator
       parameters:
@@ -729,7 +729,7 @@ paths:
     post:
       operationId: startTournament
       summary: Start Tournament
-      description: Derived from coordinator route registration (handler: start_tournament).
+      description: Derived from coordinator route registration (handler start_tournament).
       tags:
         - Coordinator
       parameters:
@@ -755,7 +755,7 @@ paths:
     post:
       operationId: recordHandResult
       summary: Record Hand Result
-      description: Derived from coordinator route registration (handler: record_hand_result).
+      description: Derived from coordinator route registration (handler record_hand_result).
       tags:
         - Coordinator
       parameters:
@@ -781,7 +781,7 @@ paths:
     get:
       operationId: getBalancing
       summary: Get Balancing
-      description: Derived from coordinator route registration (handler: get_balancing).
+      description: Derived from coordinator route registration (handler get_balancing).
       tags:
         - Coordinator
       parameters:
@@ -807,7 +807,7 @@ paths:
     post:
       operationId: cancelTournament
       summary: Cancel Tournament
-      description: Derived from coordinator route registration (handler: cancel_tournament).
+      description: Derived from coordinator route registration (handler cancel_tournament).
       tags:
         - Coordinator
       parameters:
@@ -833,7 +833,7 @@ paths:
     post:
       operationId: setHandForHand
       summary: Set Hand For Hand
-      description: Derived from coordinator route registration (handler: set_hand_for_hand).
+      description: Derived from coordinator route registration (handler set_hand_for_hand).
       tags:
         - Coordinator
       parameters:
@@ -859,7 +859,7 @@ paths:
     post:
       operationId: startTableHand
       summary: Start Table Hand
-      description: Derived from coordinator route registration (handler: start_table_hand).
+      description: Derived from coordinator route registration (handler start_table_hand).
       tags:
         - Coordinator
       parameters:
@@ -890,7 +890,7 @@ paths:
     get:
       operationId: getTableHandCounts
       summary: Get Table Hand Counts
-      description: Derived from coordinator route registration (handler: get_table_hand_counts).
+      description: Derived from coordinator route registration (handler get_table_hand_counts).
       tags:
         - Coordinator
       parameters:
