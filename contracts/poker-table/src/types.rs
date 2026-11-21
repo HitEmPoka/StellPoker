@@ -594,6 +594,14 @@ pub enum PokerTableError {
     RabbitHuntNotAvailable = 125,
     /// Rabbit-hunt cards must be the next unused deck indices, in order.
     InvalidRabbitHuntIndices = 126,
+    // --- Raise intent validation (#868) ---
+    /// Legacy/ambiguous `Action::Raise` payload rejected at contract boundary.
+    AmbiguousRaiseIntent = 127,
+    /// Raise increment is non-positive or `RaiseTo` does not exceed `current_bet`.
+    IllegalRaiseIncrement = 128,
+    // --- Tournament color-up (#870) ---
+    /// Color-up rule has non-positive denomination or invalid level index.
+    InvalidColorUpConfig = 129,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -674,7 +682,12 @@ pub enum Action {
     Check,
     Call,
     Bet(i128),
+    /// Legacy/ambiguous raise payload; rejected at the contract boundary (#868).
     Raise(i128),
+    /// Raise to a target total street bet (#868).
+    RaiseTo(i128),
+    /// Raise by an explicit increment over the current highest bet (#868).
+    RaiseBy(i128),
     AllIn,
 }
 
@@ -1211,6 +1224,46 @@ pub enum DataKey {
     SitOutNextBb(u32),
     /// `(hand_number, seat)` of the last bet or raise on the river (#866).
     LastAggressor(u32),
+    /// Per-table tournament color-up schedule (#870).
+    ColorUpSchedule(u32),
+}
+
+/// Deterministic odd-chip assignment policy for tournament color-ups (#870).
+///
+/// Every seated player keeps `floor(stack / denomination) * denomination`.
+/// Fractional remainders (`stack % denomination`) are pooled, converted into
+/// `total_remainder / denomination` whole chips of `denomination`, and awarded
+/// one chip at a time in the order selected below. Any sub-denomination
+/// residual (`total_remainder % denomination`) is awarded to the first
+/// eligible seat in that same order so total chips in play are conserved
+/// exactly (`sum(after) == sum(before)`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColorUpRounding {
+    /// Highest fractional remainder first; ties broken clockwise from the button.
+    HighestRemainderClockwise,
+    /// Strictly clockwise starting from the first seat left of the button
+    /// among players who had a nonzero remainder.
+    ClockwiseFromButton,
+}
+
+/// Color-up rule triggered when `current_blind_level` reaches `level_index` (#870).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorUpRule {
+    /// Blind level index (in `BlindsSchedule::levels`, > 0) at which this color-up fires.
+    pub level_index: u32,
+    /// Target minimum chip denomination (> 0) to round stacks to.
+    pub denomination: i128,
+    /// Deterministic odd-chip assignment policy.
+    pub rounding: ColorUpRounding,
+}
+
+/// Ordered list of color-up rules for a tournament table (#870).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorUpSchedule {
+    pub rules: Vec<ColorUpRule>,
 }
 
 /// Stable format version emitted by `export_table_state`.

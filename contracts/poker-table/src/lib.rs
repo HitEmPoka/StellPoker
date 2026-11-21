@@ -2115,6 +2115,50 @@ impl PokerTableContract {
             .unwrap_or((0, 0))
     }
 
+    /// Configure a tournament color-up schedule for a table (#870).
+    ///
+    /// Admin-only, between hands. Each rule specifies the blind `level_index`
+    /// (> 0) at which to round stacks to `denomination` (> 0) using the given
+    /// deterministic `ColorUpRounding` policy.
+    pub fn set_color_up_schedule(
+        env: Env,
+        table_id: u32,
+        schedule: ColorUpSchedule,
+    ) -> Result<(), PokerTableError> {
+        let table = storage::load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        for i in 0..schedule.rules.len() {
+            let rule = schedule
+                .rules
+                .get(i)
+                .ok_or(PokerTableError::InvalidColorUpConfig)?;
+            if rule.level_index == 0 || rule.denomination <= 0 {
+                return Err(PokerTableError::InvalidColorUpConfig);
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ColorUpSchedule(table_id), &schedule);
+        env.events().publish(
+            (Symbol::new(&env, "color_up_scheduled"), table_id),
+            schedule.rules.len(),
+        );
+        Ok(())
+    }
+
+    /// Return the table's configured `ColorUpSchedule` (empty if unset).
+    pub fn get_color_up_schedule(env: Env, table_id: u32) -> ColorUpSchedule {
+        env.storage()
+            .instance()
+            .get(&DataKey::ColorUpSchedule(table_id))
+            .unwrap_or(ColorUpSchedule {
+                rules: Vec::new(&env),
+            })
+    }
+
     /// Approve recovery of every player's own stack and committed chips after
     /// a game has been stuck for twice the normal timeout. Execution occurs
     /// automatically once strictly more than half of seated players approve.

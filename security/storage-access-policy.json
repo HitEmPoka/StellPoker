@@ -144,6 +144,15 @@
           ],
           "auth_model": "player_require_auth",
           "admin_multisig_required": false
+        },
+        "DataKey::ColorUpSchedule": {
+          "authorized_functions": [
+            "set_color_up_schedule",
+            "get_color_up_schedule",
+            "start_hand"
+          ],
+          "auth_model": "table_admin_require_auth",
+          "admin_multisig_required": false
         }
       }
     },

@@ -20,7 +20,7 @@
 
 extern crate std;
 
-use crate::pot::{calculate_side_pots, distribute_pots};
+use crate::pot::{apply_rake, calculate_side_pots, distribute_pots, return_uncalled_bets};
 use crate::types::*;
 use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, Vec};
@@ -322,5 +322,51 @@ proptest! {
             (0..table.players.len()).map(|i| table.players.get(i).unwrap().stack).collect();
 
         prop_assert_eq!(snapshot, after);
+    }
+
+    /// Bet-and-fold invariant (#869): uncalled excess is returned in full
+    /// before rake, rake is charged only on contested chips, and total chips
+    /// across stacks + rake equal the initial committed total.
+    #[test]
+    fn prop_uncalled_bet_and_fold_rake_only_on_contested_chips(
+        called_amount in 1i128..1_000_000,
+        uncalled_excess in 1i128..1_000_000,
+        rake_bps in 0u32..=500,
+    ) {
+        let env = Env::default();
+        env.cost_estimate().budget().reset_unlimited();
+
+        let bettor_total = called_amount + uncalled_excess;
+        let gen = std::vec![
+            GenPlayer {
+                committed: called_amount,
+                all_in: false,
+                folded: true,
+            },
+            GenPlayer {
+                committed: bettor_total,
+                all_in: false,
+                folded: false,
+            },
+        ];
+        let (mut table, total_committed) = build_table(&env, &gen);
+
+        let returned = return_uncalled_bets(&mut table).unwrap();
+        prop_assert_eq!(returned, uncalled_excess);
+        prop_assert_eq!(table.pot, 2 * called_amount);
+        prop_assert_eq!(table.players.get(1).unwrap().stack, uncalled_excess);
+
+        let pots = calculate_side_pots(&env, &table).unwrap();
+        let (net_pots, rake) = apply_rake(&env, &pots, rake_bps).unwrap();
+        let expected_rake = (2 * called_amount * rake_bps as i128) / 10_000;
+        prop_assert_eq!(rake, expected_rake);
+
+        let ranking = Vec::from_array(&env, [1u32]);
+        distribute_pots(&env, &mut table, &net_pots, &ranking).unwrap();
+
+        let final_stacks: i128 = (0..table.players.len())
+            .map(|i| table.players.get(i).unwrap().stack)
+            .sum();
+        prop_assert_eq!(final_stacks + rake, total_committed);
     }
 }

@@ -69,6 +69,12 @@
       "description": "Most recent on-chain chip-dumping evidence report (issue #506). Reserved."
     },
     {
+      "name": "ColorUpSchedule",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Per-table tournament color-up schedule (#870)."
+    },
+    {
       "name": "ConfigChangeLog",
       "arity": 2,
       "domain": "persistent",

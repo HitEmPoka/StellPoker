@@ -62,7 +62,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         table.players.set(i, p);
     }
 
-    advance_blind_level_if_due(env, table);
+    advance_blind_level_if_due(env, table)?;
 
     // Check if a break is active — if so, deny starting a new hand.
     if table.break_ends_at > 0 {
@@ -84,6 +84,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
                 (Symbol::new(env, "level_up"), table.id),
                 table.current_blind_level,
             );
+            apply_color_up_if_due(env, table)?;
         }
     }
 
@@ -309,14 +310,14 @@ pub(crate) fn current_blind_level(table: &TableState) -> Result<BlindLevel, Poke
 /// enters a break period instead of immediately advancing. During the
 /// break no hands may be started; the next hand triggers the actual
 /// level advance.
-fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
+fn advance_blind_level_if_due(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let num_levels = table.config.blinds_schedule.levels.len();
     if table.current_blind_level + 1 >= num_levels {
-        return;
+        return Ok(());
     }
     // Already in a break — do not double-advance.
     if table.break_ends_at > 0 {
-        return;
+        return Ok(());
     }
     let level = match table
         .config
@@ -325,10 +326,10 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
         .get(table.current_blind_level)
     {
         Some(l) => l,
-        None => return,
+        None => return Ok(()),
     };
     if level.duration_seconds == 0 {
-        return;
+        return Ok(());
     }
     let now = env.ledger().timestamp();
     if now >= table.level_started_at + level.duration_seconds {
@@ -351,8 +352,149 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
                 (Symbol::new(env, "level_up"), table.id),
                 (table.current_blind_level, current_blind_level(table)),
             );
+            apply_color_up_if_due(env, table)?;
         }
     }
+    Ok(())
+}
+
+/// Apply any configured tournament color-up rule matching `table.current_blind_level` (#870).
+pub(crate) fn apply_color_up_if_due(
+    env: &Env,
+    table: &mut TableState,
+) -> Result<(), PokerTableError> {
+    let schedule = env
+        .storage()
+        .instance()
+        .get::<DataKey, ColorUpSchedule>(&DataKey::ColorUpSchedule(table.id));
+    if let Some(sched) = schedule {
+        for i in 0..sched.rules.len() {
+            if let Some(rule) = sched.rules.get(i) {
+                if rule.level_index == table.current_blind_level {
+                    apply_color_up(env, table, &rule)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Execute a deterministic tournament chip-race and color-up on `table` (#870).
+///
+/// Every seated player's stack is floored to a multiple of `rule.denomination`.
+/// All fractional remainders are pooled and converted into whole chips of
+/// `rule.denomination`, awarded one each according to `rule.rounding`, with any
+/// sub-denomination residual awarded to the first eligible seat so that total
+/// chips in play are conserved exactly. Emits a `color_up` event containing
+/// `(level_index, denomination, before_stacks, after_stacks)`.
+pub fn apply_color_up(
+    env: &Env,
+    table: &mut TableState,
+    rule: &ColorUpRule,
+) -> Result<(), PokerTableError> {
+    if rule.denomination <= 0 {
+        return Err(PokerTableError::InvalidColorUpConfig);
+    }
+    let n = table.players.len();
+    if n == 0 {
+        return Ok(());
+    }
+
+    let mut before_stacks: Vec<(u32, i128)> = Vec::new(env);
+    let mut remainders: Vec<i128> = Vec::new(env);
+    let mut total_remainder: i128 = 0;
+
+    for i in 0..n {
+        let mut p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        before_stacks.push_back((p.seat_index, p.stack));
+        let rem = p.stack % rule.denomination;
+        p.stack -= rem;
+        total_remainder += rem;
+        remainders.push_back(rem);
+        table.players.set(i, p);
+    }
+
+    if total_remainder > 0 {
+        // Order candidates with nonzero remainder clockwise from the button.
+        let mut candidates: Vec<(u32, i128)> = Vec::new(env);
+        for offset in 1..=n {
+            let idx = (table.dealer_seat + offset) % n;
+            let rem = remainders.get(idx).unwrap_or(0);
+            if rem > 0 {
+                candidates.push_back((idx, rem));
+            }
+        }
+
+        if matches!(rule.rounding, ColorUpRounding::HighestRemainderClockwise) {
+            // Stable insertion sort by remainder descending; clockwise order is
+            // preserved for equal remainders.
+            for i in 1..candidates.len() {
+                let mut j = i;
+                while j > 0 {
+                    let prev = candidates.get(j - 1).unwrap();
+                    let curr = candidates.get(j).unwrap();
+                    if curr.1 > prev.1 {
+                        candidates.set(j - 1, curr);
+                        candidates.set(j, prev);
+                        j -= 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut full_chips = total_remainder / rule.denomination;
+        let residual = total_remainder % rule.denomination;
+        let cand_len = candidates.len();
+
+        for ci in 0..cand_len {
+            if full_chips <= 0 {
+                break;
+            }
+            let (idx, _) = candidates.get(ci).unwrap();
+            let mut p = table
+                .players
+                .get(idx)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            p.stack += rule.denomination;
+            table.players.set(idx, p);
+            full_chips -= 1;
+        }
+
+        if residual > 0 && cand_len > 0 {
+            let (idx, _) = candidates.get(0).unwrap();
+            let mut p = table
+                .players
+                .get(idx)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            p.stack += residual;
+            table.players.set(idx, p);
+        }
+    }
+
+    let mut after_stacks: Vec<(u32, i128)> = Vec::new(env);
+    for i in 0..n {
+        let p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        after_stacks.push_back((p.seat_index, p.stack));
+    }
+
+    env.events().publish(
+        (Symbol::new(env, "color_up"), table.id),
+        (
+            rule.level_index,
+            rule.denomination,
+            before_stacks,
+            after_stacks,
+        ),
+    );
+    Ok(())
 }
 
 /// Collect `amount` as an ante from every player who has chips.
@@ -564,6 +706,9 @@ pub fn settle_showdown(
         return Err(PokerTableError::ContractPaused);
     }
 
+    // Return any uncalled bet excess before pot construction and rake (#869)
+    // so rake is only charged on contested chips.
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
 
     // Compute the main pot and any side pots from cumulative contributions,
@@ -850,6 +995,7 @@ pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTab
     }
 
     if let Some(winner_seat) = last_player_standing(table) {
+        pot::return_uncalled_bets(table)?;
         let total_pot = table.pot;
         let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
         let winnings = total_pot - rake;
@@ -906,6 +1052,7 @@ pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableErr
         .as_ref()
         .ok_or(PokerTableError::RunItTwiceNotEnabled)?;
 
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
     let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
     let net_pot = total_pot - rake;

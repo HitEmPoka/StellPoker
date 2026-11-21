@@ -205,12 +205,14 @@ fn arb_action() -> impl Strategy<Value = (u8, i128)> {
 }
 
 fn action_from_parts(disc: u8, amount: i128) -> Action {
-    match disc % 6 {
+    match disc % 8 {
         0 => Action::Fold,
         1 => Action::Check,
         2 => Action::Call,
         3 => Action::Bet(amount),
         4 => Action::Raise(amount),
+        5 => Action::RaiseTo(amount),
+        6 => Action::RaiseBy(amount),
         _ => Action::AllIn,
     }
 }

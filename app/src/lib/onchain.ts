@@ -57,7 +57,15 @@ async function signWithWallet(
   return result.signedTxXdr;
 }
 
-type BettingAction = "fold" | "check" | "call" | "bet" | "raise" | "allin" | "all_in";
+export type BettingAction =
+  | "fold"
+  | "check"
+  | "call"
+  | "bet"
+  | "raise_to"
+  | "raise_by"
+  | "allin"
+  | "all_in";
 
 let cachedChainConfig:
   | {
@@ -104,11 +112,18 @@ function toActionScVal(action: BettingAction, amount?: number): xdr.ScVal {
       variant = "Bet";
       payload = Math.floor(amount);
       break;
-    case "raise":
+    case "raise_to":
       if (!Number.isFinite(amount) || amount === undefined || amount <= 0) {
-        throw new Error("Raise amount must be a positive number");
+        throw new Error("RaiseTo amount must be a positive number");
       }
-      variant = "Raise";
+      variant = "RaiseTo";
+      payload = Math.floor(amount);
+      break;
+    case "raise_by":
+      if (!Number.isFinite(amount) || amount === undefined || amount <= 0) {
+        throw new Error("RaiseBy amount must be a positive number");
+      }
+      variant = "RaiseBy";
       payload = Math.floor(amount);
       break;
     default:

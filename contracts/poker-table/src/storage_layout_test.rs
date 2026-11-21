@@ -82,6 +82,7 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("RabbitHunt", 1, false),
     ("SitOutNextBb", 1, false),
     ("LastAggressor", 1, false),
+    ("ColorUpSchedule", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -142,6 +143,7 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::RabbitHunt(table_id),
         DataKey::SitOutNextBb(table_id),
         DataKey::LastAggressor(table_id),
+        DataKey::ColorUpSchedule(table_id),
     ]
 }
 
@@ -201,6 +203,7 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::RabbitHunt(_) => "RabbitHunt",
         DataKey::SitOutNextBb(_) => "SitOutNextBb",
         DataKey::LastAggressor(_) => "LastAggressor",
+        DataKey::ColorUpSchedule(_) => "ColorUpSchedule",
     }
 }
 
@@ -248,7 +251,8 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::BombPotConfig(_)
         | DataKey::RabbitHunt(_)
         | DataKey::SitOutNextBb(_)
-        | DataKey::LastAggressor(_) => 1,
+        | DataKey::LastAggressor(_)
+        | DataKey::ColorUpSchedule(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
