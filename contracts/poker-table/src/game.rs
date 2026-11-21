@@ -564,6 +564,9 @@ pub fn settle_showdown(
         return Err(PokerTableError::ContractPaused);
     }
 
+    // Return any uncalled bet excess before pot construction and rake (#869)
+    // so rake is only charged on contested chips.
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
 
     // Compute the main pot and any side pots from cumulative contributions,
@@ -850,6 +853,7 @@ pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTab
     }
 
     if let Some(winner_seat) = last_player_standing(table) {
+        pot::return_uncalled_bets(table)?;
         let total_pot = table.pot;
         let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
         let winnings = total_pot - rake;
@@ -906,6 +910,7 @@ pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableErr
         .as_ref()
         .ok_or(PokerTableError::RunItTwiceNotEnabled)?;
 
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
     let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
     let net_pot = total_pot - rake;

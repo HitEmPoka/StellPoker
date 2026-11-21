@@ -1023,8 +1023,10 @@ mod test {
             .player_action(&table_id, &folder.address, &1u32, &Action::Fold);
 
         let table = s.client.get_table(&table_id);
-        // 5% of 300 = 15 rake; winner receives the remaining 285.
-        let expected_rake = 15;
+        // SB committed 100 and folded; BB committed 200, so 100 uncalled excess
+        // is returned before rake (#869). Contested pot = 200; 5% of 200 = 10 rake;
+        // winner receives 100 uncalled + 190 net pot = 290.
+        let expected_rake = 10;
         assert_eq!(table.rake_balance, expected_rake);
         let winner_after = table.players.get(other_seat).unwrap();
         assert_eq!(
@@ -1382,10 +1384,12 @@ mod test {
         assert_eq!(fold.kind, ActionKind::Fold);
         assert_eq!(fold.amount, 0);
 
-        // Pot is 600 (SB 100 + BB 200 + the 300 raise); rake is 5%.
-        assert_eq!(record.total_pot, 600);
-        assert_eq!(record.rake, 30);
-        assert_eq!(record.payouts.get(0).unwrap().amount, 570);
+        // SB committed 400 (100 SB + 300 raise) and BB committed 200 before folding.
+        // 200 uncalled excess is returned to SB before rake (#869), leaving a
+        // contested pot of 400; 5% rake = 20, payout = 380.
+        assert_eq!(record.total_pot, 400);
+        assert_eq!(record.rake, 20);
+        assert_eq!(record.payouts.get(0).unwrap().amount, 380);
     }
 
     // ---------------------------------------------------------------------------

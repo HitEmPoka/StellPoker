@@ -80,6 +80,57 @@ pub fn outcome_variance_bps(stats: &VarianceStats, player_count: u32) -> u32 {
     ((squared_deviation * 10_000) / denominator) as u32
 }
 
+/// Return any uncalled bet excess to the highest-committed non-folded player
+/// before pot construction and rake (#869).
+///
+/// When one player commits strictly more than every other player at the table,
+/// the excess above the second-highest commitment was never contested. Returning
+/// it to the bettor's stack (and deducting it from both `committed` and
+/// `table.pot`) ensures rake is only charged on contested chips and preserves
+/// `sum(committed) == table.pot`.
+pub fn return_uncalled_bets(table: &mut TableState) -> Result<i128, PokerTableError> {
+    let mut max_committed: i128 = 0;
+    let mut second_max: i128 = 0;
+    let mut max_seat: Option<u32> = None;
+
+    for i in 0..table.players.len() {
+        let p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        if p.committed > max_committed {
+            second_max = max_committed;
+            max_committed = p.committed;
+            max_seat = Some(i);
+        } else if p.committed > second_max {
+            second_max = p.committed;
+        }
+    }
+
+    if max_committed <= second_max {
+        return Ok(0);
+    }
+
+    let seat = match max_seat {
+        Some(s) => s,
+        None => return Ok(0),
+    };
+    let mut bettor = table
+        .players
+        .get(seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
+    if bettor.folded {
+        return Ok(0);
+    }
+
+    let excess = max_committed - second_max;
+    bettor.stack += excess;
+    bettor.committed -= excess;
+    table.pot -= excess;
+    table.players.set(seat, bettor);
+    Ok(excess)
+}
+
 /// Deduct rake from each pot before distribution. Rake is computed per pot as
 /// `floor(pot.amount * rake_bps / 10_000)`, so the fee is predictable and
 /// proportional to each pot's own size — side pots are raked independently of
@@ -1100,5 +1151,32 @@ mod pot_test {
             paid += payouts.get(i).unwrap().1;
         }
         assert_eq!(paid + rake, gross_total);
+    }
+
+    #[test]
+    fn return_uncalled_bets_refunds_excess_before_rake_on_all_in() {
+        let env = Env::default();
+        let players = Vec::from_array(
+            &env,
+            [
+                player(&env, 0, 100, true, false),
+                player(&env, 1, 300, false, false),
+            ],
+        );
+        let mut table = table_with(&env, players);
+        let excess = return_uncalled_bets(&mut table).unwrap();
+        assert_eq!(excess, 200);
+        assert_eq!(table.players.get(1).unwrap().stack, 200);
+        assert_eq!(table.players.get(1).unwrap().committed, 100);
+        assert_eq!(table.pot, 200);
+
+        let pots = calculate_side_pots(&env, &table).unwrap();
+        assert_eq!(pots.len(), 1);
+        assert_eq!(pots.get(0).unwrap().amount, 200);
+
+        // 5% rake applies only to the 200 contested chips (= 10), not 400 (= 20).
+        let (net_pots, rake) = apply_rake(&env, &pots, 500).unwrap();
+        assert_eq!(rake, 10);
+        assert_eq!(net_pots.get(0).unwrap().amount, 190);
     }
 }
