@@ -6,7 +6,7 @@ import {
 } from "@/lib/lobstr";
 
 const mockAddress = "GABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFG";
-const win = window as unknown as Record<string, unknown>;
+const win = window as unknown as Record<string, any>;
 
 beforeEach(() => {
   vi.restoreAllMocks();
