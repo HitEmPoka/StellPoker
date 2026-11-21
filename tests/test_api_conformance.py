@@ -14,7 +14,19 @@ except ImportError:  # PyYAML is an optional test dependency
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 SPEC_PATH = REPO_ROOT / "docs" / "openapi.yaml"
+PUBLISHED_SPEC_PATH = REPO_ROOT / "docs" / "api" / "openapi.yaml"
 COORDINATOR_MAIN_RS = REPO_ROOT / "services" / "coordinator" / "src" / "main.rs"
+CHECKER_PATH = REPO_ROOT / "scripts" / "check-api-spec.py"
+
+
+def load_checker():
+    """Load the hyphenated drift-check script as a module for direct testing."""
+    import importlib.util
+
+    module_spec = importlib.util.spec_from_file_location("check_api_spec", CHECKER_PATH)
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    return module
 
 
 class TestApiConformance(unittest.TestCase):
@@ -101,6 +113,36 @@ class TestApiConformance(unittest.TestCase):
                         missing.append(f"{method.upper()} {path} (op: {op.get('operationId', 'unnamed')})")
 
         self.assertEqual(len(missing), 0, f"The following OpenAPI operations are missing in coordinator router: {missing}")
+
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
+    def test_every_router_route_is_documented_or_excluded(self):
+        """Issue #1011: spec -> router alone is not enough; check router -> spec."""
+        checker = load_checker()
+        with open(SPEC_PATH, "r", encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+        self.assertTrue(checker.validate_route_coverage(spec))
+
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
+    def test_route_exclusions_require_a_written_rationale(self):
+        checker = load_checker()
+        with open(SPEC_PATH, "r", encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+        rules = checker.route_exclusions(spec)
+        self.assertGreater(len(rules), 0)
+        for rule in rules:
+            self.assertTrue(rule.get("reason"), f"Exclusion without a reason: {rule}")
+        # Prefix and suffix matching work on axum-style paths.
+        self.assertTrue(checker.is_excluded("get", "/api/admin/stats", rules))
+        self.assertTrue(checker.is_excluded("get", "/api/table/1/chat/ws", rules))
+        self.assertFalse(checker.is_excluded("get", "/api/tables/open", rules))
+
+    @unittest.skipIf(yaml is None, "PyYAML not installed")
+    def test_published_api_spec_is_regenerated(self):
+        checker = load_checker()
+        with open(SPEC_PATH, "r", encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+        self.assertTrue(PUBLISHED_SPEC_PATH.exists())
+        self.assertTrue(checker.validate_published_spec(spec))
 
 
 if __name__ == "__main__":
