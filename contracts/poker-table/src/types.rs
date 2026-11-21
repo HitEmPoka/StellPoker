@@ -791,6 +791,15 @@ pub struct Payout {
     pub amount: i128,
 }
 
+/// Voluntary single-card reveal by a winning player after settlement (Issue #867).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShownCardRecord {
+    pub seat: u32,
+    pub card_index: u32,
+    pub card: u32,
+}
+
 /// An immutable record of one completed hand, retained in the table's circular
 /// hand-history buffer.
 #[contracttype]

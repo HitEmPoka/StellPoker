@@ -58,6 +58,8 @@ mod rake_proptest;
 #[cfg(test)]
 mod queue_test;
 #[cfg(test)]
+mod show_one_test;
+#[cfg(test)]
 mod state_machine_test;
 #[cfg(test)]
 mod storage_layout_test;
@@ -1255,13 +1257,13 @@ impl PokerTableContract {
         if num_players < 2 {
             return Err(PokerTableError::NotEnoughPlayers);
         }
-        // If a Mississippi/live straddle is active, first to act is after the straddler
-        if let Some(active) = env
+        // If a Mississippi/live straddle is active, first to act is after the straddler.
+        let nominal_first = if let Some(active) = env
             .storage()
             .instance()
             .get::<DataKey, ActiveStraddle>(&DataKey::ActiveStraddleState(table.id))
         {
-            table.current_turn = (active.seat + 1) % num_players;
+            (active.seat + 1) % num_players
         } else if let Some(seat) = env
             .storage()
             .instance()
@@ -1273,7 +1275,36 @@ impl PokerTableContract {
             // turn on it, so the next player opens.
             table.current_turn = (table.current_turn + 1) % num_players;
         } else {
-            table.current_turn = (table.dealer_seat + 3) % num_players;
+            (table.dealer_seat + 3) % num_players
+        };
+
+        // Skip players who are already all-in (e.g. from posting an ante or blind),
+        // folded, sitting out, or have zero remaining chips.
+        let mut first_to_act: Option<u32> = None;
+        for i in 0..num_players {
+            let seat = (nominal_first + i) % num_players;
+            if let Some(p) = table.players.get(seat) {
+                if !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+                    first_to_act = Some(seat);
+                    break;
+                }
+            }
+        }
+
+        if let Some(first) = first_to_act {
+            table.current_turn = first;
+            // Set action deadline for the first player to act (with optional time bank base)
+            let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
+            // Allow time-bank extension to apply at the very start if player has auto-extension enabled
+            table.action_deadline = crate::time_bank::apply_initial_deadline(
+                &env,
+                table.id,
+                table.current_turn,
+                base_deadline,
+            );
+        } else {
+            // Everyone is all-in (e.g. from antes/blinds) — skip preflop betting.
+            betting::advance_to_next_phase(&env, &mut table)?;
         }
         if game::bomb_pot_ante(&env, &table).is_some() {
             // Bomb pot: the antes are in, so skip preflop betting and deal the flop.
@@ -2166,6 +2197,11 @@ impl PokerTableContract {
     /// retained right now and how many hands have been archived in total.
     pub fn get_hand_history_meta(env: Env, table_id: u32) -> HandHistoryMeta {
         history::load_meta(&env, table_id)
+    }
+
+    /// Read any single hole cards voluntarily disclosed after settlement for a hand.
+    pub fn get_shown_cards(env: Env, table_id: u32, hand_number: u32) -> Vec<ShownCardRecord> {
+        history::get_shown_cards(&env, table_id, hand_number)
     }
 
     /// Number of hands the history buffer can hold before it starts evicting.

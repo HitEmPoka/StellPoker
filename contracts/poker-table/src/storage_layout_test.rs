@@ -254,7 +254,8 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::TimeBank(_, _)
         | DataKey::JackpotClaim(_, _)
         | DataKey::ConfigChangeLog(_, _)
-        | DataKey::RakeHistory(_, _) => 2,
+        | DataKey::RakeHistory(_, _)
+        | DataKey::ShownCards(_, _) => 2,
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,

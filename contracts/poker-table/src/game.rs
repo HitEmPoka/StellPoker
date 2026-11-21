@@ -371,6 +371,7 @@ fn post_antes(table: &mut TableState, amount: i128) -> Result<(), PokerTableErro
 
 /// Collect an ante from a seat: deducted from stack straight into the pot,
 /// without affecting `bet_this_round` (see call site for why).
+/// Clamps to the remaining stack and marks the player all-in when exhausted.
 fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), PokerTableError> {
     let mut player = table
         .players
@@ -396,7 +397,7 @@ fn post_blind(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Pok
         .players
         .get(seat)
         .ok_or(PokerTableError::InvalidPlayerIndex)?;
-    let actual = if player.stack < amount {
+    let actual = if player.stack <= amount {
         player.all_in = true;
         player.stack
     } else {
@@ -509,6 +510,24 @@ pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32
         let seat = (from_seat + i) % num_players;
         if let Some(p) = table.players.get(seat) {
             if !p.sitting_out && p.stack > 0 {
+                return Some(seat);
+            }
+        }
+    }
+    None
+}
+
+/// Like `next_active_seat`, but also includes players who are already `all_in`
+/// for the current hand (e.g. from posting an ante that exhausted their stack).
+pub(crate) fn next_in_hand_seat(table: &TableState, from_seat: u32) -> Option<u32> {
+    let num_players = table.players.len() as u32;
+    if num_players == 0 {
+        return None;
+    }
+    for i in 1..=num_players {
+        let seat = (from_seat + i) % num_players;
+        if let Some(p) = table.players.get(seat) {
+            if !p.sitting_out && (p.stack > 0 || p.all_in) {
                 return Some(seat);
             }
         }

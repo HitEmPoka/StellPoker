@@ -230,6 +230,13 @@ pub struct Tournament {
     pub created_at: std::time::SystemTime,
     pub started_at: Option<std::time::SystemTime>,
     pub finished_at: Option<std::time::SystemTime>,
+    /// When true, tables cannot start hand N+1 until all active tables have
+    /// completed hand N (bubble / hand-for-hand mode).
+    pub hand_for_hand: bool,
+    /// Per-table count of hands started.
+    pub table_hands_started: HashMap<String, u32>,
+    /// Per-table count of hands completed.
+    pub table_hands_completed: HashMap<String, u32>,
 }
 
 impl Tournament {
@@ -257,6 +264,9 @@ impl Tournament {
             created_at: std::time::SystemTime::now(),
             started_at: None,
             finished_at: None,
+            hand_for_hand: req.hand_for_hand.unwrap_or(false),
+            table_hands_started: HashMap::new(),
+            table_hands_completed: HashMap::new(),
         }
     }
 
@@ -446,6 +456,93 @@ impl Tournament {
     pub fn current_blind_level(&self) -> &BlindLevel {
         self.blind_state.current(&self.blind_schedule)
     }
+
+    /// Toggle hand-for-hand mode (tournament admin action).
+    pub fn set_hand_for_hand(&mut self, enabled: bool) {
+        self.hand_for_hand = enabled;
+    }
+
+    /// Return all table contracts that still have at least one active player.
+    pub fn active_tables(&self) -> Vec<String> {
+        let empty = self.empty_tables();
+        self.table_contracts
+            .iter()
+            .filter(|t| !empty.contains(t))
+            .cloned()
+            .collect()
+    }
+
+    /// Gate and record the start of a hand on `table_contract`.
+    ///
+    /// When `hand_for_hand` is enabled, no table may start hand `N + 1` until
+    /// every active table has completed hand `N` (so no table ever pulls ahead
+    /// of the slowest active table).
+    pub fn start_hand(&mut self, table_contract: &str) -> Result<u32, TournamentError> {
+        if self.status != TournamentStatus::Running {
+            return Err(TournamentError::InvalidState);
+        }
+        if !self.table_contracts.iter().any(|t| t == table_contract) {
+            return Err(TournamentError::TableNotFound);
+        }
+
+        let current_started = *self.table_hands_started.get(table_contract).unwrap_or(&0);
+        if self.hand_for_hand {
+            let active = self.active_tables();
+            for other in &active {
+                let other_completed = *self.table_hands_completed.get(other).unwrap_or(&0);
+                if other_completed < current_started {
+                    return Err(TournamentError::HandForHandWaiting);
+                }
+            }
+        }
+
+        let next_hand = current_started + 1;
+        self.table_hands_started
+            .insert(table_contract.to_string(), next_hand);
+        Ok(next_hand)
+    }
+
+    /// Record completion of the current hand on `table_contract`.
+    pub fn complete_hand(&mut self, table_contract: &str) -> Result<u32, TournamentError> {
+        if !self.table_contracts.iter().any(|t| t == table_contract) {
+            return Err(TournamentError::TableNotFound);
+        }
+        let started = *self.table_hands_started.get(table_contract).unwrap_or(&0);
+        let completed = *self.table_hands_completed.get(table_contract).unwrap_or(&0);
+        let next_completed = (completed + 1).min(started.max(completed + 1));
+        self.table_hands_completed
+            .insert(table_contract.to_string(), next_completed);
+        Ok(next_completed)
+    }
+
+    /// Coordinator view of per-table hand counts.
+    pub fn table_hand_counts(&self) -> Vec<TableHandCount> {
+        let mut counts: Vec<TableHandCount> = self
+            .table_contracts
+            .iter()
+            .map(|t| {
+                let hands_started = *self.table_hands_started.get(t).unwrap_or(&0);
+                let hands_completed = *self.table_hands_completed.get(t).unwrap_or(&0);
+                TableHandCount {
+                    table_contract: t.clone(),
+                    hands_started,
+                    hands_completed,
+                    in_progress: hands_started > hands_completed,
+                }
+            })
+            .collect();
+        counts.sort_by(|a, b| a.table_contract.cmp(&b.table_contract));
+        counts
+    }
+}
+
+/// Per-table hand count summary for the coordinator hand-for-hand view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TableHandCount {
+    pub table_contract: String,
+    pub hands_started: u32,
+    pub hands_completed: u32,
+    pub in_progress: bool,
 }
 
 /// Instruction to move a player from one table to another for balancing.
@@ -467,6 +564,8 @@ pub enum TournamentError {
     AlreadyRegistered,
     NotEnoughPlayers,
     InvalidState,
+    TableNotFound,
+    HandForHandWaiting,
 }
 
 impl std::fmt::Display for TournamentError {
@@ -478,6 +577,10 @@ impl std::fmt::Display for TournamentError {
             TournamentError::AlreadyRegistered => write!(f, "player already registered"),
             TournamentError::NotEnoughPlayers => write!(f, "not enough players to start"),
             TournamentError::InvalidState => write!(f, "invalid tournament state for this action"),
+            TournamentError::TableNotFound => write!(f, "table not found in tournament"),
+            TournamentError::HandForHandWaiting => {
+                write!(f, "waiting for other active tables to complete current hand")
+            }
         }
     }
 }
@@ -503,6 +606,8 @@ pub struct CreateTournamentRequest {
     pub players_per_table: Option<u32>,
     pub blind_schedule: Option<Vec<BlindLevel>>,
     pub payout_schedule: Option<PayoutSchedule>,
+    /// Enable hand-for-hand bubble synchronization from tournament start.
+    pub hand_for_hand: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -552,6 +657,8 @@ pub struct TournamentDetail {
     pub blind_level: usize,
     pub blind_schedule: Vec<BlindLevel>,
     pub payout_schedule: PayoutSchedule,
+    pub hand_for_hand: bool,
+    pub table_hand_counts: Vec<TableHandCount>,
 }
 
 impl From<&Tournament> for TournamentSummary {
@@ -603,6 +710,8 @@ impl From<&Tournament> for TournamentDetail {
             blind_level: t.blind_state.level_index,
             blind_schedule: t.blind_schedule.clone(),
             payout_schedule: t.payout_schedule.clone(),
+            hand_for_hand: t.hand_for_hand,
+            table_hand_counts: t.table_hand_counts(),
         }
     }
 }
@@ -622,6 +731,7 @@ mod tests {
             players_per_table: Some(6),
             blind_schedule: None,
             payout_schedule: Some(PayoutSchedule::top_three()),
+            hand_for_hand: None,
         })
     }
 
@@ -758,5 +868,75 @@ mod tests {
             assert_eq!(m.from_table, "T1");
             assert_eq!(m.to_table, "T2");
         }
+    }
+
+    #[test]
+    fn test_hand_for_hand_three_tables_different_speeds() {
+        let mut t = make_tournament(6);
+        t.table_contracts = vec!["T1".to_string(), "T2".to_string(), "T3".to_string()];
+        t.register("P1".to_string(), "T1".to_string()).unwrap();
+        t.register("P2".to_string(), "T1".to_string()).unwrap();
+        t.register("P3".to_string(), "T2".to_string()).unwrap();
+        t.register("P4".to_string(), "T2".to_string()).unwrap();
+        t.register("P5".to_string(), "T3".to_string()).unwrap();
+        t.register("P6".to_string(), "T3".to_string()).unwrap();
+        t.start().unwrap();
+
+        // Admin toggles hand-for-hand mode on near the bubble.
+        assert!(!t.hand_for_hand);
+        t.set_hand_for_hand(true);
+        assert!(t.hand_for_hand);
+
+        // Round 1: all 3 tables can start hand 1.
+        assert_eq!(t.start_hand("T1").unwrap(), 1);
+        assert_eq!(t.start_hand("T2").unwrap(), 1);
+        assert_eq!(t.start_hand("T3").unwrap(), 1);
+
+        // T1 (fast) and T2 (medium) finish hand 1, while T3 (slow) is still playing.
+        assert_eq!(t.complete_hand("T1").unwrap(), 1);
+        assert_eq!(t.complete_hand("T2").unwrap(), 1);
+
+        // T1 and T2 are gated from starting hand 2 until T3 completes hand 1.
+        assert!(matches!(
+            t.start_hand("T1"),
+            Err(TournamentError::HandForHandWaiting)
+        ));
+        assert!(matches!(
+            t.start_hand("T2"),
+            Err(TournamentError::HandForHandWaiting)
+        ));
+
+        // Coordinator view reflects per-table hand counts accurately.
+        let counts = t.table_hand_counts();
+        assert_eq!(counts.len(), 3);
+        assert_eq!(
+            counts[0],
+            TableHandCount {
+                table_contract: "T1".to_string(),
+                hands_started: 1,
+                hands_completed: 1,
+                in_progress: false,
+            }
+        );
+        assert_eq!(
+            counts[2],
+            TableHandCount {
+                table_contract: "T3".to_string(),
+                hands_started: 1,
+                hands_completed: 0,
+                in_progress: true,
+            }
+        );
+
+        // Once T3 completes hand 1, all 3 tables may start hand 2.
+        assert_eq!(t.complete_hand("T3").unwrap(), 1);
+        assert_eq!(t.start_hand("T1").unwrap(), 2);
+        assert_eq!(t.start_hand("T2").unwrap(), 2);
+        assert_eq!(t.start_hand("T3").unwrap(), 2);
+
+        // Admin toggles hand-for-hand mode off: fast table can proceed without waiting.
+        t.set_hand_for_hand(false);
+        assert_eq!(t.complete_hand("T1").unwrap(), 2);
+        assert_eq!(t.start_hand("T1").unwrap(), 3);
     }
 }
