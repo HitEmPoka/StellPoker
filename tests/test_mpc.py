@@ -16,6 +16,12 @@ import time
 import unittest
 
 
+# Binary-exact durations (k / 2**n) so boundary checks never depend on float
+# rounding of the clock's start value (#807, #835, #838, #839).
+HEARTBEAT_TIMEOUT = 0.25
+HEARTBEAT_STEP = 0.125
+
+
 class FakeClock:
     """A manually advanced, thread-safe clock for deterministic timing tests."""
 
@@ -117,18 +123,21 @@ class TestPeerHeartbeat(unittest.TestCase):
         self.peers[2] = peer
 
         peer.reset_heartbeat()
-        self.assertTrue(peer.check_heartbeat(timeout=0.3))
+        self.assertTrue(peer.check_heartbeat(timeout=HEARTBEAT_TIMEOUT))
 
         # Exactly at the timeout boundary the peer is still considered alive
         # because check_heartbeat uses strict greater-than (>), not >=.
-        clock.advance(0.3)
-        self.assertTrue(peer.check_heartbeat(timeout=0.3))
+        # HEARTBEAT_TIMEOUT is a power-of-two fraction, so start + timeout - start
+        # is exact; a value like 0.3 is not representable in binary floating
+        # point and lands just above or below the boundary depending on start.
+        clock.advance(HEARTBEAT_TIMEOUT)
+        self.assertTrue(peer.check_heartbeat(timeout=HEARTBEAT_TIMEOUT))
         self.assertTrue(peer.is_alive)
 
         # One step past the timeout with no heartbeat: the peer is dead.
-        clock.advance(0.2)
+        clock.advance(HEARTBEAT_STEP)
         self.assertFalse(
-            peer.check_heartbeat(timeout=0.3),
+            peer.check_heartbeat(timeout=HEARTBEAT_TIMEOUT),
             "Peer should be marked as dead after heartbeat timeout",
         )
         self.assertFalse(peer.is_alive)
@@ -204,6 +213,30 @@ class TestPeerHeartbeat(unittest.TestCase):
 
         self.assertEqual(len(results), 150)
         self.assertTrue(all(results), "All concurrent heartbeat checks should pass")
+
+    def test_peer_heartbeat_timeout_50_runs_no_flake(self):
+        """Verify peer 2 heartbeat timeout behaves deterministically over 50 runs (#797, #799, #802, #803)."""
+        for i in range(50):
+            clock = FakeClock(start=200.0 + i)
+            peer = MockPeer(peer_id=2, clock=clock)
+            peer.reset_heartbeat()
+            self.assertTrue(peer.check_heartbeat(timeout=0.3))
+            clock.advance(0.5)
+            self.assertFalse(peer.check_heartbeat(timeout=0.3))
+            self.assertFalse(peer.is_alive)
+
+    def test_peer_heartbeat_timeout_boundary_independent_of_clock_start(self):
+        """The boundary verdict must not depend on the clock's start value (#807, #835, #838, #839)."""
+        starts = [0.0, 1.0, 200.0, 249.0, 1000.0, 123456.789]
+        for start in starts:
+            with self.subTest(start=start):
+                clock = FakeClock(start=start)
+                peer = MockPeer(peer_id=2, clock=clock)
+                clock.advance(HEARTBEAT_TIMEOUT)
+                self.assertTrue(peer.check_heartbeat(timeout=HEARTBEAT_TIMEOUT))
+                clock.advance(HEARTBEAT_STEP)
+                self.assertFalse(peer.check_heartbeat(timeout=HEARTBEAT_TIMEOUT))
+                self.assertFalse(peer.is_alive)
 
 
 if __name__ == "__main__":

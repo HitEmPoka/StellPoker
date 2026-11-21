@@ -582,15 +582,18 @@ pub enum PokerTableError {
     // --- Versioned upgrades (Issue #111) ---
     /// A versioned upgrade must target a version newer than the active one.
     InvalidContractVersion = 122,
-    // --- Voluntary show-one-card at showdown (Issue #867) ---
-    /// Table must be in Settlement (or RitSettlement) to show a card.
-    NotInSettlementPhase = 123,
-    /// Card index must be 0 or 1, and card value must be in 0..52.
-    InvalidCardIndex = 124,
-    /// Only a winning player for the settled hand may voluntarily show a card.
-    NotHandWinner = 125,
-    /// Only one card may be disclosed per player per hand.
-    CardAlreadyShown = 126,
+    // --- Seven-deuce bounty (#856) ---
+    /// A bounty deposit must be positive.
+    InvalidBountyAmount = 123,
+    // --- Bomb pots (#857) ---
+    /// A bomb-pot interval needs a positive ante.
+    InvalidBombPotConfig = 124,
+    // --- Rabbit hunt (#858) ---
+    /// The current hand has not settled without a showdown, or its board is
+    /// already complete.
+    RabbitHuntNotAvailable = 125,
+    /// Rabbit-hunt cards must be the next unused deck indices, in order.
+    InvalidRabbitHuntIndices = 126,
 }
 
 /// A wallet's position at one table, as returned in bulk by
@@ -611,6 +614,10 @@ pub struct PlayerPosition {
     pub committed: i128,
     /// Total buy-in including rebuys.
     pub total_buy_in: i128,
+    /// Sitting out (not dealt in) this hand.
+    pub sitting_out: bool,
+    /// Asked to sit out the next big blind (#859).
+    pub sit_out_next_bb: bool,
     pub phase: GamePhase,
     pub hand_number: u32,
 }
@@ -1193,8 +1200,17 @@ pub enum DataKey {
     ContractVersionRecordPrev(u32),
     /// Active dual-version routing window for a table (Issue #111).
     ContractMigration(u32),
-    /// Voluntarily disclosed single card(s) at showdown: (table_id, hand_number) -> Vec<ShownCardRecord> (Issue #867).
-    ShownCards(u32, u32),
+    /// Unclaimed seven-deuce bounty, escrowed outside the pot (#856).
+    SevenDeuceBounty(u32),
+    /// Bomb-pot `(interval, ante)`: every `interval`-th hand is a bomb pot (#857).
+    BombPotConfig(u32),
+    /// Rabbit-hunt progress `(hand_number, cards_revealed)` for a table (#858).
+    RabbitHunt(u32),
+    /// Players who asked to sit out the next big blind (#859). A listed player
+    /// who is also `sitting_out` is sitting that hand out.
+    SitOutNextBb(u32),
+    /// `(hand_number, seat)` of the last bet or raise on the river (#866).
+    LastAggressor(u32),
 }
 
 /// Stable format version emitted by `export_table_state`.

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HitEmPoka/StellPoker/docs/events/rabbit_hunt.schema.json",
+  "title": "rabbit_hunt",
+  "description": "poker-table event. Board cards a settled hand would have dealt, revealed after it ended without a showdown. Never part of that hand's board.",
+  "type": "object",
+  "required": [
+    "topics",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "topics": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "symbol",
+          "type": "string",
+          "const": "rabbit_hunt",
+          "description": "Event name"
+        },
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Table id"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "data": {
+      "x-soroban": "tuple",
+      "type": "array",
+      "prefixItems": [
+        {
+          "x-soroban": "u32",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Hand number the cards belong to"
+        },
+        {
+          "x-soroban": "vec",
+          "type": "array",
+          "items": {
+            "x-soroban": "u32",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295,
+            "description": "Card"
+          },
+          "description": "Revealed cards"
+        },
+        {
+          "x-soroban": "vec",
+          "type": "array",
+          "items": {
+            "x-soroban": "u32",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295,
+            "description": "Deck index"
+          },
+          "description": "Deck index of each revealed card"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    }
+  }
+}

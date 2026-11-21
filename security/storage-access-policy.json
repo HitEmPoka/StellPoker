@@ -97,6 +97,53 @@
           ],
           "auth_model": "table_admin_require_auth",
           "admin_multisig_required": true
+        },
+        "DataKey::SevenDeuceBounty": {
+          "authorized_functions": [
+            "fund_seven_deuce_bounty",
+            "submit_showdown",
+            "finalize_sunset",
+            "get_seven_deuce_bounty"
+          ],
+          "auth_model": "table_admin_funds_paid_on_committee_showdown",
+          "admin_multisig_required": true
+        },
+        "DataKey::BombPotConfig": {
+          "authorized_functions": [
+            "configure_bomb_pot",
+            "get_bomb_pot_config",
+            "start_hand",
+            "commit_deal"
+          ],
+          "auth_model": "table_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "DataKey::RabbitHunt": {
+          "authorized_functions": [
+            "rabbit_hunt"
+          ],
+          "auth_model": "committee_require_auth",
+          "admin_multisig_required": false
+        },
+        "DataKey::SitOutNextBb": {
+          "authorized_functions": [
+            "sit_out_next_big_blind",
+            "leave_table",
+            "start_hand",
+            "get_player_positions"
+          ],
+          "auth_model": "player_require_auth",
+          "admin_multisig_required": false
+        },
+        "DataKey::LastAggressor": {
+          "authorized_functions": [
+            "player_action",
+            "reveal_action",
+            "submit_showdown",
+            "get_showdown_order"
+          ],
+          "auth_model": "player_require_auth",
+          "admin_multisig_required": false
         }
       }
     },

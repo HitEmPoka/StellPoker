@@ -57,6 +57,12 @@
       "description": "Per-table betting pause (blocks new betting actions, allows settlement)."
     },
     {
+      "name": "BombPotConfig",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Bomb-pot (interval, ante) per table; interval 0 disables (#857)."
+    },
+    {
       "name": "ChipDumpingReport",
       "arity": 1,
       "domain": "persistent",
@@ -153,6 +159,12 @@
       "description": "Jackpot verifier contract per table."
     },
     {
+      "name": "LastAggressor",
+      "arity": 1,
+      "domain": "instance",
+      "description": "New key (describe me)."
+    },
+    {
       "name": "LastUpgrade",
       "arity": 1,
       "domain": "persistent",
@@ -201,6 +213,12 @@
       "description": "Waiting-list queue for a full table."
     },
     {
+      "name": "RabbitHunt",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Rabbit-hunt progress (hand_number, cards_revealed) per table (#858)."
+    },
+    {
       "name": "RakeHistory",
       "arity": 2,
       "domain": "persistent",
@@ -225,10 +243,16 @@
       "description": "Per-table settlement pause (blocks hand settlement)."
     },
     {
-      "name": "ShownCards",
-      "arity": 2,
-      "domain": "persistent",
-      "description": "Voluntarily disclosed single card(s) at showdown: (table_id, hand_number)."
+      "name": "SevenDeuceBounty",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Unclaimed seven-deuce bounty per table, escrowed outside the pot (#856)."
+    },
+    {
+      "name": "SitOutNextBb",
+      "arity": 1,
+      "domain": "instance",
+      "description": "New key (describe me)."
     },
     {
       "name": "StraddleConfig",

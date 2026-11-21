@@ -77,7 +77,11 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("ContractVersionBeforeUpgrade", 1, true),
     ("ContractVersionRecordPrev", 1, true),
     ("ContractMigration", 1, true),
-    ("ShownCards", 2, true),
+    ("SevenDeuceBounty", 1, false),
+    ("BombPotConfig", 1, false),
+    ("RabbitHunt", 1, false),
+    ("SitOutNextBb", 1, false),
+    ("LastAggressor", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -133,7 +137,11 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::ContractVersionBeforeUpgrade(table_id),
         DataKey::ContractVersionRecordPrev(table_id),
         DataKey::ContractMigration(table_id),
-        DataKey::ShownCards(table_id, 0),
+        DataKey::SevenDeuceBounty(table_id),
+        DataKey::BombPotConfig(table_id),
+        DataKey::RabbitHunt(table_id),
+        DataKey::SitOutNextBb(table_id),
+        DataKey::LastAggressor(table_id),
     ]
 }
 
@@ -188,7 +196,11 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::ContractVersionBeforeUpgrade(_) => "ContractVersionBeforeUpgrade",
         DataKey::ContractVersionRecordPrev(_) => "ContractVersionRecordPrev",
         DataKey::ContractMigration(_) => "ContractMigration",
-        DataKey::ShownCards(_, _) => "ShownCards",
+        DataKey::SevenDeuceBounty(_) => "SevenDeuceBounty",
+        DataKey::BombPotConfig(_) => "BombPotConfig",
+        DataKey::RabbitHunt(_) => "RabbitHunt",
+        DataKey::SitOutNextBb(_) => "SitOutNextBb",
+        DataKey::LastAggressor(_) => "LastAggressor",
     }
 }
 
@@ -231,7 +243,12 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::PendingContractVersion(_)
         | DataKey::ContractVersionBeforeUpgrade(_)
         | DataKey::ContractVersionRecordPrev(_)
-        | DataKey::ContractMigration(_) => 1,
+        | DataKey::ContractMigration(_)
+        | DataKey::SevenDeuceBounty(_)
+        | DataKey::BombPotConfig(_)
+        | DataKey::RabbitHunt(_)
+        | DataKey::SitOutNextBb(_)
+        | DataKey::LastAggressor(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)

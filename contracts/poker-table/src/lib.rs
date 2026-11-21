@@ -253,6 +253,17 @@ fn require_not_paused(env: &Env, table_id: u32) -> Result<(), PokerTableError> {
     Ok(())
 }
 
+/// Chips may only enter or leave a seat between hands (`Waiting` or
+/// `Settlement`), so a live hand's stacks, all-ins and side pots never change
+/// under it. Shared by every deposit and withdrawal path (#860, #861).
+fn between_hands_only(table: &TableState, err: PokerTableError) -> Result<(), PokerTableError> {
+    if matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
 /// Most table ids `get_player_positions` accepts in one call. Each id costs a
 /// table read, so this bounds the call's footprint and CPU.
 pub const MAX_POSITIONS_BATCH: u32 = 20;
@@ -267,6 +278,8 @@ fn player_position(env: &Env, player: &Address, table_id: u32) -> PlayerPosition
         stack: 0,
         committed: 0,
         total_buy_in: 0,
+        sitting_out: false,
+        sit_out_next_bb: false,
         phase,
         hand_number,
     };
@@ -284,6 +297,8 @@ fn player_position(env: &Env, player: &Address, table_id: u32) -> PlayerPosition
                     stack: p.stack,
                     committed: p.committed,
                     total_buy_in: p.total_buy_in,
+                    sitting_out: p.sitting_out,
+                    sit_out_next_bb: game::sit_out_requests(env, table_id).contains(player),
                     phase: table.phase.clone(),
                     hand_number: table.hand_number,
                 };
@@ -338,41 +353,33 @@ fn extract_u32_from_public_inputs(public_inputs: &Bytes, field_index: u32) -> u3
     (b0 as u32) << 24 | (b1 as u32) << 16 | (b2 as u32) << 8 | b3 as u32
 }
 
-/// Verify that the committee-submitted hole_cards (in active-player order, seat
-/// order skipping folded) match the card values in the proof's public outputs.
+/// Verify that the committee-submitted hole_cards, in showdown reveal order
+/// (`game::showdown_order`, #866), match the card values in the proof's public
+/// outputs. Cards submitted in any other order fail with `HoleCardMismatch`.
 ///
 /// Public output layout for showdown:
 ///   [13..19)  hole_card1[0..6] — seat-indexed
 ///   [19..25)  hole_card2[0..6] — seat-indexed
 fn verify_hole_cards_against_proof(
-    _env: &Env,
+    env: &Env,
     table: &TableState,
     public_inputs: &Bytes,
     hole_cards: &Vec<(u32, u32)>,
 ) -> Result<(), PokerTableError> {
-    let mut active_idx: u32 = 0;
-    for i in 0..table.players.len() {
-        let player = table
-            .players
-            .get(i)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if player.folded {
-            continue;
-        }
-        let seat = player.seat_index;
+    let order = game::showdown_order(env, table);
+    for (k, seat) in order.iter().enumerate() {
         let proof_c1 = extract_u32_from_public_inputs(public_inputs, 13 + seat);
         let proof_c2 = extract_u32_from_public_inputs(public_inputs, 19 + seat);
         let (submitted_c1, submitted_c2) = hole_cards
-            .get(active_idx)
+            .get(k as u32)
             .ok_or(PokerTableError::InvalidHoleCards)?;
         if constant_time::u32_ne(proof_c1, submitted_c1)
             || constant_time::u32_ne(proof_c2, submitted_c2)
         {
             return Err(PokerTableError::HoleCardMismatch);
         }
-        active_idx += 1;
     }
-    if active_idx == 0 {
+    if order.is_empty() {
         return Err(PokerTableError::InvalidHoleCards);
     }
     Ok(())
@@ -524,6 +531,26 @@ fn compute_rit_board_indices(
     }
 
     Ok(())
+}
+
+/// The `count` deck indices after the first `skip` that `dealt` has not used,
+/// in ascending order: how `reveal_board_valid` picks the next board cards.
+fn next_unused_indices(env: &Env, dealt: &Vec<u32>, skip: u32, count: u32) -> Vec<u32> {
+    let mut used = [false; 52];
+    for idx in dealt.iter() {
+        if idx < 52 {
+            used[idx as usize] = true;
+        }
+    }
+    let mut out = Vec::new(env);
+    for idx in (0..52u32)
+        .filter(|&i| !used[i as usize])
+        .skip(skip as usize)
+        .take(count as usize)
+    {
+        out.push_back(idx);
+    }
+    out
 }
 
 fn emit_queue_positions(env: &Env, table_id: u32, queue: &Vec<QueueEntry>) {
@@ -907,10 +934,7 @@ impl PokerTableContract {
 
         let mut table = load_table(&env, table_id)?;
 
-        // Chips may only enter between hands — never while a hand is live.
-        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
-            return Err(PokerTableError::CannotRebuyDuringActiveHand);
-        }
+        between_hands_only(&table, PokerTableError::CannotRebuyDuringActiveHand)?;
 
         let seat = find_seat(&env, &table, &player)?;
         let mut p = table
@@ -967,6 +991,32 @@ impl PokerTableContract {
         Ok((p.total_buy_in, p.rebuy_count))
     }
 
+    /// Sit out the next hand in which the big blind would be the player's
+    /// (#859). The seat and stack stay; that hand is dealt without them, and
+    /// the hand after deals them back in with a dead big blind (unless they
+    /// are the big blind then). The request waits while fewer than three
+    /// players could play, so a heads-up table never stalls. May be called at
+    /// any time; it takes effect when a hand starts.
+    pub fn sit_out_next_big_blind(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<(), PokerTableError> {
+        player.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let table = load_table(&env, table_id)?;
+        find_seat(&env, &table, &player)?;
+        let mut requests = game::sit_out_requests(&env, table_id);
+        if !requests.contains(&player) {
+            requests.push_back(player);
+            env.storage()
+                .instance()
+                .set(&DataKey::SitOutNextBb(table_id), &requests);
+        }
+        Ok(())
+    }
+
     /// Update the per-session rebuy limit (admin only). `0` means unlimited.
     /// Lowering the limit below what a player has already used simply stops
     /// them rebuying again; it never claws chips back.
@@ -992,10 +1042,9 @@ impl PokerTableContract {
 
         let mut table = load_table(&env, table_id)?;
 
-        // Can only leave during Waiting phase or between hands.
-        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
-            return Err(PokerTableError::CannotLeaveDuringActiveHand);
-        }
+        // A player who folds mid-hand waits for settlement: their committed
+        // chips stay in the pot as dead money and only their stack leaves.
+        between_hands_only(&table, PokerTableError::CannotLeaveDuringActiveHand)?;
 
         let mut withdrawn: i128 = 0;
         let mut found = false;
@@ -1016,6 +1065,15 @@ impl PokerTableContract {
 
         if !found {
             return Err(PokerTableError::PlayerNotAtTable);
+        }
+
+        // A sit-out request leaves with the player (#859).
+        let mut requests = game::sit_out_requests(&env, table_id);
+        if let Some(i) = requests.first_index_of(&player) {
+            requests.remove(i);
+            env.storage()
+                .instance()
+                .set(&DataKey::SitOutNextBb(table_id), &requests);
         }
 
         // Renumber the remaining seats so `seat_index` keeps matching the
@@ -1211,7 +1269,11 @@ impl PokerTableContract {
             .instance()
             .get::<DataKey, u32>(&DataKey::ActiveStraddleSeat(table.id))
         {
-            (seat + 1) % num_players
+            table.current_turn = (seat + 1) % num_players;
+        } else if table.players.iter().any(|p| p.sitting_out) {
+            // A seat sitting out moved the big blind (#859); start_hand left the
+            // turn on it, so the next player opens.
+            table.current_turn = (table.current_turn + 1) % num_players;
         } else {
             (table.dealer_seat + 3) % num_players
         };
@@ -1243,6 +1305,25 @@ impl PokerTableContract {
         } else {
             // Everyone is all-in (e.g. from antes/blinds) — skip preflop betting.
             betting::advance_to_next_phase(&env, &mut table)?;
+        }
+        if game::bomb_pot_ante(&env, &table).is_some() {
+            // Bomb pot: the antes are in, so skip preflop betting and deal the flop.
+            betting::advance_to_next_phase(&env, &mut table)?;
+        } else {
+            // Blinds or antes can leave no one able to bet (run out the board) or
+            // the first seat to act all in (pass the turn on).
+            betting::skip_round_if_all_in(&env, &mut table)?;
+        }
+        if table.phase == GamePhase::Preflop {
+            // Set action deadline for the first player to act (with optional time bank base)
+            let base_deadline = env.ledger().sequence() + table.config.timeout_ledgers;
+            // Allow time-bank extension to apply at the very start if player has auto-extension enabled
+            table.action_deadline = crate::time_bank::apply_initial_deadline(
+                &env,
+                table.id,
+                table.current_turn,
+                base_deadline,
+            );
         }
 
         save_table(&env, &table);
@@ -1528,8 +1609,81 @@ impl PokerTableContract {
         Ok(())
     }
 
+    /// Rabbit hunt (#858): after a hand settles without a showdown, the
+    /// committee may reveal the board cards it would have dealt, with the
+    /// same reveal proof as a real street. Cards come in deal order (the next
+    /// unused deck indices, as `reveal_board_valid` picks them), over one or
+    /// more calls, up to the rest of the five-card board. Hole cards are never
+    /// revealed. The table state is not touched, so the cards cannot reach a
+    /// later hand, which is dealt from a new deck. Emits `rabbit_hunt`, not
+    /// `board_revealed`.
+    pub fn rabbit_hunt(
+        env: Env,
+        table_id: u32,
+        committee: Address,
+        cards: Vec<u32>,
+        indices: Vec<u32>,
+        proof: Bytes,
+        public_inputs: Bytes,
+    ) -> Result<(), PokerTableError> {
+        committee.require_auth();
+        require_not_paused(&env, table_id)?;
+
+        let table = load_table(&env, table_id)?;
+        if constant_time::address_ne(&env, &committee, &table.committee) {
+            return Err(PokerTableError::NotAuthorizedCommittee);
+        }
+
+        // The newest archived hand must be this one, settled without a showdown.
+        let settled_without_showdown = history::get_history(&env, table_id, 1)
+            .get(0)
+            .map(|r| r.hand_number == table.hand_number && !r.showdown)
+            .unwrap_or(false);
+        let key = DataKey::RabbitHunt(table_id);
+        let (hunted_hand, hunted): (u32, u32) =
+            env.storage().instance().get(&key).unwrap_or((0, 0));
+        let hunted = if hunted_hand == table.hand_number {
+            hunted
+        } else {
+            0
+        };
+        let remaining = BOARD_INDICES_COUNT.saturating_sub(table.board_cards.len() + hunted);
+        if !settled_without_showdown || remaining == 0 {
+            return Err(PokerTableError::RabbitHuntNotAvailable);
+        }
+        if cards.is_empty() || cards.len() != indices.len() || cards.len() > remaining {
+            return Err(PokerTableError::WrongCardCount);
+        }
+        if indices != next_unused_indices(&env, &table.dealt_indices, hunted, cards.len()) {
+            return Err(PokerTableError::InvalidRabbitHuntIndices);
+        }
+
+        let verifier_client = verifier::ZkVerifierClient::new(&env, &table.config.verifier);
+        if !verifier_client.verify_reveal(
+            &proof,
+            &public_inputs,
+            &table.deck_root,
+            &cards,
+            &indices,
+        ) {
+            return Err(PokerTableError::RevealProofVerificationFailed);
+        }
+
+        env.storage()
+            .instance()
+            .set(&key, &(table.hand_number, hunted + cards.len()));
+        env.events().publish(
+            (Symbol::new(&env, "rabbit_hunt"), table_id),
+            (table.hand_number, cards, indices),
+        );
+        Ok(())
+    }
+
     /// Submit showdown: reveal hole cards, verify winner, settle.
     /// Handles Run-It-Twice showdowns for both runs when active.
+    ///
+    /// `hole_cards` are the remaining players' cards in reveal order, as
+    /// returned by `get_showdown_order` (#866); any other order is rejected.
     ///
     /// `bad_beat_scores` is a committee-submitted vector of `(seat, hand_score)`
     /// pairs for every non-folded player at showdown.  The contract checks
@@ -1666,75 +1820,24 @@ impl PokerTableContract {
         } else {
             // Normal showdown
             game::settle_showdown(&env, &mut table, winner_index, tie_mask, &bad_beat_scores)?;
+            // settle_showdown has checked winner_index is a seat; its proved hole cards:
+            let winner_cards = (
+                extract_u32_from_public_inputs(&public_inputs, 13 + winner_index),
+                extract_u32_from_public_inputs(&public_inputs, 19 + winner_index),
+            );
+            game::pay_seven_deuce_bounty(&env, &mut table, winner_index, tie_mask, winner_cards)?;
             save_table(&env, &table);
             Ok(())
         }
     }
 
-    /// Voluntarily reveal one hole card after settlement (Issue #867).
-    ///
-    /// Valid only for a winning player of the just-settled hand. Discloses
-    /// exactly one card (`card_index` 0 or 1, `card` in 0..52), emits a
-    /// `card_shown_one` event, and stores it in hand history while keeping
-    /// the other card private.
-    pub fn show_one(
-        env: Env,
-        table_id: u32,
-        seat: u32,
-        card_index: u32,
-        card: u32,
-    ) -> Result<(), PokerTableError> {
-        require_not_paused(&env, table_id)?;
+    /// Seats in the order they must reveal at showdown (#866): the last
+    /// bettor or raiser on the river first, else the first player left of the
+    /// button, then clockwise, skipping folded seats. `submit_showdown` takes
+    /// `hole_cards` in this order.
+    pub fn get_showdown_order(env: Env, table_id: u32) -> Result<Vec<u32>, PokerTableError> {
         let table = load_table(&env, table_id)?;
-
-        if !matches!(
-            table.phase,
-            GamePhase::Settlement | GamePhase::RitSettlement
-        ) {
-            return Err(PokerTableError::NotInSettlementPhase);
-        }
-        if card_index >= 2 || card >= 52 {
-            return Err(PokerTableError::InvalidCardIndex);
-        }
-
-        let player = table
-            .players
-            .get(seat)
-            .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        player.address.require_auth();
-
-        let record = history::get_hand(&env, table_id, table.hand_number)
-            .ok_or(PokerTableError::NotHandWinner)?;
-        let mut is_winner = false;
-        for i in 0..record.payouts.len() {
-            if let Some(p) = record.payouts.get(i) {
-                if p.seat == seat && p.amount > 0 {
-                    is_winner = true;
-                    break;
-                }
-            }
-        }
-        if !is_winner {
-            return Err(PokerTableError::NotHandWinner);
-        }
-
-        history::record_shown_card(
-            &env,
-            table_id,
-            table.hand_number,
-            ShownCardRecord {
-                seat,
-                card_index,
-                card,
-            },
-        )?;
-
-        env.events().publish(
-            (Symbol::new(&env, "card_shown_one"), table_id),
-            (table.hand_number, seat, card_index, card),
-        );
-
-        Ok(())
+        Ok(game::showdown_order(&env, &table))
     }
 
     /// Claim timeout when opponent or committee is stalling.
@@ -1975,6 +2078,41 @@ impl PokerTableContract {
         env.storage()
             .instance()
             .get(&DataKey::ActiveStraddleState(table_id))
+    }
+
+    /// Make every `interval`-th hand a bomb pot (#857): each player antes
+    /// `ante`, there are no blinds or straddle, and betting starts on the
+    /// flop. `interval` 0 turns bomb pots off. Admin only, between hands.
+    pub fn configure_bomb_pot(
+        env: Env,
+        table_id: u32,
+        interval: u32,
+        ante: i128,
+    ) -> Result<(), PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        if !matches!(table.phase, GamePhase::Waiting | GamePhase::Settlement) {
+            return Err(PokerTableError::HandAlreadyInProgress);
+        }
+        if interval > 0 && ante <= 0 {
+            return Err(PokerTableError::InvalidBombPotConfig);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::BombPotConfig(table_id), &(interval, ante));
+        env.events().publish(
+            (Symbol::new(&env, "bomb_pot_configured"), table_id),
+            (interval, ante),
+        );
+        Ok(())
+    }
+
+    /// The table's bomb-pot `(interval, ante)`; `(0, 0)` when never set (view function).
+    pub fn get_bomb_pot_config(env: Env, table_id: u32) -> (u32, i128) {
+        env.storage()
+            .instance()
+            .get(&DataKey::BombPotConfig(table_id))
+            .unwrap_or((0, 0))
     }
 
     /// Approve recovery of every player's own stack and committed chips after
@@ -2354,7 +2492,11 @@ impl PokerTableContract {
 
         let rake_swept = table.rake_balance;
         let jackpot_swept = table.jackpot_balance;
-        let payout = rake_swept + jackpot_swept;
+        // An unclaimed seven-deuce bounty goes back to the admin who funded it.
+        let bounty_key = DataKey::SevenDeuceBounty(table_id);
+        let bounty_swept: i128 = env.storage().instance().get(&bounty_key).unwrap_or(0);
+        env.storage().instance().remove(&bounty_key);
+        let payout = rake_swept + jackpot_swept + bounty_swept;
         if payout > 0 {
             token.transfer(&env.current_contract_address(), &table.admin, &payout);
         }
@@ -2947,6 +3089,50 @@ impl PokerTableContract {
     pub fn get_jackpot_balance(env: Env, table_id: u32) -> Result<i128, PokerTableError> {
         let table = load_table(&env, table_id)?;
         Ok(table.jackpot_balance)
+    }
+
+    /// Add `amount` to the table's seven-deuce bounty (#856). The table admin
+    /// funds it; the chips are escrowed outside the pot and paid to the next
+    /// player who wins a showdown outright with 7-2 offsuit. Returns the new
+    /// balance.
+    pub fn fund_seven_deuce_bounty(
+        env: Env,
+        table_id: u32,
+        amount: i128,
+    ) -> Result<i128, PokerTableError> {
+        let table = load_table(&env, table_id)?;
+        table.admin.require_auth();
+        sunset::require_not_sunset(&env, table_id)?;
+        if amount <= 0 {
+            return Err(PokerTableError::InvalidBountyAmount);
+        }
+        let key = DataKey::SevenDeuceBounty(table_id);
+        let balance = env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&key)
+            .unwrap_or(0)
+            .checked_add(amount)
+            .ok_or(PokerTableError::InvalidBountyAmount)?;
+        token::Client::new(&env, &table.config.token).transfer(
+            &table.admin,
+            env.current_contract_address(),
+            &amount,
+        );
+        env.storage().instance().set(&key, &balance);
+        env.events().publish(
+            (Symbol::new(&env, "seven_deuce_bounty_funded"), table_id),
+            (amount, balance),
+        );
+        Ok(balance)
+    }
+
+    /// The table's unclaimed seven-deuce bounty (view function).
+    pub fn get_seven_deuce_bounty(env: Env, table_id: u32) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SevenDeuceBounty(table_id))
+            .unwrap_or(0)
     }
 
     /// Read the jackpot configuration parameters for a table (view function).

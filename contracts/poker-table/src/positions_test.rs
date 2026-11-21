@@ -157,6 +157,8 @@ fn a_table_the_wallet_is_not_seated_at_gets_an_unseated_entry() {
             stack: 0,
             committed: 0,
             total_buy_in: 0,
+            sitting_out: false,
+            sit_out_next_bb: false,
             phase: GamePhase::Waiting,
             hand_number: 0,
         }
