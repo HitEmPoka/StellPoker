@@ -151,6 +151,11 @@ class TestPeerHeartbeat(unittest.TestCase):
             clock.advance(0.5)
             self.assertFalse(peer.check_heartbeat(timeout=0.3))
 
+    def test_default_heartbeat_clock_is_monotonic(self):
+        """Heartbeat timeouts must not follow wall-clock adjustments."""
+        peer = MockPeer(peer_id=9)
+        self.assertIs(peer._clock, time.monotonic)
+
     def test_peer_heartbeat_recovery(self):
         """A peer can recover from a timeout with a new heartbeat."""
         clock = FakeClock()
