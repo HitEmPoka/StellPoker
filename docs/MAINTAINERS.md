@@ -13,6 +13,8 @@ checks that gate merges:
 | Check (workflow name) | What it verifies | Failing means |
 |---|---|---|
 | **CI** | Secret scan (gitleaks), `cargo fmt`, `cargo clippy`, contract/circuit/frontend tests, builds | Do not merge — fix or get an explicit override from a maintainer |
+| **CI / services-test** | `cargo test -p coordinator -p node` unit tests | Coordinator or MPC node regression — do not merge |
+| **CI / frontend-test** | `vitest run --coverage` frontend unit tests | Frontend unit test regression — do not merge |
 | **CodeQL Analysis — Rust Contracts** | Static analysis for security-detection rules | Investigate before merge; dismiss only with a written reason on the PR |
 | **Dependency Check** | Advisory/audit pass over Rust and npm dependencies | Update or pin the dependency; `wontfix` label + comment if intentionally accepted |
 | **Docker Image Vulnerability Scan** | Image CVE scan | Fix base image/deps; record accepted CVEs in the PR body |

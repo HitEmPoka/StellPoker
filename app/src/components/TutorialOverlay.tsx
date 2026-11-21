@@ -277,7 +277,7 @@ function DoneCard({ onClose }: { onClose: () => void }) {
           lineHeight: 1.5,
         }}
       >
-        YOU'RE READY TO PLAY!
+        YOU&apos;RE READY TO PLAY!
       </h2>
       <p
         style={{
@@ -320,7 +320,7 @@ function DoneCard({ onClose }: { onClose: () => void }) {
         }}
         autoFocus
       >
-        LET'S PLAY!
+        LET&apos;S PLAY!
       </button>
     </div>
   );

@@ -71,7 +71,6 @@ describe("canvasToBlob", () => {
     // method at all). `delete` doesn't remove an inherited prototype
     // method, so shadow it with an own `undefined` property instead, to
     // exercise the intended "method truly absent" path without hanging.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (canvas as any).toBlob = undefined;
     const blob = await canvasToBlob(canvas);
     expect(blob).toBeNull();
