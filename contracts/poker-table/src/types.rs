@@ -1103,6 +1103,16 @@ pub struct TableState {
     /// The next raise must be at least this large (standard poker minimum-raise
     /// rule). Cleared to `big_blind` when a new betting round begins.
     pub last_raise_size: i128,
+    /// Size of the previous increment that was large enough to constitute a
+    /// full raise. A short all-in updates `last_raise_size` for bookkeeping but
+    /// must not replace this value or reopen action for players who already acted.
+    pub last_full_raise_size: i128,
+    /// Bitmask of seats that have acted during the current betting round.
+    pub acted_seats: u32,
+    /// True when the latest raise was a full raise and action is reopened.
+    pub action_reopened: bool,
+    /// Big-blind option is pending preflop after a limped pot.
+    pub bb_action_taken: bool,
     /// Index into `config.blinds_schedule.levels` of the currently active
     /// blinds level.
     pub current_blind_level: u32,
@@ -1213,6 +1223,10 @@ pub enum DataKey {
     ContractVersionRecordPrev(u32),
     /// Active dual-version routing window for a table (Issue #111).
     ContractMigration(u32),
+    /// Outstanding payout deficit after a SAC transfer is blocked or clawed back (#900).
+    SettlementDeficit(u32),
+    /// Internal claimable balance for a player after a blocked SAC transfer (#900).
+    ClaimableBalance(u32, Address),
     /// Unclaimed seven-deuce bounty, escrowed outside the pot (#856).
     SevenDeuceBounty(u32),
     /// Bomb-pot `(interval, ante)`: every `interval`-th hand is a bomb pot (#857).

@@ -135,6 +135,10 @@ fn two_player_table(
         hand_actions: Vec::new(env),
         jackpot_balance: 0,
         last_raise_size: big_blind,
+        last_full_raise_size: big_blind,
+        acted_seats: 0,
+        action_reopened: false,
+        bb_action_taken: false,
         rit_state: OptionalRitState::None,
         current_blind_level: 0,
         level_started_at: 0,
@@ -239,6 +243,55 @@ fn re_raise_matching_prior_size_accepted() {
     act(&env, &poker, &mut table, &p1, &Action::RaiseBy(40))
         .expect("re-raise equal to prior raise must succeed");
     assert_eq!(table.last_raise_size, 40);
+}
+
+#[test]
+fn short_all_in_does_not_reset_full_raise_entitlement() {
+    let (env, poker, hub) = make_env();
+    let big_blind = 10i128;
+    let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 2_000, big_blind);
+
+    act(&env, &poker, &mut table, &p0, &Action::RaiseBy(40))
+        .expect("full opening raise");
+    act(&env, &poker, &mut table, &p1, &Action::RaiseBy(40))
+        .expect("full re-raise");
+
+    let mut short = table.players.get(0).unwrap();
+    short.stack = 5;
+    table.players.set(0, short);
+    act(&env, &poker, &mut table, &p0, &Action::AllIn)
+        .expect("short all-in");
+
+    assert_eq!(table.last_full_raise_size, 40);
+    assert!(!table.action_reopened);
+}
+
+#[test]
+fn limped_pot_gives_big_blind_the_option() {
+    let (env, poker, hub) = make_env();
+    let (mut table, p0, p1) = two_player_table(&env, &poker, &hub, 1_000, 10);
+
+    act(&env, &poker, &mut table, &p0, &Action::Call)
+        .expect("button limps");
+    assert_eq!(table.current_turn, 1, "big blind must receive limp option");
+
+    act(&env, &poker, &mut table, &p1, &Action::Check)
+        .expect("big blind checks");
+    assert_ne!(table.phase, GamePhase::Preflop);
+}
+
+#[test]
+fn heads_up_preflop_starts_on_button_and_postflop_on_non_button() {
+    let (env, poker, hub) = make_env();
+    let (mut table, _p0, _p1) = two_player_table(&env, &poker, &hub, 1_000, 10);
+
+    assert_eq!(table.dealer_seat, 0);
+    assert_eq!(table.current_turn, 0, "button/SB acts first preflop");
+
+    table.phase = GamePhase::Flop;
+    env.as_contract(&poker, || betting::reset_round(&env, &mut table))
+        .expect("reset postflop round");
+    assert_eq!(table.current_turn, 1, "non-button/BB acts first postflop");
 }
 
 /// After `reset_round`, `last_raise_size` is reset to the big blind.

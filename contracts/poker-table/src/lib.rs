@@ -164,7 +164,14 @@ fn refund_table_players(env: &Env, table: &mut TableState) -> Result<i128, Poker
     table.last_action_ledger = env.ledger().sequence();
 
     for payout in payouts.iter() {
-        token.transfer(&env.current_contract_address(), &payout.0, &payout.1);
+        multi_currency::safe_transfer(
+            env,
+            table.id,
+            &table.config.token,
+            &env.current_contract_address(),
+            &payout.0,
+            payout.1,
+        );
     }
     Ok(refunded)
 }
@@ -768,6 +775,15 @@ impl PokerTableContract {
                 .get(0)
                 .ok_or(PokerTableError::EmptyBlindsSchedule)?
                 .big_blind,
+            last_full_raise_size: config
+                .blinds_schedule
+                .levels
+                .get(0)
+                .ok_or(PokerTableError::EmptyBlindsSchedule)?
+                .big_blind,
+            acted_seats: 0,
+            action_reopened: false,
+            bb_action_taken: false,
             current_blind_level: 0,
             level_started_at: env.ledger().timestamp(),
             break_ends_at: 0,
@@ -1113,8 +1129,14 @@ impl PokerTableContract {
         seat_next_from_queue(&env, table_id)?;
 
         if withdrawn > 0 {
-            let token = token::Client::new(&env, &table.config.token);
-            token.transfer(&env.current_contract_address(), &player, &withdrawn);
+            multi_currency::safe_transfer(
+                &env,
+                table_id,
+                &table.config.token,
+                &env.current_contract_address(),
+                &player,
+                withdrawn,
+            );
         }
 
         Ok(withdrawn)
@@ -1878,6 +1900,48 @@ impl PokerTableContract {
     /// Read current table state (view function).
     pub fn get_table(env: Env, table_id: u32) -> Result<TableState, PokerTableError> {
         load_table(&env, table_id)
+    }
+
+    /// Outstanding SAC settlement deficit exposed to table operators.
+    pub fn settlement_deficit(env: Env, table_id: u32) -> i128 {
+        multi_currency::settlement_deficit(&env, table_id)
+    }
+
+    /// Internal balance available to a player after a blocked SAC payout.
+    pub fn claimable_balance(env: Env, table_id: u32, player: Address) -> i128 {
+        multi_currency::claimable_balance(&env, table_id, &player)
+    }
+
+    /// Retry a blocked payout. The balance remains claimable if transfer fails.
+    pub fn claim_settlement_balance(
+        env: Env,
+        table_id: u32,
+        player: Address,
+    ) -> Result<i128, PokerTableError> {
+        player.require_auth();
+        let table = load_table(&env, table_id)?;
+        let amount = multi_currency::claimable_balance(&env, table_id, &player);
+        if amount <= 0 {
+            return Ok(0);
+        }
+        if !multi_currency::safe_transfer(
+            &env,
+            table_id,
+            &table.config.token,
+            &env.current_contract_address(),
+            &player,
+            amount,
+        ) {
+            return Ok(0);
+        }
+        let claim_key = (Symbol::short("claim"), table_id, player);
+        env.storage().persistent().remove(&claim_key);
+        let deficit_key = (Symbol::short("def"), table_id);
+        let deficit: i128 = env.storage().instance().get(&deficit_key).unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&deficit_key, &deficit.saturating_sub(amount).max(0));
+        Ok(amount)
     }
 
     /// Export a versioned full-table snapshot for replay tools (#570).
