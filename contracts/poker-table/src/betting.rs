@@ -33,6 +33,13 @@ pub fn process_action(
     }
 
     let pot_before = table.pot;
+    table.action_reopened = false;
+    table.acted_seats |= 1u32 << seat;
+    if matches!(table.phase, GamePhase::Preflop)
+        && game::big_blind_seat(table).ok() == Some(seat)
+    {
+        table.bb_action_taken = true;
+    }
 
     match action {
         Action::Fold => {
@@ -104,6 +111,9 @@ pub fn process_action(
             p.committed += *amount;
             table.pot += *amount;
             table.last_raise_size = *amount;
+            table.last_full_raise_size = *amount;
+            table.action_reopened = true;
+            table.acted_seats = 1u32 << seat;
 
             if p.stack == 0 {
                 p.all_in = true;
@@ -124,11 +134,29 @@ pub fn process_action(
         }
         Action::AllIn => {
             let amount = p.stack;
+            let previous_bet = current_bet;
+            p.stack = 0;
             p.bet_this_round += amount;
             p.committed += amount;
             table.pot += amount;
-            p.stack = 0;
             p.all_in = true;
+            let effective_increment = p.bet_this_round - previous_bet;
+            if effective_increment > 0 {
+                table.last_raise_size = effective_increment;
+                let full_raise = core::cmp::max(
+                    table.last_full_raise_size,
+                    game::current_blind_level(table)?.big_blind,
+                );
+                if effective_increment >= full_raise {
+                    table.last_full_raise_size = effective_increment;
+                    table.action_reopened = true;
+                    table.acted_seats = 1u32 << seat;
+                } else {
+                    table.action_reopened = false;
+                }
+            } else {
+                table.action_reopened = false;
+            }
             table.players.set(seat, p.clone());
         }
     }
@@ -230,6 +258,14 @@ fn apply_raise(
     p.committed += total_needed;
     table.pot += total_needed;
     table.last_raise_size = increment;
+    let full_raise = core::cmp::max(table.last_full_raise_size, current_big_blind);
+    if increment >= full_raise {
+        table.last_full_raise_size = increment;
+        table.action_reopened = true;
+        table.acted_seats = 1u32 << seat;
+    } else {
+        table.action_reopened = false;
+    }
 
     if p.stack == 0 {
         p.all_in = true;
@@ -269,6 +305,10 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
         },
         _ => game::current_blind_level(table)?.big_blind,
     };
+    table.last_full_raise_size = table.last_raise_size;
+    table.acted_seats = 0;
+    table.action_reopened = false;
+    table.bb_action_taken = false;
 
     let num_players = table.players.len() as u32;
     if num_players == 0 {
@@ -351,6 +391,22 @@ fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<()
     let mut next: Option<u32> = None;
     let mut round_complete = true;
 
+    if matches!(table.phase, GamePhase::Preflop) {
+        if let Ok(bb_seat) = game::big_blind_seat(table) {
+            if let Some(bb) = table.players.get(bb_seat) {
+                if !bb.folded
+                    && !bb.all_in
+                    && !bb.sitting_out
+                    && bb.stack > 0
+                    && !table.bb_action_taken
+                {
+                    round_complete = false;
+                    next = Some(bb_seat);
+                }
+            }
+        }
+    }
+
     for _ in 0..num_players {
         let p = table
             .players
@@ -359,8 +415,14 @@ fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<()
         if next.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
             next = Some(seat);
         }
+        let has_acted = (table.acted_seats & (1u32 << seat)) != 0;
         let matched_or_out =
-            p.folded || p.all_in || p.sitting_out || p.stack == 0 || p.bet_this_round == round_max;
+            p.folded
+                || p.all_in
+                || p.sitting_out
+                || p.stack == 0
+                || p.bet_this_round == round_max
+                || (!table.action_reopened && has_acted);
         if !matched_or_out {
             round_complete = false;
         }

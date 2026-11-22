@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, Env, Map, Symbol};
+use soroban_sdk::{
+    contracttype, Address, Env, InvokeError, IntoVal, Map, Symbol, Val, Vec as SorobanVec,
+};
 use crate::types::PokerTableError;
 
 /// Multi-currency support for buy-ins via Stellar anchors (Issue #193)
@@ -114,4 +116,64 @@ pub fn convert_to_base_token(
 /// Legacy convert_to_xlm
 pub fn convert_to_xlm(env: &Env, token: &Address, amount: i128) -> i128 {
     convert_to_base_token(env, 0, token, amount).unwrap_or(amount)
+}
+
+/// Try an SAC transfer. On freeze, clawback, or any transfer failure, keep the
+/// payout as an internal claimable balance and record the visible table deficit.
+pub fn safe_transfer(
+    env: &Env,
+    table_id: u32,
+    token: &Address,
+    from: &Address,
+    to: &Address,
+    amount: i128,
+) -> bool {
+    if amount <= 0 {
+        return true;
+    }
+    let mut args: SorobanVec<Val> = SorobanVec::new(env);
+    args.push_back(from.into_val(env));
+    args.push_back(to.into_val(env));
+    args.push_back(amount.into_val(env));
+    let transferred = env
+        .try_invoke_contract::<(), InvokeError>(
+            token,
+            &Symbol::new(env, "transfer"),
+            args,
+        )
+        .ok()
+        .and_then(|r| r.ok())
+        .is_some();
+
+    if transferred {
+        return true;
+    }
+
+    let claim_key = (Symbol::short("claim"), table_id, to.clone());
+    let prior: i128 = env.storage().persistent().get(&claim_key).unwrap_or(0);
+    env.storage()
+        .persistent()
+        .set(&claim_key, &(prior.saturating_add(amount)));
+    crate::ttl::bump_persistent(env, &claim_key, crate::ttl::TABLE);
+
+    let deficit_key = (Symbol::short("def"), table_id);
+    let prior_deficit: i128 = env.storage().instance().get(&deficit_key).unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&deficit_key, &prior_deficit.saturating_add(amount));
+    false
+}
+
+pub fn claimable_balance(env: &Env, table_id: u32, player: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&(Symbol::short("claim"), table_id, player.clone()))
+        .unwrap_or(0)
+}
+
+pub fn settlement_deficit(env: &Env, table_id: u32) -> i128 {
+    env.storage()
+        .instance()
+        .get(&(Symbol::short("def"), table_id))
+        .unwrap_or(0)
 }

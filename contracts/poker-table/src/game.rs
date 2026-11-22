@@ -141,7 +141,14 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         }
     }
     // commit_deal opens preflop left of here when a seat sits out (#859).
-    table.current_turn = bb_seat;
+    table.bb_action_taken = false;
+    table.acted_seats = 0;
+    table.action_reopened = false;
+    table.current_turn = if active_player_count_for_new_hand(table) == 2 {
+        sb_seat
+    } else {
+        bb_seat
+    };
 
     // A returning player posts the big blind they skipped, dead (into the pot,
     // not their bet), unless they post it as the big blind now (#859).
@@ -616,6 +623,11 @@ fn blind_seats(table: &TableState) -> Result<(u32, u32), PokerTableError> {
     };
     let bb_seat = next_active_seat(table, sb_seat).ok_or(PokerTableError::NotEnoughPlayers)?;
     Ok((sb_seat, bb_seat))
+}
+
+pub(crate) fn big_blind_seat(table: &TableState) -> Result<u32, PokerTableError> {
+    let (_, bb_seat) = blind_seats(table)?;
+    Ok(bb_seat)
 }
 
 /// Seats in the order they show their hole cards at showdown (#866): the last
