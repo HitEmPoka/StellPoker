@@ -431,6 +431,20 @@ pub(crate) async fn select_mpc_nodes(
             })?
     };
 
+    if !state.soroban_config.committee_registry_contract.is_empty() {
+        let epoch = soroban::fetch_current_epoch_from_registry(&state.soroban_config)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch committee epoch: {}", e);
+                StatusCode::SERVICE_UNAVAILABLE
+            })?
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        soroban::validate_epoch_members(&epoch, &all_nodes).map_err(|e| {
+            tracing::error!("Committee membership mismatch: {}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    }
+
     let healths = state.metrics.node_healths.lock().await;
     let mut healthy_members: Vec<soroban::CommitteeMember> = all_nodes
         .into_iter()

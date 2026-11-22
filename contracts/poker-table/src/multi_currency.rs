@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contracttype, Address, Env, InvokeError, IntoVal, Map, Symbol, Val, Vec as SorobanVec,
+    contracttype, token, Address, Env, InvokeError, IntoVal, Map, Symbol, Val, Vec as SorobanVec,
 };
 use crate::types::PokerTableError;
 
@@ -11,6 +11,8 @@ pub struct CurrencyInfo {
     pub token_address: Address,
     pub enabled: bool,
     pub oracle_address: Address, // Price oracle for conversion
+    /// SAC decimal scale. Poker amounts are normalized to the 7-decimal Stellar scale.
+    pub decimals: u32,
 }
 
 fn store_key(table_id: u32) -> (Symbol, u32) {
@@ -18,7 +20,11 @@ fn store_key(table_id: u32) -> (Symbol, u32) {
 }
 
 /// Whitelist a currency for a specific table
-pub fn whitelist_currency(env: &Env, table_id: u32, token: Address, oracle: Address) {
+pub fn whitelist_currency(env: &Env, table_id: u32, token: Address, oracle: Address) -> Result<(), PokerTableError> {
+    let decimals = token::Client::new(env, &token).decimals();
+    if decimals != 7 {
+        return Err(PokerTableError::UnsupportedTokenScale);
+    }
     let key = store_key(table_id);
     let mut currencies: Map<Address, CurrencyInfo> = env
         .storage()
@@ -31,15 +37,17 @@ pub fn whitelist_currency(env: &Env, table_id: u32, token: Address, oracle: Addr
             token_address: token.clone(),
             enabled: true,
             oracle_address: oracle,
+            decimals,
         },
     );
     env.storage().persistent().set(&key, &currencies);
     crate::ttl::bump_persistent(env, &key, crate::ttl::TABLE);
+    Ok(())
 }
 
 /// Legacy overload without table_id (defaults to table 0 for backwards compat)
 pub fn whitelist_currency_legacy(env: &Env, token: Address, oracle: Address) {
-    whitelist_currency(env, 0, token, oracle)
+    let _ = whitelist_currency(env, 0, token, oracle);
 }
 
 /// Remove a currency from whitelist
@@ -109,8 +117,16 @@ pub fn convert_to_base_token(
     }
     // Simplified 1:1 conversion for now; oracle lookup would be done off-chain or via
     // a proper Stellar oracle type conversion handling Address -> Val via env.invoke_contract
+    let info = currencies_for(env, table_id).get(token.clone()).ok_or(PokerTableError::InvalidBuyIn)?;
+    if info.decimals != 7 {
+        return Err(PokerTableError::UnsupportedTokenScale);
+    }
     let _ = get_currency_oracle(env, table_id, token);
     Ok(amount)
+}
+
+fn currencies_for(env: &Env, table_id: u32) -> Map<Address, CurrencyInfo> {
+    env.storage().persistent().get(&store_key(table_id)).unwrap_or(Map::new(env))
 }
 
 /// Legacy convert_to_xlm

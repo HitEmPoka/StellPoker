@@ -53,6 +53,7 @@
 //! ```
 
 use std::fs;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -63,6 +64,24 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 const MANIFEST: &str = "enrollment.json";
+
+/// A value that must never be rendered by a derived/debug log statement.
+/// Serialization remains available for the encrypted-at-rest ceremony file,
+/// while accidental `Debug` output only exposes the type name.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+struct Secret<T>(T);
+
+impl<T> Secret<T> {
+    fn new(value: T) -> Self { Self(value) }
+    fn expose(&self) -> &T { &self.0 }
+}
+
+impl<T> fmt::Debug for Secret<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -146,7 +165,7 @@ struct ShareFile {
     index: u8,
     threshold: u8,
     /// Hex-encoded 32-byte share.
-    share: String,
+    share: Secret<String>,
     /// Lets the holder confirm the share belongs to this node's ceremony.
     public_key: String,
 }
@@ -298,7 +317,7 @@ fn generate(
             node_id,
             index: *index,
             threshold,
-            share: hex::encode(share),
+            share: Secret::new(hex::encode(share)),
             public_key: public_key.clone(),
         };
         let path = out_dir.join(format!("share_{}.json", *index - 1));
@@ -350,7 +369,7 @@ fn combine_cmd(out_dir: PathBuf, share_paths: Vec<PathBuf>) -> Result<(), String
                 file.public_key
             ));
         }
-        let bytes = hex::decode(&file.share)
+        let bytes = hex::decode(file.share.expose())
             .map_err(|e| format!("bad share hex in {}: {e}", path.display()))?;
         collected.push((file.index, bytes));
     }
@@ -481,6 +500,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_debug_is_redacted_but_serialization_is_preserved() {
+        let secret = Secret::new("card-and-share-material".to_string());
+        assert_eq!(format!("{:?}", secret), "[REDACTED]");
+        let encoded = serde_json::to_string(&secret).unwrap();
+        assert_eq!(encoded, "\"card-and-share-material\"");
+    }
 
     #[test]
     fn gf_inverse_round_trips() {
