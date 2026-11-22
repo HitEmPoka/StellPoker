@@ -1,0 +1,34 @@
+name: Poseidon2 Vector Consistency
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  poseidon2-vectors:
+    name: Poseidon2 golden vector check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check poseidon2_vectors.json against Noir test vectors
+        run: python3 scripts/check_poseidon2_vectors.py
+
+      - name: Cache Nargo toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tmp_tools
+            .tmp_nargo_home
+          key: ${{ runner.os }}-nargo-1.0.0-beta.17
+
+      - name: Install Nargo
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
+          echo "$HOME/.nargo/bin" >> $GITHUB_PATH
+          $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
+
+      - name: Run Noir Poseidon2 vector tests
+        run: cd circuits/lib && nargo test test_vectors

@@ -1,0 +1,90 @@
+{
+  "version": "1",
+  "protocol_version": "1.0.0-beta.17",
+  "description": "Versioned golden vectors for Poseidon2 over BN254 as used in StellPoker. All values are hex-encoded BN254 field elements. The permutation is called with state_width=4 and message_length=4 via std::hash::poseidon2_permutation([a, b, c, d], 4). These vectors must be reproduced identically by the Noir circuit library (circuits/lib/src/commitments.nr), the Rust crate (stellar-zk-cards / contracts), and the Soroban host-function path. CI fails on any mismatch — see scripts/check_poseidon2_vectors.py.",
+  "hash_function": "poseidon2_permutation",
+  "curve": "BN254",
+  "state_width": 4,
+  "message_length": 4,
+  "padding": "zero-pad input to width 4",
+  "output": "first element of permuted state ([0])",
+  "poseidon2_hash_2_vectors": [
+    {
+      "id": "h2_zero_zero",
+      "description": "poseidon2_hash_2(0, 0)",
+      "a": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "b": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "0x18dfb8dc9b82229cff974efefc8df78b1ce96d9d844236b496785c698bc6732e"
+    },
+    {
+      "id": "h2_one_two",
+      "description": "poseidon2_hash_2(1, 2)",
+      "a": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "b": "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "expected": "0x299bfccd7daf3c917e51291383929049ec0eaed800af245056cbf135f7dea636"
+    },
+    {
+      "id": "h2_card42_salt",
+      "description": "poseidon2_hash_2(42, 123456789) — commit_card(42, salt)",
+      "a": "0x000000000000000000000000000000000000000000000000000000000000002a",
+      "b": "0x00000000000000000000000000000000000000000000000000000000075bcd15",
+      "expected": "0x0099f9683707b000b1548ce7fe591fd24627b10e4d458e300c84805d62da1850"
+    },
+    {
+      "id": "h2_max_field",
+      "description": "poseidon2_hash_2(BN254_MAX, BN254_MAX)",
+      "a": "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593efffffff",
+      "b": "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593efffffff",
+      "expected": "0x06397addc8a5333fa4b5a0535350f0fcc552495eac69acebffe527572d81d17d"
+    }
+  ],
+  "poseidon2_hash_3_vectors": [
+    {
+      "id": "h3_zero_zero_zero",
+      "description": "poseidon2_hash_3(0, 0, 0)",
+      "a": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "b": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "c": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "0x18dfb8dc9b82229cff974efefc8df78b1ce96d9d844236b496785c698bc6732e"
+    },
+    {
+      "id": "h3_one_two_three",
+      "description": "poseidon2_hash_3(1, 2, 3)",
+      "a": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "b": "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "c": "0x0000000000000000000000000000000000000000000000000000000000000003",
+      "expected": "0x27c494c0c0bcb07fb9734dd1c34d066a3fb293fe170e9575adeceed1abb08c94"
+    },
+    {
+      "id": "h3_seven_51_999",
+      "description": "poseidon2_hash_3(7, 51, 999)",
+      "a": "0x0000000000000000000000000000000000000000000000000000000000000007",
+      "b": "0x0000000000000000000000000000000000000000000000000000000000000033",
+      "c": "0x00000000000000000000000000000000000000000000000000000000000003e7",
+      "expected": "0x1286697c64ef4e0fabb8e24f679147ff78aa75b8cf3efb387969b9cf8fa9f74a"
+    }
+  ],
+  "commitment_vectors": [
+    {
+      "id": "commit_card_0_salt1",
+      "description": "commit_card(0, 1)",
+      "card": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "salt": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "expected": "0x2ce0b6fcd20887e7855e149803d635bdb8cde2ea352a880a3d935124fd780f73"
+    },
+    {
+      "id": "commit_card_42_salt",
+      "description": "commit_card(42, 123456789)",
+      "card": "0x000000000000000000000000000000000000000000000000000000000000002a",
+      "salt": "0x00000000000000000000000000000000000000000000000000000000075bcd15",
+      "expected": "0x0099f9683707b000b1548ce7fe591fd24627b10e4d458e300c84805d62da1850"
+    },
+    {
+      "id": "commit_card_51_salt",
+      "description": "commit_card(51, 999999921)",
+      "card": "0x0000000000000000000000000000000000000000000000000000000000000033",
+      "salt": "0x000000000000000000000000000000000000000000000000000000003ade68b1",
+      "expected": "0x1887d420b030e4562c4cd8b2b0b7576c37fcd26285e64762971af6f1833f1d92"
+    }
+  ]
+}
