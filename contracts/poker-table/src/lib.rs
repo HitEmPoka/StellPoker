@@ -3587,7 +3587,7 @@ impl PokerTableContract {
     ) -> Result<(), PokerTableError> {
         let table = load_table(&env, table_id)?;
         table.admin.require_auth();
-        multi_currency::whitelist_currency(&env, table_id, currency.clone(), oracle_address);
+        multi_currency::whitelist_currency(&env, table_id, currency.clone(), oracle_address)?;
         env.events().publish(
             (Symbol::new(&env, "currency_whitelisted"), table_id),
             currency,

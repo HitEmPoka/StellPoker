@@ -602,6 +602,8 @@ pub enum PokerTableError {
     // --- Tournament color-up (#870) ---
     /// Color-up rule has non-positive denomination or invalid level index.
     InvalidColorUpConfig = 129,
+    /// SAC token uses an unsupported decimal scale; amounts cannot be normalized safely.
+    UnsupportedTokenScale = 130,
 }
 
 /// A wallet's position at one table, as returned in bulk by

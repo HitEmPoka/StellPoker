@@ -403,6 +403,15 @@ pub struct CommitteeMember {
     pub slash_count: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitteeEpoch {
+    pub epoch_id: u32,
+    pub members: Vec<String>,
+    pub threshold: u32,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
+}
+
 /// Fetch all active committee members from the CommitteeRegistry contract.
 pub async fn fetch_active_nodes_from_registry(
     config: &SorobanConfig,
@@ -442,6 +451,40 @@ pub async fn fetch_active_nodes_from_registry(
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(&stdout)
         .map_err(|e| format!("Failed to parse members JSON: {}. Stdout: {}", e, stdout))
+}
+
+/// Fetch the registry's current epoch. Active membership alone is not enough:
+/// a newly registered node must not be selected until an epoch includes it.
+pub async fn fetch_current_epoch_from_registry(
+    config: &SorobanConfig,
+) -> Result<Option<CommitteeEpoch>, String> {
+    if config.committee_registry_contract.is_empty() {
+        return Err("Committee Registry contract address not configured".to_string());
+    }
+    let args = vec![
+        "contract", "invoke", "--id", &config.committee_registry_contract,
+        "--source", &config.secret_key, "--rpc-url", &config.rpc_url,
+        "--network-passphrase", &config.network_passphrase, "--", "get_current_epoch",
+    ];
+    let output = Command::new("stellar").args(args).output().await
+        .map_err(|e| format!("Failed to invoke stellar CLI: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("Failed to fetch current epoch: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse current epoch JSON: {e}. Stdout: {stdout}"))
+}
+
+/// Ensure every node selected from discovery belongs to the active on-chain
+/// epoch. This prevents a registered-but-not-yet-epoch member from proving.
+pub fn validate_epoch_members(epoch: &CommitteeEpoch, members: &[CommitteeMember]) -> Result<(), String> {
+    let expected: std::collections::HashSet<&str> = epoch.members.iter().map(String::as_str).collect();
+    let actual: std::collections::HashSet<&str> = members.iter().map(|m| m.address.as_str()).collect();
+    if expected != actual {
+        return Err(format!("committee epoch {} does not match discovered members", epoch.epoch_id));
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_u32_value(value: &serde_json::Value) -> Option<u32> {
