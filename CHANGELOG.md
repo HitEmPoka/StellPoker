@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **#884** Verifiable key-ceremony shares: `mpc-enroll` now deals Feldman shares over Ristretto255 and writes `commitments.json` with a transcript hash; new `mpc-enroll verify`; `combine` rejects a share that does not match the commitments; `committee-registry` gains `set_commitment_hash` / `get_commitment_hash` so the transcript hash is queryable on-chain (cleared on deregistration or re-registration); `mpc_node::crypto::feldman::verify_before_deal` is the session-start check (not yet wired into node startup). Pre-existing GF(256) ceremonies still combine but cannot be verified. Docs in `docs/mpc-key-enrollment.md`
+- **#886** Peak-memory tracking for the MPC deal benchmark: `DealBenchmark.peak_rss_kib`, per-player-count peaks in the benchmark stats, `MPC_BENCH_MAX_RSS_MIB` budget with `check_peak_memory` / `assert_peak_memory`, and a memory-requirements section in `circuits/BENCHMARKS.md` (table values still to be measured; witness streaming itself is not implemented)
 - **#639** Documented felt/deck CSS variable contract for community themes (`docs/community-themes.md`), added an example `neon-noir` theme, wired card backs to `--card-back-*` variables, and validate all built-in/community themes in CI (`scripts/validate-themes.mjs`)
 - **#622** Seats play an arrival animation when a player sits down (`seat-arrive`, disabled under `prefers-reduced-motion`); e2e test for the join-by-ID flow
 - **#623** Documented repaint-cost and OLED dark-theme tradeoffs in `docs/pixel-art-theme-guide.md` (section 9); no rendering change

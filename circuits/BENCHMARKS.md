@@ -106,6 +106,63 @@ Opcodes** column: each backend gate translates to a fixed number of host
 function invocations. Fill in the actual gas cost after profiling on
 testnet.
 
+
+---
+
+## Memory Requirements
+
+`showdown_valid` is the largest circuit, and a six-player showdown has the most
+inputs to hold at once, so it sets the memory floor for a committee node. Peak
+resident memory (RSS) is tracked separately from the gate counts below because
+it is what decides whether a modest node survives a showdown.
+
+### What limits memory today
+
+On Linux, each `co-noir` subprocess a node starts (witness generation and
+proving) has its address space capped with `RLIMIT_AS` at `SESSION_MAX_MEMORY_MB`,
+default **4096 MiB** (`services/node/src/limits.rs`). A phase that needs more than
+the cap fails to allocate and the session errors out. The cap counts address
+space, which is at least as large as resident memory, so compare the figures
+below against it with some headroom, and against the node's RAM.
+
+### Measuring peak memory
+
+Measure on the reference hardware listed under *Methodology*, one circuit and
+player count at a time, from a cold start so earlier runs do not inflate the
+high-water mark.
+
+| What | How |
+| --- | --- |
+| Witness generation, per circuit | `/usr/bin/time -v co-noir generate-witness ...` and read *Maximum resident set size (kbytes)* |
+| Proving, per circuit | `/usr/bin/time -v bb prove --scheme ultra_honk ...` and read the same line |
+| Live nodes, per session phase | `PhaseProfile.peak_memory_bytes` for the `witness_generation` and `proof_generation` phases (see `services/node/docs/PROFILING.md`) |
+| Coordinator benchmark | `DealBenchmark.peak_rss_kib` in `GET /api/benchmarks`; fold a node's figure in with `BenchmarkSession::record_peak_rss_kib` |
+
+To make a benchmark run fail on a memory regression, set
+`MPC_BENCH_MAX_RSS_MIB` and check each finished deal with
+`mpc_benchmark::check_peak_memory` (or `assert_peak_memory`, which panics). With
+the variable unset there is no budget, so nothing fails.
+
+### Memory table
+
+The memory columns are **not yet measured**: they have to be filled in from runs
+of the commands above on the reference hardware, and are left blank rather than
+estimated. The gate counts are the ones from the Constraint Table below.
+
+| Circuit | Players | Backend gates | Witness peak RSS | Proving peak RSS | Fits 4096 MiB cap |
+| --- | ---: | ---: | --- | --- | --- |
+| `showdown_valid` | up to 6 | 34 645 | _to measure_ | _to measure_ | _to measure_ |
+| `showdown_valid_2p` | 2 | n/a | _to measure_ | _to measure_ | _to measure_ |
+| `showdown_valid_3p` | 3 | n/a | _to measure_ | _to measure_ | _to measure_ |
+| `showdown_valid_4p` | 4 | n/a | _to measure_ | _to measure_ | _to measure_ |
+| `showdown_valid_5p` | 5 | n/a | _to measure_ | _to measure_ | _to measure_ |
+| `showdown_valid_6p` | 6 | n/a | _to measure_ | _to measure_ | _to measure_ |
+
+> **Note:** Streaming the witness into the prover instead of materialising it in
+> full is a change to `co-noir` / Barretenberg, which this repository only
+> invokes as subprocesses. What lives here is the measurement and the budget
+> check that make a memory regression visible.
+
 ---
 
 ## Results
