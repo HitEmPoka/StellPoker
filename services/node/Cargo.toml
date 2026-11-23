@@ -32,6 +32,9 @@ sysinfo = "0.37"
 # Key enrollment ceremony CLI (`mpc-enroll`, Issue #247)
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+# Ristretto255 group for the Feldman commitments in `crypto::feldman` (#884).
+# Already in the lockfile via ed25519-dalek, so this adds no new crate.
+curve25519-dalek = "4"
 stellar-strkey = "0.0.13"
 
 [target.'cfg(unix)'.dependencies]
