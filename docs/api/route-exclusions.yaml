@@ -1,4 +1,4 @@
-﻿# Routes intentionally absent from docs/openapi.yaml.
+# Routes intentionally absent from docs/openapi.yaml.
 #
 # The coordinator's production router is assembled in
 # services/coordinator/src/main.rs. Every registered route must either have an

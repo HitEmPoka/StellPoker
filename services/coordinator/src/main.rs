@@ -1,4 +1,4 @@
-﻿//! Stellar Poker MPC Coordinator Service
+//! Stellar Poker MPC Coordinator Service
 //!
 //! This service orchestrates the MPC committee for:
 //! 1. Distributed share preparation across all MPC nodes (coNoir split-input)
