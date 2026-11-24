@@ -13,7 +13,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 regex = "1"
 base64 = "0.22"
 tempfile = "3"
-rand = "0.8"
+rand = "0.10"
 ark-ff = "0.4"
 ark-bn254 = "0.4"
 hex = "0.4"
