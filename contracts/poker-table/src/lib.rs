@@ -1787,6 +1787,19 @@ impl PokerTableContract {
             return Err(PokerTableError::ShowdownProofVerificationFailed);
         }
 
+        // Issue #890: record the VK version that proved this settlement. The
+        // verifier stores the mapping when verification succeeds; querying it
+        // by proof hash lets observers audit which circuit version settled
+        // the hand even across a rotation grace window.
+        let proof_hash: BytesN<32> = env.crypto().keccak256(&proof).into();
+        let vk_version = verifier_client
+            .get_proof_vk_version(&proof_hash)
+            .unwrap_or(0);
+        env.events().publish(
+            (Symbol::new(&env, "settlement_vk_version"), table_id),
+            (table.hand_number, vk_version),
+        );
+
         let winner_index = extract_u32_from_public_inputs(&public_inputs, 25);
         let tie_mask = extract_u32_from_public_inputs(&public_inputs, 26);
 

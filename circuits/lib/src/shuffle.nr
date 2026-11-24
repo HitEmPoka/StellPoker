@@ -1,5 +1,3 @@
-use crate::cards;
-
 /// Derive the final secret deck and salts from all three party contributions,
 /// starting from an arbitrary canonical deck arrangement.
 ///
@@ -62,13 +60,41 @@ pub fn derive_shared_deck_and_salts<let N: u32>(
     )
 }
 
-fn assert_valid_permutation<let N: u32>(permutation: [u32; N]) {
-    let mut as_fields: [Field; N] = [0; N];
+/// Boolean form of the permutation check used by the circuit and by the deal
+/// fuzz harness. A `seen` array makes this O(N) while remaining exactly
+/// equivalent to range-checking every index and asserting all values differ.
+pub fn is_valid_permutation<let N: u32>(permutation: [u32; N]) -> bool {
+    let mut seen: [bool; N] = [false; N];
     for i in 0..N {
-        assert(permutation[i] < N, "permutation index out of range");
-        as_fields[i] = permutation[i] as Field;
+        let index = permutation[i];
+        if index >= N {
+            return false;
+        }
+        if seen[index] {
+            return false;
+        }
+        seen[index] = true;
     }
-    cards::assert_all_unique(as_fields);
+    true
+}
+
+pub fn assert_valid_permutation<let N: u32>(permutation: [u32; N]) {
+    assert(is_valid_permutation(permutation), "permutation index out of range or duplicate");
+}
+
+#[test]
+fn test_is_valid_permutation() {
+    let mut perm: [u32; 52] = [0; 52];
+    for i in 0..52 {
+        perm[i] = i as u32;
+    }
+    assert(is_valid_permutation(perm));
+    let mut duplicated = perm;
+    duplicated[1] = duplicated[0];
+    assert(!is_valid_permutation(duplicated));
+    let mut out_of_range = perm;
+    out_of_range[1] = 52;
+    assert(!is_valid_permutation(out_of_range));
 }
 
 fn apply_permutation<let N: u32>(deck: [Field; N], permutation: [u32; N]) -> [Field; N] {

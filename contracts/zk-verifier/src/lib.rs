@@ -106,6 +106,10 @@ pub enum VerifierError {
     StaleCircuitId = 21,
     UnknownId = 22,
     StaleId = 23,
+    // VK version registry and grace-period retirement (Issue #890).
+    InvalidGracePeriod = 24,
+    VkVersionNotFound = 25,
+    VkVersionRetired = 26,
 }
 
 #[contracttype]
@@ -161,7 +165,20 @@ pub enum StorageKey {
     CircuitStatus(u32),
     /// Per-reason failure counter, incremented on each verification failure.
     FailureCounter(FailureReason),
+    /// Archived verification-key versions: (circuit_id, version).
+    VkByVersion(u32, u32),
+    /// The version currently accepting *new* hands for a circuit ID.
+    ActiveVkVersion(u32),
+    /// Admin-configured number of ledgers a retired VK remains usable for
+    /// already-dealt hands.
+    VkGracePeriod,
+    /// VK version used for a successfully verified proof hash (audit trail).
+    ProofVkVersion(BytesN<32>),
 }
+
+/// Default grace window. In-flight hands started before a rotation can still
+/// settle with the previous VK until `retired_at + grace_period`.
+pub const DEFAULT_VK_GRACE_LEDGERS: u32 = 100;
 
 /// Versioned registry entry for a circuit verification key. The content hash
 /// lets deploy tooling and clients pin the exact VK, while `activated_at`
@@ -173,6 +190,19 @@ pub struct VerificationKeyEntry {
     pub version: u32,
     pub activated_at: u32,
     pub vk_data: Bytes,
+}
+
+/// An archived, version-pinned verification key. Retired versions stay
+/// readable for the grace window so hands that started under them can finish;
+/// once `now >= retired_at + grace_period` they are rejected permanently.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VkVersionRecord {
+    pub entry: VerificationKeyEntry,
+    pub status: CircuitStatus,
+    /// Ledger at which this version stopped accepting new hands. `0` while
+    /// the version is active (ledger sequences start at 1).
+    pub retired_at: u32,
 }
 
 /// A contract upgrade proposed through the governance path (Issue #504).
@@ -208,6 +238,92 @@ pub enum FailureReason {
 
 #[contractimpl]
 impl ZkVerifierContract {
+    // ====================================================================
+    // Helpers — versioned VK registry (Issue #890)
+    // ====================================================================
+
+    /// Grace window in ledgers; defaults to 100 on initialize.
+    fn vk_grace_period(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get::<StorageKey, u32>(&StorageKey::VkGracePeriod)
+            .unwrap_or(DEFAULT_VK_GRACE_LEDGERS)
+    }
+
+    /// Version accepting new hands. Falls back to the raw entry version for
+    /// keys registered before the version registry existed.
+    fn active_version(env: &Env, circuit_id: u32) -> Option<u32> {
+        if let Some(version) = env
+            .storage()
+            .persistent()
+            .get::<StorageKey, u32>(&StorageKey::ActiveVkVersion(circuit_id))
+        {
+            return Some(version);
+        }
+        Self::load_raw_vk_entry(env, circuit_id).map(|entry| entry.version)
+    }
+
+    /// Archive the currently active key before a newer version replaces it.
+    /// The old version is marked `Stale` immediately and its retirement clock
+    /// starts at the activation ledger of the replacement.
+    fn archive_active_vk(env: &Env, circuit_id: u32) {
+        let Some(entry) = Self::load_raw_vk_entry(env, circuit_id) else {
+            return;
+        };
+        let version = Self::active_version(env, circuit_id).unwrap_or(entry.version);
+        let key = StorageKey::VkByVersion(circuit_id, version);
+        let already_archived = env
+            .storage()
+            .persistent()
+            .get::<StorageKey, VkVersionRecord>(&key)
+            .is_some();
+        if !already_archived {
+            env.storage().persistent().set(
+                &key,
+                &VkVersionRecord {
+                    entry,
+                    status: CircuitStatus::Stale,
+                    retired_at: env.ledger().sequence(),
+                },
+            );
+        }
+    }
+
+    /// Persist a newly activated version in both the active slot and the
+    /// version archive, and mark the circuit ID active again.
+    fn store_active_vk(env: &Env, circuit_id: u32, entry: VerificationKeyEntry) {
+        let version = entry.version;
+        env.storage()
+            .persistent()
+            .set(&StorageKey::VkById(circuit_id), &entry);
+        env.storage()
+            .persistent()
+            .set(&StorageKey::ActiveVkVersion(circuit_id), &version);
+        env.storage().persistent().set(
+            &StorageKey::VkByVersion(circuit_id, version),
+            &VkVersionRecord {
+                entry: entry.clone(),
+                status: CircuitStatus::Active,
+                retired_at: 0,
+            },
+        );
+        env.storage().persistent().set(
+            &StorageKey::CircuitStatus(circuit_id),
+            &CircuitStatus::Active,
+        );
+    }
+
+    /// A version may settle an in-flight hand while it is active, or while it
+    /// is stale but still inside the grace window. Explicitly deprecated
+    /// circuit IDs and versions past grace are rejected.
+    fn version_is_usable(record: &VkVersionRecord, now: u32, grace: u32) -> bool {
+        match record.status {
+            CircuitStatus::Active => true,
+            CircuitStatus::Stale => record.retired_at == 0 || now < record.retired_at.saturating_add(grace),
+            CircuitStatus::Deprecated => false,
+        }
+    }
+
     /// Increment the labeled failure counter for `reason` and emit
     /// `proof_verification_failed` with the reason and new count. Called on
     /// every verification failure path so dashboards/alerts can break
@@ -239,6 +355,13 @@ impl ZkVerifierContract {
         }
         admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&StorageKey::VkGracePeriod, &DEFAULT_VK_GRACE_LEDGERS);
+        env.events().publish(
+            (Symbol::new(&env, "vk_grace_configured"),),
+            DEFAULT_VK_GRACE_LEDGERS,
+        );
         Ok(())
     }
 
@@ -419,19 +542,19 @@ impl ZkVerifierContract {
             vk_data,
         };
 
-        if let Some(current) = env
-            .storage()
-            .persistent()
-            .get::<StorageKey, VerificationKeyEntry>(&StorageKey::Vk(circuit.clone()))
-        {
+        let circuit_id = circuit.default_id();
+        if let Some(current) = Self::load_raw_vk_entry(&env, circuit_id) {
             if version <= current.version {
                 return Err(VerifierError::InvalidVkVersion);
             }
         }
 
+        // Issue #890: keep the old key queryable for in-flight hands.
+        Self::archive_active_vk(&env, circuit_id);
         env.storage()
             .persistent()
-            .set(&StorageKey::Vk(circuit.clone()), &entry);
+            .set(&StorageKey::Vk(circuit.clone()), &entry.clone());
+        Self::store_active_vk(&env, circuit_id, entry.clone());
 
         env.events().publish(
             (Symbol::new(&env, "vk_set"), circuit),
@@ -449,6 +572,116 @@ impl ZkVerifierContract {
             .persistent()
             .get(&StorageKey::Vk(circuit))
             .ok_or(VerifierError::NoVkForCircuit)
+    }
+
+    // ====================================================================
+    // Versioned VK registry and grace-period retirement (Issue #890)
+    // ====================================================================
+
+    /// Configure the number of ledgers a retired VK remains valid for hands
+    /// that started before the rotation (admin only). Must be non-zero.
+    pub fn configure_vk_grace_period(
+        env: Env,
+        admin: Address,
+        grace_ledgers: u32,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if !ct_address_eq(&env, &admin, &stored_admin) {
+            return Err(VerifierError::NotAdmin);
+        }
+        if grace_ledgers == 0 {
+            return Err(VerifierError::InvalidGracePeriod);
+        }
+        env.storage()
+            .instance()
+            .set(&StorageKey::VkGracePeriod, &grace_ledgers);
+        env.events().publish(
+            (Symbol::new(&env, "vk_grace_configured"),),
+            grace_ledgers,
+        );
+        Ok(())
+    }
+
+    /// View the configured VK retirement grace window.
+    pub fn get_vk_grace_period(env: Env) -> u32 {
+        Self::vk_grace_period(&env)
+    }
+
+    /// Begin retiring a specific archived version (admin only). The version
+    /// remains usable for in-flight hands until `now + grace_period`, then
+    /// `verify_proof_by_id_version` rejects it with `VkVersionRetired`.
+    pub fn retire_vk_version(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+        version: u32,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if !ct_address_eq(&env, &admin, &stored_admin) {
+            return Err(VerifierError::NotAdmin);
+        }
+        let key = StorageKey::VkByVersion(circuit_id, version);
+        let mut record: VkVersionRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(VerifierError::VkVersionNotFound)?;
+        if record.status == CircuitStatus::Active {
+            record.status = CircuitStatus::Stale;
+        }
+        if record.retired_at == 0 {
+            record.retired_at = env.ledger().sequence();
+        }
+        env.storage().persistent().set(&key, &record);
+        env.events().publish(
+            (Symbol::new(&env, "vk_version_retirement_scheduled"), circuit_id),
+            (version, record.retired_at),
+        );
+        Ok(())
+    }
+
+    /// Alias for `retire_vk_version` used by rotation runbooks.
+    pub fn schedule_vk_retirement(
+        env: Env,
+        admin: Address,
+        circuit_id: u32,
+        version: u32,
+    ) -> Result<(), VerifierError> {
+        Self::retire_vk_version(env, admin, circuit_id, version)
+    }
+
+    /// Read an archived VK version record (including retired ones).
+    pub fn get_vk_version_record(
+        env: Env,
+        circuit_id: u32,
+        version: u32,
+    ) -> Result<VkVersionRecord, VerifierError> {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::VkByVersion(circuit_id, version))
+            .ok_or(VerifierError::VkVersionNotFound)
+    }
+
+    /// Version currently accepting new hands for a circuit ID.
+    pub fn get_active_vk_version(env: Env, circuit_id: u32) -> Result<u32, VerifierError> {
+        Self::active_version(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)
+    }
+
+    /// VK version recorded for a successful proof (settlement audit trail).
+    pub fn get_proof_vk_version(env: Env, proof_hash: BytesN<32>) -> Option<u32> {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::ProofVkVersion(proof_hash))
     }
 
     /// Verify an UltraHonk proof for a given circuit type.
@@ -513,14 +746,23 @@ impl ZkVerifierContract {
             return Ok(false);
         }
 
-        // Store proof hash for auditability
+        // Store proof hash and the VK version that proved it. Settlements use
+        // this mapping to record which circuit version settled the hand.
         let proof_hash = env.crypto().keccak256(&proof);
         env.storage()
             .persistent()
             .set(&StorageKey::ProofVerified(proof_hash.clone().into()), &true);
+        env.storage().persistent().set(
+            &StorageKey::ProofVkVersion(proof_hash.clone().into()),
+            &vk_entry.version,
+        );
 
         env.events()
-            .publish((Symbol::new(&env, "proof_verified"),), proof_hash);
+            .publish((Symbol::new(&env, "proof_verified"),), proof_hash.clone());
+        env.events().publish(
+            (Symbol::new(&env, "proof_verified_with_vk"),),
+            (proof_hash, vk_entry.version),
+        );
 
         Ok(true)
     }
@@ -839,14 +1081,9 @@ impl ZkVerifierContract {
             vk_data,
         };
 
-        env.storage()
-            .persistent()
-            .set(&StorageKey::VkById(circuit_id), &entry);
-
-        env.storage().persistent().set(
-            &StorageKey::CircuitStatus(circuit_id),
-            &CircuitStatus::Active,
-        );
+        // Preserve the outgoing key before switching over (Issue #890).
+        Self::archive_active_vk(&env, circuit_id);
+        Self::store_active_vk(&env, circuit_id, entry.clone());
 
         env.events().publish(
             (Symbol::new(&env, "vk_updated"), circuit_id),
@@ -1042,18 +1279,38 @@ impl ZkVerifierContract {
         })
     }
 
-    /// Verify an UltraHonk proof using VK looked up by circuit ID.
-    ///
-    /// 1. Rejects if contract is paused (`ContractPaused`)
-    /// 2. Validates proof size (`ProofSizeError`)
-    /// 3. Looks up VK by ID (`UnknownCircuitId` or `StaleCircuitId`)
-    /// 4. Verifies proof with UltraHonk
-    /// 5. Stores proof hash in persistent storage
+    /// Verify an UltraHonk proof using the active VK for a circuit ID. New
+    /// hands must use this path; hands started before a rotation pin their
+    /// version and call `verify_proof_by_id_version` instead.
     pub fn verify_proof_by_id(
         env: Env,
         circuit_id: u32,
         proof: Bytes,
         public_inputs: Bytes,
+    ) -> Result<bool, VerifierError> {
+        // New hands are not accepted for a stale/deprecated circuit ID. Hands
+        // already in flight use the explicit-version path below during grace.
+        let circuit_status = env
+            .storage()
+            .persistent()
+            .get::<StorageKey, CircuitStatus>(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+        if circuit_status == CircuitStatus::Stale || circuit_status == CircuitStatus::Deprecated {
+            return Err(VerifierError::StaleCircuitId);
+        }
+        let version = Self::active_version(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
+        Self::verify_proof_by_id_version(env, circuit_id, proof, public_inputs, version)
+    }
+
+    /// Verify a proof against an explicit VK version. This is the grace-window
+    /// path: an already-dealt hand may finish with the key it started under
+    /// until `retired_at + grace_period`. Retired versions are rejected.
+    pub fn verify_proof_by_id_version(
+        env: Env,
+        circuit_id: u32,
+        proof: Bytes,
+        public_inputs: Bytes,
+        version: u32,
     ) -> Result<bool, VerifierError> {
         if env
             .storage()
@@ -1068,11 +1325,51 @@ impl ZkVerifierContract {
             return Err(VerifierError::ProofSizeError);
         }
 
-        let vk_entry = Self::get_vk_by_id(env.clone(), circuit_id)?;
+        // A deliberately deprecated circuit ID cannot be used even in grace.
+        let circuit_status = env
+            .storage()
+            .persistent()
+            .get::<StorageKey, CircuitStatus>(&StorageKey::CircuitStatus(circuit_id))
+            .unwrap_or(CircuitStatus::Active);
+        if circuit_status == CircuitStatus::Deprecated {
+            return Err(VerifierError::StaleCircuitId);
+        }
 
-        let verifier = UltraHonkVerifier::new(&env, &vk_entry.vk_data)
+        let active_version =
+            Self::active_version(&env, circuit_id).ok_or(VerifierError::UnknownCircuitId)?;
+        if version > active_version {
+            return Err(VerifierError::VkVersionNotFound);
+        }
+
+        let version_key = StorageKey::VkByVersion(circuit_id, version);
+        let record = match env
+            .storage()
+            .persistent()
+            .get::<StorageKey, VkVersionRecord>(&version_key)
+        {
+            Some(record) => record,
+            None => {
+                // Legacy keys created before version pinning are treated as
+                // the current active version.
+                if version != active_version {
+                    return Err(VerifierError::VkVersionNotFound);
+                }
+                let entry = Self::load_raw_vk_entry(&env, circuit_id)
+                    .ok_or(VerifierError::UnknownCircuitId)?;
+                VkVersionRecord {
+                    entry,
+                    status: CircuitStatus::Active,
+                    retired_at: 0,
+                }
+            }
+        };
+
+        if !Self::version_is_usable(&record, env.ledger().sequence(), Self::vk_grace_period(&env)) {
+            return Err(VerifierError::VkVersionRetired);
+        }
+
+        let verifier = UltraHonkVerifier::new(&env, &record.entry.vk_data)
             .map_err(|_| VerifierError::VkParseError)?;
-
         verifier
             .verify(&proof, &public_inputs)
             .map_err(|_| VerifierError::VerificationFailed)?;
@@ -1081,10 +1378,18 @@ impl ZkVerifierContract {
         env.storage()
             .persistent()
             .set(&StorageKey::ProofVerified(proof_hash.clone().into()), &true);
+        env.storage().persistent().set(
+            &StorageKey::ProofVkVersion(proof_hash.clone().into()),
+            &version,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "proof_verified_by_id"), circuit_id),
-            proof_hash,
+            proof_hash.clone(),
+        );
+        env.events().publish(
+            (Symbol::new(&env, "proof_verified_with_vk"), circuit_id),
+            (proof_hash, version),
         );
 
         Ok(true)
@@ -1715,5 +2020,134 @@ mod test {
         let result = client.try_verify_proof(&CircuitType::DealValid, &proof, &public_inputs);
         assert_eq!(result, Err(Ok(VerifierError::ContractPaused)));
         assert_eq!(client.get_failure_count(&FailureReason::BadProof), 2);
+    }
+
+    // ------------------------------------------------------------------
+    // VK version registry and grace window (Issue #890)
+    // ------------------------------------------------------------------
+
+    fn full_proof(env: &Env) -> Bytes {
+        let mut proof = Bytes::new(env);
+        for _ in 0..PROOF_BYTES {
+            proof.push_back(0u8);
+        }
+        proof
+    }
+
+    #[test]
+    fn test_vk_grace_period_configuration() {
+        let (env, client, admin) = setup();
+        assert_eq!(client.get_vk_grace_period(), DEFAULT_VK_GRACE_LEDGERS);
+
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_configure_vk_grace_period(&stranger, &5),
+            Err(Ok(VerifierError::NotAdmin))
+        );
+        assert_eq!(
+            client.try_configure_vk_grace_period(&admin, &0),
+            Err(Ok(VerifierError::InvalidGracePeriod))
+        );
+
+        client.configure_vk_grace_period(&admin, &5);
+        assert_eq!(client.get_vk_grace_period(), 5);
+    }
+
+    #[test]
+    fn test_rotation_archives_previous_vk_version() {
+        let (env, client, admin) = setup();
+        let circuit_id = 400;
+
+        env.ledger().set_sequence_number(10);
+        client.update_vk(&admin, &circuit_id, &dummy_vk(&env, 1), &1);
+
+        env.ledger().set_sequence_number(20);
+        client.update_vk(&admin, &circuit_id, &dummy_vk(&env, 2), &2);
+
+        let old = client.get_vk_version_record(&circuit_id, &1);
+        assert_eq!(old.status, CircuitStatus::Stale);
+        assert_eq!(old.retired_at, 20);
+        assert_eq!(old.entry.version, 1);
+
+        let current = client.get_vk_version_record(&circuit_id, &2);
+        assert_eq!(current.status, CircuitStatus::Active);
+        assert_eq!(current.retired_at, 0);
+        assert_eq!(client.get_active_vk_version(&circuit_id), 2);
+
+        // Unknown archived versions are explicit errors, not silent fallbacks.
+        assert_eq!(
+            client.try_get_vk_version_record(&circuit_id, &3),
+            Err(Ok(VerifierError::VkVersionNotFound))
+        );
+    }
+
+    #[test]
+    fn test_in_flight_hand_finishes_under_old_vk_during_grace() {
+        let (env, client, admin) = setup();
+        env.cost_estimate().budget().reset_unlimited();
+        let circuit_id = 401;
+        client.configure_vk_grace_period(&admin, &5);
+
+        env.ledger().set_sequence_number(10);
+        client.update_vk(&admin, &circuit_id, &dummy_vk(&env, 1), &1);
+        env.ledger().set_sequence_number(12);
+        client.update_vk(&admin, &circuit_id, &dummy_vk(&env, 2), &2);
+
+        let proof = full_proof(&env);
+        let inputs = Bytes::new(&env);
+
+        // The hand started under v1: during grace the old key is still tried.
+        // A dummy proof fails verification, but it is not rejected as retired.
+        let in_flight = client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &1);
+        assert_eq!(in_flight, Err(Ok(VerifierError::VerificationFailed)));
+
+        // Grace elapsed: the retired version is rejected before verification.
+        env.ledger().set_sequence_number(18);
+        let after_grace = client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &1);
+        assert_eq!(after_grace, Err(Ok(VerifierError::VkVersionRetired)));
+
+        // The active version is still usable (and still rejects the dummy proof).
+        let active = client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &2);
+        assert_eq!(active, Err(Ok(VerifierError::VerificationFailed)));
+        assert_eq!(
+            client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &3),
+            Err(Ok(VerifierError::VkVersionNotFound))
+        );
+    }
+
+    #[test]
+    fn test_manual_retirement_starts_new_grace_window() {
+        let (env, client, admin) = setup();
+        env.cost_estimate().budget().reset_unlimited();
+        let circuit_id = 402;
+
+        env.ledger().set_sequence_number(10);
+        client.update_vk(&admin, &circuit_id, &dummy_vk(&env, 1), &1);
+        env.ledger().set_sequence_number(12);
+        client.retire_vk_version(&admin, &circuit_id, &1);
+
+        let record = client.get_vk_version_record(&circuit_id, &1);
+        assert_eq!(record.status, CircuitStatus::Stale);
+        assert_eq!(record.retired_at, 12);
+
+        let proof = full_proof(&env);
+        let inputs = Bytes::new(&env);
+        env.ledger().set_sequence_number(14);
+        assert_eq!(
+            client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &1),
+            Err(Ok(VerifierError::VerificationFailed))
+        );
+
+        env.ledger().set_sequence_number(113);
+        assert_eq!(
+            client.try_verify_proof_by_id_version(&circuit_id, &proof, &inputs, &1),
+            Err(Ok(VerifierError::VkVersionRetired))
+        );
+
+        let stranger = Address::generate(&env);
+        assert_eq!(
+            client.try_retire_vk_version(&stranger, &circuit_id, &1),
+            Err(Ok(VerifierError::NotAdmin))
+        );
     }
 }

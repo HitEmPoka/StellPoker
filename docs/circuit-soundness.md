@@ -197,6 +197,112 @@ uniquely determined and always satisfiable.
 
 ---
 
+## 4. Chip numeric domain (Issue #889)
+
+### Domain
+
+All chip amounts are unsigned 64-bit integers:
+
+```
+0 <= amount <= 2^64 - 1 = 18_446_744_073_709_551_615
+```
+
+Noir stores witness values as field elements, so a bare `Field` amount has no
+integer bound: `2^64`, `p - 1`, or any other field-wrapped value can satisfy an
+equality that only holds modulo the BN254 scalar field. The shared module
+`circuits/lib/src/chips.nr` performs a 64-bit big-endian decomposition and
+reconstruction (`assert_chip_amount`), which is unsatisfiable outside the
+domain because `2^64 << p`.
+
+### Circuits covered
+
+| Circuit | Amounts checked |
+|---|---|
+| `pot_calculation` | bets, side pots, rake, public pot total, aggregate bets |
+| `chip_consistency` | stacks, pot, rake, buy-ins (private and public), aggregate |
+| `side_pot_valid`, `split_pot_valid`, `odd_chip_valid` | `u32` amounts are already contained in the 64-bit domain |
+
+`showdown_valid` does not consume chip amounts; its state is bound to the
+committed deck and hand scores only. It is therefore unaffected by this
+domain constraint.
+
+### Boundary tests
+
+`chips.nr`, `pot_calculation` and `chip_consistency` include explicit tests for
+zero, `2^64 - 1`, `2^64`, field-wrapped values and aggregates that exceed the
+domain. Values above the maximum must abort with
+`chip amount exceeds 64-bit chip domain`.
+
+### Constraint impact
+
+Each `assert_chip_amount` adds a 64-bit witness decomposition. The
+`pot_calculation` and `chip_consistency` circuits were added to
+`scripts/circuit_constraints.py`'s default set and to
+`circuits/constraint-budgets.json`; CI publishes the ACIR and backend gate
+counts so the per-circuit overhead is measured on every circuit change. Keep
+the published totals below `2^64` — a sum of several maximal amounts is a new
+aggregate that is itself range-checked.
+
+---
+
+## 5. Deal witness fuzzing (Issue #888)
+
+`deal_valid` accepts a private packed deck, three permutation shares and a
+VRF output bound to its public inputs. Encode-layer corruption is rejected by
+the ABI, but semantic corruption — duplicate permutations, out-of-range card
+indices, and reordered salt shares — must be rejected by the circuit's own
+constraints.
+
+`circuits/lib/src/deal_fuzz.nr` provides a deterministic well-typed generator
+and an O(N) validity predicate that mirrors those constraints. Seven mutation
+classes are exercised:
+
+| Seed class | Mutation | Expected |
+|---|---|---|
+| 0 | none | valid |
+| 1 | duplicate entry in party 0 permutation | rejected |
+| 2 | out-of-range canonical card index in party 1 | rejected |
+| 3 | duplicate entry in party 2 permutation | rejected |
+| 4 | player count above 6 | rejected |
+| 5 | reordered salt assignment | valid |
+| 6+ | repeat cycle with new PRNG state | deterministic |
+
+`circuits/deal_valid_fuzz` executes 10,000 cases (`FUZZ_RUNS`). The job
+`.github/workflows/circuit-benchmarks.yml#deal-valid-fuzz` runs on every
+circuit change, on PRs and nightly via `scripts/fuzz-deal-valid.sh`. On any
+mismatch the circuit prints `deal_valid fuzz mismatch at seed <N>` and returns
+`N + 1`; CI fails and the seed can be replayed locally with the same generator.
+The harness targets witness validation (permutations/deck/player count); the
+VRF binding is covered by `deal_valid`'s dedicated tests because its equality
+constraint is independent of witness shape.
+
+The fuzz harness itself is not a proving circuit used in production — it is a
+test circuit with a non-zero failure return value — so it is excluded from the
+VK registry and constraint budgets.
+
+---
+
+## 6. Wallet action authorization (Issue #891)
+
+`action_order` now requires a valid P-256 signature over a Blake2s message
+binding `chain_id`, `table_id`, `hand_commitment`, `action`, `amount`, `nonce`
+and `expiry`. `circuits/lib/src/wallet_auth.nr` exposes `action_message`,
+`is_authorized_wallet` and `assert_authorized_wallet`; the calling circuit must
+bind the supplied public key to the acting seat's wallet identity. Invalid
+signatures abort with `invalid wallet authorization`, and negative tests cover
+both bad signatures and expired/zero-nonce authorizations.
+
+Replay protection: the nonce must be unique per hand/action, expiry is checked
+against the proof's `now`, and every other field is part of the signed digest,
+so a signature cannot be moved to another table, hand, action or amount. See
+[the wallet-auth design](wallet-auth-circuit.md).
+
+Constraint overhead is measured by adding `action_order` to
+`scripts/circuit_constraints.py` and `circuits/constraint-budgets.json`; CI
+publishes ACIR opcode and backend gate deltas on every circuit change.
+
+---
+
 ## Peer Review Status
 
 | Circuit | Internal review | External review |

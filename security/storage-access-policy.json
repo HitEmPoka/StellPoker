@@ -264,7 +264,42 @@
           "admin_multisig_required": true
         },
         "StorageKey::ProofVerified": {
-          "authorized_functions": ["verify_proof"],
+          "authorized_functions": ["verify_proof", "verify_proof_by_id_version"],
+          "auth_model": "successful_proof_verification",
+          "admin_multisig_required": false
+        },
+        "StorageKey::VkById": {
+          "authorized_functions": ["update_vk", "set_vk_by_id"],
+          "auth_model": "stored_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "StorageKey::CircuitStatus": {
+          "authorized_functions": ["update_vk", "deprecate_vk", "set_circuit_status"],
+          "auth_model": "stored_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "StorageKey::VkByVersion": {
+          "authorized_functions": [
+            "set_verification_key",
+            "update_vk",
+            "retire_vk_version",
+            "schedule_vk_retirement"
+          ],
+          "auth_model": "stored_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "StorageKey::ActiveVkVersion": {
+          "authorized_functions": ["set_verification_key", "update_vk"],
+          "auth_model": "stored_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "StorageKey::VkGracePeriod": {
+          "authorized_functions": ["initialize", "configure_vk_grace_period"],
+          "auth_model": "stored_admin_require_auth",
+          "admin_multisig_required": true
+        },
+        "StorageKey::ProofVkVersion": {
+          "authorized_functions": ["verify_proof", "verify_proof_by_id_version"],
           "auth_model": "successful_proof_verification",
           "admin_multisig_required": false
         }
