@@ -21,12 +21,29 @@ test:
 	cargo test --workspace
 	cd app && npm test
 
-## lint: Run formatting and lint checks (Rust + TypeScript).
+## fmt: Format all Rust and Noir sources.
+.PHONY: fmt
+fmt:
+	cargo fmt --all
+	@if command -v nargo >/dev/null 2>&1; then \
+		echo "Formatting Noir circuits..."; \
+		for manifest in circuits/*/Nargo.toml; do \
+			circuit="$$(dirname "$$manifest")"; \
+			nargo fmt --program-dir "$$circuit"; \
+		done; \
+	else \
+		echo "nargo not found, skipping Noir formatting"; \
+	fi
+
+## lint: Run formatting and lint checks (Rust + TypeScript + Noir).
 .PHONY: lint
 lint:
 	cargo fmt --all --check
 	cargo clippy --workspace -- -D warnings
 	cd app && npm run lint
+	@if command -v nargo >/dev/null 2>&1; then \
+		./scripts/lint-circuits.sh; \
+	fi
 
 ## deploy-local: Deploy contracts to the local Soroban network.
 .PHONY: deploy-local

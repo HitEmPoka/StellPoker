@@ -311,6 +311,20 @@ pub async fn dispatch_share_payloads(
         let client = client.clone();
         let nonce = rand::random::<u64>();
         let trace = trace.clone();
+        let mac_key = crate::limits::share_integrity_mac_key();
+        let decoded_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &share_data,
+        )
+        .unwrap_or_else(|_| share_data.as_bytes().to_vec());
+        let mac = crate::session::compute_share_batch_mac(
+            &mac_key,
+            proof_session_id,
+            &circuit_name,
+            source_party_id,
+            total_parties,
+            &decoded_bytes,
+        );
         let handle = tokio::spawn(async move {
             let response = crate::trace_context::inject(client.post(&url), trace.as_ref())
                 .json(&serde_json::json!({
@@ -319,6 +333,7 @@ pub async fn dispatch_share_payloads(
                     "source_party_id": source_party_id,
                     "total_parties": total_parties,
                     "nonce": nonce,
+                    "mac": mac,
                 }))
                 .send()
                 .await

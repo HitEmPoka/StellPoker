@@ -34,6 +34,10 @@ pub struct NodeMetrics {
     pub proof_cache_hits: IntCounterVec,
     /// Node-side proof cache misses, labeled by circuit name (#579).
     pub proof_cache_misses: IntCounterVec,
+    /// Share integrity check failures before proving, labeled by peer (#883).
+    pub share_integrity_failures: IntCounterVec,
+    /// Session proving phase timeouts, labeled by circuit and phase (#885).
+    pub session_timeouts: IntCounterVec,
 }
 
 impl NodeMetrics {
@@ -141,6 +145,31 @@ impl NodeMetrics {
             .register(Box::new(proof_cache_misses.clone()))
             .unwrap();
 
+        let share_integrity_failures = IntCounterVec::new(
+            Opts::new(
+                "mpc_node_share_integrity_failures_total",
+                "Total share integrity verification failures before proving, labeled by peer.",
+            ),
+            &["peer"],
+        )
+        .unwrap();
+
+        let session_timeouts = IntCounterVec::new(
+            Opts::new(
+                "mpc_node_session_timeouts_total",
+                "Total MPC session proving phase timeouts, labeled by circuit and phase.",
+            ),
+            &["circuit", "phase"],
+        )
+        .unwrap();
+
+        registry
+            .register(Box::new(share_integrity_failures.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(session_timeouts.clone()))
+            .unwrap();
+
         Self {
             registry,
             active_sessions,
@@ -153,6 +182,8 @@ impl NodeMetrics {
             cert_expiry_days,
             proof_cache_hits,
             proof_cache_misses,
+            share_integrity_failures,
+            session_timeouts,
         }
     }
 

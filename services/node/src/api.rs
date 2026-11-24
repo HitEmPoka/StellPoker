@@ -52,6 +52,8 @@ pub struct SharesRequest {
     pub total_parties: u32,
     #[serde(default)]
     pub nonce: u64,
+    #[serde(default)]
+    pub mac: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -426,11 +428,12 @@ pub async fn post_shares(
         ));
     }
 
-    session::receive_share_fragment(
+    session::receive_share_fragment_with_mac(
         &mut session,
         &req.share_data,
         req.source_party_id,
         req.total_parties,
+        req.mac,
     )
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
@@ -461,6 +464,20 @@ pub async fn post_generate(
         .iter()
         .map(|(source, path)| (*source, path.clone()))
         .collect::<Vec<_>>();
+    let share_macs = session.share_macs.clone();
+    let mac_key = crate::limits::share_integrity_mac_key();
+    if let Err(err) = session::verify_shares_integrity_before_proving(
+        &session_id,
+        &session.circuit_name,
+        &partial_share_paths,
+        &share_macs,
+        expected_total_parties,
+        &mac_key,
+        Some(&state.metrics),
+    ) {
+        session.status = SessionStatus::Failed(err.clone());
+        return Err((StatusCode::BAD_REQUEST, err));
+    }
     session.status = SessionStatus::WitnessGenerating;
 
     let sid = session_id.clone();
@@ -495,7 +512,7 @@ pub async fn post_generate(
 
     let task = async move {
         let phase_timeouts = session::PhaseTimeouts::from_env();
-        let proof_future = session::run_proof_generation(
+        let proof_future = session::run_proof_generation_with_metrics(
             sid.clone(),
             circuit_dir,
             circuit_name,
@@ -508,6 +525,7 @@ pub async fn post_generate(
             limits,
             phase_timeouts,
             profile,
+            Some(metrics.clone()),
         );
 
         // Enforce a per-session wall-clock budget so a hung proof generation can't
@@ -518,10 +536,17 @@ pub async fn post_generate(
                 .await
             {
                 Ok(r) => r,
-                Err(_) => Err(format!(
-                    "proof generation exceeded wall-clock limit of {}s",
-                    wall_seconds
-                )),
+                Err(_) => {
+                    metrics
+                        .session_timeouts
+                        .with_label_values(&[&circuit_label, "wall_clock"])
+                        .inc();
+                    session::release_session_buffers(&work_dir);
+                    Err(format!(
+                        "timeout: proof generation exceeded wall-clock limit of {}s",
+                        wall_seconds
+                    ))
+                }
             }
         } else {
             proof_future.await
@@ -572,10 +597,12 @@ pub async fn post_generate(
                 );
             }
             Err(e) => {
-                metrics
-                    .session_errors
-                    .with_label_values(&["proof_generation"])
-                    .inc();
+                if !e.starts_with("timeout:") {
+                    metrics
+                        .session_errors
+                        .with_label_values(&["proof_generation"])
+                        .inc();
+                }
                 session.status = SessionStatus::Failed(e.clone());
                 let cost = session.cost_snapshot();
                 tracing::error!(

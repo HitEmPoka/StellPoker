@@ -3584,6 +3584,7 @@ dependencies = [
 name = "mpc-node"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
  "axum 0.7.9",
