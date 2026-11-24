@@ -3,3 +3,6 @@ name = "pot_calculation"
 type = "bin"
 authors = ["StellPoker"]
 compiler_version = ">=0.31.0"
+
+[dependencies]
+stellar_poker_lib = { path = "../lib" }

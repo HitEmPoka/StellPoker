@@ -1,7 +1,9 @@
 pub mod cards;
+pub mod chips;
 pub mod commitments;
 pub mod compression;
 pub mod debug;
+pub mod deal_fuzz;
 pub mod deck;
 pub mod game;
 pub mod merkle;
@@ -11,3 +13,4 @@ pub mod rank_table;
 pub mod shuffle;
 pub mod test_vectors;
 pub mod vrf;
+pub mod wallet_auth;

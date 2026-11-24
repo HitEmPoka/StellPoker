@@ -92,11 +92,64 @@ pub fn assert_all_unique<let N: u32>(cards: [Field; N]) {
 }
 
 // Verify that a set of cards forms a valid deck (all unique, all in range).
-pub fn assert_valid_deck(deck: [Field; 52]) {
+// The boolean form is shared with the deal fuzz harness so that a generated
+// witness is checked by exactly the same predicate the circuit asserts.
+pub fn is_valid_deck(deck: [Field; 52]) -> bool {
+    let mut seen: [bool; 52] = [false; 52];
     for i in 0..52 {
-        assert_valid_card(deck[i]);
+        let card = deck[i] as u32;
+        if card >= deck::deck_size() {
+            return false;
+        }
+        let is_joker = deck::is_joker(card);
+        if !is_joker && !deck::is_valid_rank(card % NUM_RANKS) {
+            return false;
+        }
+        if seen[card] {
+            return false;
+        }
+        seen[card] = true;
     }
+    true
+}
+
+pub fn assert_valid_deck(deck: [Field; 52]) {
+    assert(is_valid_deck(deck), "invalid deck");
+}
+
+// Kept for callers that rely on the explicit pairwise diagnostic message.
+pub fn assert_all_unique_cards(deck: [Field; 52]) {
     assert_all_unique(deck);
+}
+
+#[test]
+fn test_is_valid_deck_roundtrip() {
+    let mut deck: [Field; 52] = [0; 52];
+    for i in 0..52 {
+        deck[i] = i as Field;
+    }
+    assert(is_valid_deck(deck));
+    assert_valid_deck(deck);
+}
+
+#[test]
+fn test_is_valid_deck_rejects_duplicate() {
+    let mut deck: [Field; 52] = [0; 52];
+    for i in 0..52 {
+        deck[i] = i as Field;
+    }
+    deck[1] = deck[0];
+    assert(!is_valid_deck(deck));
+}
+
+#[test]
+fn test_is_valid_deck_rejects_out_of_range() {
+    let mut deck: [Field; 52] = [0; 52];
+    for i in 0..52 {
+        deck[i] = i as Field;
+    }
+    deck[0] = 52;
+    assert(!is_valid_deck(deck));
 }
 
 // Hand ranking for showdown verification.

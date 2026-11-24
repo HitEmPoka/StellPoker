@@ -4,6 +4,9 @@ type = "bin"
 authors = ["Stellar Poker"]
 compiler_version = ">=0.36.0"
 
+[dependencies]
+stellar_poker_lib = { path = "../lib" }
+
 [package.metadata.circuit]
 description = "Prove that total chip supply is conserved: sum of all player stacks + pot + rake = total buy-ins. Useful for cross-table consistency in tournaments."
 constraint_count = 0

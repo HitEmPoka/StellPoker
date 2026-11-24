@@ -35,6 +35,21 @@
       "max_acir_opcodes": 13000,
       "max_backend_opcodes": 22000,
       "max_increase_pct": 5.0
+    },
+    "pot_calculation": {
+      "max_acir_opcodes": 4000,
+      "max_backend_opcodes": 8000,
+      "max_increase_pct": 5.0
+    },
+    "chip_consistency": {
+      "max_acir_opcodes": 6000,
+      "max_backend_opcodes": 12000,
+      "max_increase_pct": 5.0
+    },
+    "action_order": {
+      "max_acir_opcodes": 12000,
+      "max_backend_opcodes": 24000,
+      "max_increase_pct": 5.0
     }
   }
 }
