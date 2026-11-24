@@ -1,0 +1,309 @@
+# Routes intentionally absent from docs/openapi.yaml.
+#
+# The coordinator's production router is assembled in
+# services/coordinator/src/main.rs. Every registered route must either have an
+# operation in docs/openapi.yaml or appear exactly once below with a category
+# whose written rationale explains why it is not part of the public REST API.
+# scripts/check-api-spec.py enforces this in both directions and also rejects
+# stale entries, so removing a route requires removing its exclusion here.
+version: 1
+
+categories:
+  internal-ops: >-
+    Internal operator/debug endpoint (dashboard, Prometheus metrics, leader
+    state, benchmark state). It is not a public player REST API.
+  admin: >-
+    Admin-only control plane authenticated by a global middleware that verifies
+    a Stellar signed-payload challenge against the server-side ADMIN_KEYS
+    allowlist before any handler runs. These are operator actions, not part of
+    the public player API; the separate docs/api/openapi.yaml publishing profile
+    documents them for operators.
+  control-plane: >-
+    Coordinator/MPC node control plane used internally by MPC nodes and
+    operators (registration, heartbeats, versions, identity, attestation,
+    partitions, benchmarks and CSP reports). Game clients never call it.
+  plugins: >-
+    Internal plugin lifecycle and diagnostics surface. Plugin authors use it
+    locally; it is not a stable external consumer API.
+  websocket: >-
+    WebSocket upgrade endpoint. OpenAPI 3.0 cannot describe the WS upgrade
+    protocol as a REST operation, so these routes are excluded from the REST
+    spec and listed explicitly here instead.
+
+routes:
+  - method: get
+    path: /
+    category: internal-ops
+    handler: dashboard_page
+  - method: get
+    path: /metrics
+    category: internal-ops
+    handler: metrics_endpoint
+  - method: get
+    path: /api/admin/deprecations
+    category: admin
+    handler: deprecation_report
+  - method: get
+    path: /api/leader
+    category: internal-ops
+    handler: get_leader_status
+  - method: get
+    path: /api/benchmarks
+    category: internal-ops
+    handler: get_benchmarks
+  - method: post
+    path: /api/node/register
+    category: control-plane
+    handler: register_node
+  - method: post
+    path: /api/node/{id}/heartbeat
+    category: control-plane
+    handler: node_heartbeat
+  - method: delete
+    path: /api/node/{id}
+    category: control-plane
+    handler: deregister_node
+  - method: post
+    path: /api/mpc/version/register
+    category: control-plane
+    handler: register_node_version
+  - method: get
+    path: /api/mpc/version/nodes
+    category: control-plane
+    handler: list_node_versions
+  - method: get
+    path: /api/mpc/version/negotiate
+    category: control-plane
+    handler: negotiate_version
+  - method: post
+    path: /api/mpc/benchmark/sample
+    category: control-plane
+    handler: record_node_benchmark
+  - method: get
+    path: /api/mpc/benchmark/report
+    category: control-plane
+    handler: get_node_benchmark_report
+  - method: post
+    path: /api/mpc/benchmark/sweep
+    category: control-plane
+    handler: run_node_benchmark_sweep
+  - method: post
+    path: /api/mpc/partition/report
+    category: control-plane
+    handler: submit_partition_report
+  - method: get
+    path: /api/mpc/partition/status
+    category: control-plane
+    handler: get_partition_status
+  - method: post
+    path: /api/mpc/identity/register
+    category: control-plane
+    handler: register_node_identity
+  - method: get
+    path: /api/mpc/identity/nodes
+    category: control-plane
+    handler: list_node_identities
+  - method: post
+    path: /api/mpc/identity/verify
+    category: control-plane
+    handler: verify_node_identity
+  - method: post
+    path: /api/mpc/attestation
+    category: control-plane
+    handler: submit_node_attestation
+  - method: get
+    path: /api/mpc/attestation/status
+    category: control-plane
+    handler: get_attestation_status
+  - method: get
+    path: /api/mpc/decommission/status
+    category: control-plane
+    handler: get_decommission_status
+  - method: post
+    path: /api/mpc/decommission/begin
+    category: control-plane
+    handler: begin_node_decommission
+  - method: post
+    path: /api/mpc/decommission/plan
+    category: control-plane
+    handler: plan_node_reshuffle
+  - method: post
+    path: /api/mpc/decommission/enact
+    category: control-plane
+    handler: enact_node_reshuffle
+  - method: post
+    path: /api/mpc/decommission/cancel
+    category: control-plane
+    handler: cancel_node_decommission
+  - method: get
+    path: /api/mpc/preemption/status
+    category: control-plane
+    handler: get_preemption_status
+  - method: post
+    path: /api/csp/report
+    category: control-plane
+    handler: report_csp
+  - method: get
+    path: /api/csp/reports
+    category: control-plane
+    handler: list_csp_reports
+  - method: get
+    path: /api/plugins
+    category: plugins
+    handler: list_plugins
+  - method: get
+    path: /api/plugins/health
+    category: plugins
+    handler: plugin_health
+  - method: post
+    path: /api/plugins/load
+    category: plugins
+    handler: load_plugin
+  - method: post
+    path: /api/plugins/rescan
+    category: plugins
+    handler: rescan_plugins
+  - method: get
+    path: /api/plugins/{name}
+    category: plugins
+    handler: get_plugin
+  - method: post
+    path: /api/plugins/{name}/unload
+    category: plugins
+    handler: unload_plugin
+  - method: post
+    path: /api/plugins/{name}/call
+    category: plugins
+    handler: call_plugin_function
+  - method: get
+    path: /api/table/{table_id}/chat/ws
+    category: websocket
+    handler: chat_ws_handler
+  - method: get
+    path: /api/table/{table_id}/state/ws
+    category: websocket
+    handler: game_state_ws_handler
+  - method: get
+    path: /api/table/{table_id}/spectate/ws
+    category: websocket
+    handler: spectate_ws_handler
+  - method: get
+    path: /api/admin/health
+    category: admin
+    handler: admin_health
+  - method: get
+    path: /api/admin/sessions
+    category: admin
+    handler: admin_list_sessions
+  - method: post
+    path: /api/admin/sessions/{session_id}/cancel
+    category: admin
+    handler: admin_cancel_session
+  - method: post
+    path: /api/admin/sessions/cleanup
+    category: admin
+    handler: admin_cleanup_sessions
+  - method: get
+    path: /api/admin/stats
+    category: admin
+    handler: admin_stats
+  - method: post
+    path: /api/admin/config/reload
+    category: admin
+    handler: admin_reload_config
+  - method: post
+    path: /api/admin/maintenance
+    category: admin
+    handler: admin_toggle_maintenance
+  - method: get
+    path: /api/admin/rate-limits
+    category: admin
+    handler: admin_list_rate_limits
+  - method: post
+    path: /api/admin/rate-limits
+    category: admin
+    handler: admin_upsert_rate_limit
+  - method: delete
+    path: /api/admin/rate-limits/{id}
+    category: admin
+    handler: admin_delete_rate_limit
+  - method: get
+    path: /api/admin/cors
+    category: admin
+    handler: admin_list_cors
+  - method: post
+    path: /api/admin/cors
+    category: admin
+    handler: admin_upsert_cors
+  - method: delete
+    path: /api/admin/cors/{id}
+    category: admin
+    handler: admin_delete_cors
+  - method: get
+    path: /api/admin/audit-logs
+    category: admin
+    handler: admin_query_audit_logs
+  - method: post
+    path: /api/admin/audit-logs/verify
+    category: admin
+    handler: admin_verify_audit_chain
+  - method: get
+    path: /api/admin/migrations
+    category: admin
+    handler: admin_list_migrations
+  - method: get
+    path: /api/admin/committee-key-rotation
+    category: admin
+    handler: admin_committee_key_rotation_status
+  - method: post
+    path: /api/admin/migrations/initiate
+    category: admin
+    handler: admin_initiate_migration
+  - method: post
+    path: /api/admin/migrations/{id}/complete
+    category: admin
+    handler: admin_complete_migration
+  - method: post
+    path: /api/admin/migrations/{id}/cancel
+    category: admin
+    handler: admin_cancel_migration
+  - method: get
+    path: /api/admin/archives
+    category: admin
+    handler: admin_list_archives
+  - method: get
+    path: /api/admin/archives/{archive_id}
+    category: admin
+    handler: admin_get_archive
+  - method: post
+    path: /api/admin/archives/purge
+    category: admin
+    handler: admin_purge_archives
+  - method: get
+    path: /api/admin/drain
+    category: admin
+    handler: admin_cancel_drain
+  - method: post
+    path: /api/admin/drain
+    category: admin
+    handler: admin_cancel_drain
+  - method: delete
+    path: /api/admin/drain
+    category: admin
+    handler: admin_cancel_drain
+  - method: get
+    path: /api/admin/vk-rollout
+    category: admin
+    handler: admin_rollout_status
+  - method: post
+    path: /api/admin/vk-rollout/rollback
+    category: admin
+    handler: admin_rollout_rollback
+  - method: post
+    path: /api/admin/vk-rollout/promote
+    category: admin
+    handler: admin_rollout_promote
+  - method: get
+    path: /api/admin/anti-dumping/reports
+    category: admin
+    handler: admin_anti_dumping_reports

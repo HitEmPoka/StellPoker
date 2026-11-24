@@ -28,17 +28,18 @@ jobs:
       - name: Install dependencies
         run: pip install schemathesis pyyaml pytest
 
-      # ── Phase 1: offline spec validation & handler parity ──────────────────
+      # -- Phase 1: offline spec validation & handler parity ------------------
       # Runs on every push without needing a live coordinator.
       # Validates spec structure, broken $refs, schemathesis parsing, and
-      # verifies zero drift between OpenAPI operations and coordinator handlers.
+      # verifies zero drift in both directions between OpenAPI operations and
+      # coordinator handlers, allowing only routes with a documented exclusion.
       - name: Offline spec and handler parity validation
         run: python3 scripts/check-api-spec.py
 
       - name: Run API conformance unit tests
         run: pytest tests/test_api_conformance.py -v
 
-      # ── Phase 2: live conformance (coordinator stack required) ────────────
+      # -- Phase 2: live conformance (coordinator stack required) ------------
       # Only runs when the full Docker stack is available (e2e jobs).
       # Enabled by setting the COORDINATOR_URL environment variable.
       # Skipped automatically when the variable is absent.

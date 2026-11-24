@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, String,
-    Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Env, String, Vec,
 };
 
 /// Production Game Hub address on Stellar testnet:
@@ -62,6 +61,10 @@ pub struct CrossPromoRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
+    /// Address authorized to report game lifecycle events. Set at initialize
+    /// (normally the coordinator service or the poker-table contract) and
+    /// rotatable by the admin.
+    Reporter,
     Game(Address),
     GameList,
     Player(Address),
@@ -106,12 +109,22 @@ pub struct GameStarted {
     pub player2: Address,
     pub player1_points: i128,
     pub player2_points: i128,
+    /// Authenticated caller that reported the game start.
+    pub caller: Address,
 }
 
 #[contractevent]
 pub struct GameEnded {
     pub session_id: u32,
     pub player1_won: bool,
+    /// Authenticated caller that reported the game end.
+    pub caller: Address,
+}
+
+#[contractevent]
+pub struct GameReporterChanged {
+    pub previous: Address,
+    pub current: Address,
 }
 
 #[contractevent]
@@ -134,12 +147,44 @@ impl MockGameHub {
             return Err(GameHubError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        // Until a dedicated reporter is configured, only the admin may report
+        // game lifecycle events.
+        env.storage().instance().set(&DataKey::Reporter, &admin);
         env.storage()
             .persistent()
             .set(&DataKey::GameList, &Vec::<Address>::new(&env));
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
+        Ok(())
+    }
+
+    /// Rotate the address allowed to report game starts/ends. Admin only.
+    pub fn set_game_reporter(
+        env: Env,
+        admin: Address,
+        reporter: Address,
+    ) -> Result<(), GameHubError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(GameHubError::NotInitialized)?;
+        if stored_admin != admin {
+            return Err(GameHubError::Unauthorized);
+        }
+        let previous: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Reporter)
+            .unwrap_or(stored_admin);
+        env.storage().instance().set(&DataKey::Reporter, &reporter);
+        GameReporterChanged {
+            previous,
+            current: reporter,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -341,6 +386,11 @@ impl MockGameHub {
     }
 
     /// Start game session (compatible with Stellar Game Studio standard).
+    ///
+    /// Only the configured reporter may call this. The reporter authenticates
+    /// the whole invocation (an account signature, or implicit authorization
+    /// when the reporter is the calling contract), and that same address is
+    /// emitted as `caller` so indexers can verify provenance.
     pub fn start_game(
         env: Env,
         game_id: Address,
@@ -349,7 +399,9 @@ impl MockGameHub {
         player2: Address,
         player1_points: i128,
         player2_points: i128,
-    ) {
+    ) -> Result<(), GameHubError> {
+        let caller = Self::require_reporter(&env)?;
+
         let ledger = env.ledger().sequence();
         let session = GameSession {
             session_id,
@@ -380,16 +432,21 @@ impl MockGameHub {
             player2,
             player1_points,
             player2_points,
+            caller,
         }
         .publish(&env);
 
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
+        Ok(())
     }
 
     /// End game session (compatible with Stellar Game Studio standard).
-    pub fn end_game(env: Env, session_id: u32, player1_won: bool) {
+    /// Only the configured reporter may call this; see [`Self::start_game`].
+    pub fn end_game(env: Env, session_id: u32, player1_won: bool) -> Result<(), GameHubError> {
+        let caller = Self::require_reporter(&env)?;
+
         let key = DataKey::Session(session_id);
         if let Some(mut session) = env
             .storage()
@@ -411,13 +468,28 @@ impl MockGameHub {
         GameEnded {
             session_id,
             player1_won,
+            caller,
         }
         .publish(&env);
+        Ok(())
     }
 
     /// Query a game session record.
     pub fn get_session(env: Env, session_id: u32) -> Option<GameSession> {
         env.storage().persistent().get(&DataKey::Session(session_id))
+    }
+
+    fn require_reporter(env: &Env) -> Result<Address, GameHubError> {
+        let reporter: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Reporter)
+            .ok_or(GameHubError::NotInitialized)?;
+        // For an account this verifies its signature. For a contract address
+        // the host accepts the call when that contract is in the call stack,
+        // which is how poker-table reports game lifecycle events.
+        reporter.require_auth();
+        Ok(reporter)
     }
 
     fn update_player_activity(env: &Env, player: &Address, points: i128) {
@@ -471,8 +543,12 @@ mod test {
     #[test]
     fn test_start_and_end_game() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(MockGameHub, ());
         let client = MockGameHubClient::new(&env, &contract_id);
+        let reporter = Address::generate(&env);
+        client.initialize(&reporter);
+
         let game_id = Address::generate(&env);
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
@@ -494,6 +570,70 @@ mod test {
         let p2_profile = client.get_player_profile(&player2).unwrap();
         assert_eq!(p2_profile.games_played, 1);
         assert_eq!(p2_profile.games_won, 0);
+    }
+
+    #[test]
+    fn test_unauthorized_caller_cannot_start_or_end_game() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let reporter = Address::generate(&env);
+        client.initialize(&reporter);
+
+        let game_id = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        // No reporter signature is present, so the reporter cannot be
+        // authenticated and neither lifecycle entrypoint may mutate state.
+        env.mock_auths(&[]);
+        assert!(client
+            .try_start_game(&game_id, &42, &player1, &player2, &100, &100)
+            .is_err());
+        assert!(client.get_session(&42).is_none());
+
+        // Authorized path still works end to end.
+        env.mock_all_auths();
+        client.start_game(&game_id, &42, &player1, &player2, &100, &100);
+        assert!(client.get_session(&42).is_some());
+
+        env.mock_auths(&[]);
+        assert!(client.try_end_game(&42, &true).is_err());
+        assert!(client.get_session(&42).unwrap().active);
+
+        env.mock_all_auths();
+        client.end_game(&42, &true);
+        assert!(!client.get_session(&42).unwrap().active);
+    }
+
+    #[test]
+    fn test_reporter_rotation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MockGameHub, ());
+        let client = MockGameHubClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let old_reporter = Address::generate(&env);
+        let new_reporter = Address::generate(&env);
+        client.initialize(&admin);
+        client.set_game_reporter(&admin, &old_reporter);
+
+        let game_id = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        env.mock_auths(&[]);
+        assert!(client
+            .try_start_game(&game_id, &7, &player1, &player2, &10, &10)
+            .is_err());
+        assert!(client.get_session(&7).is_none());
+
+        // Rotation admin is authorized; the new reporter is now the only
+        // address whose authorization can unlock the lifecycle entrypoints.
+        env.mock_all_auths();
+        client.set_game_reporter(&admin, &new_reporter);
+        client.start_game(&game_id, &7, &player1, &player2, &10, &10);
+        assert!(client.get_session(&7).is_some());
     }
 
     #[test]

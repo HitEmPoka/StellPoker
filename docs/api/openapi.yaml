@@ -13,14 +13,14 @@ info:
     ### Player Auth (Wallet-based)
     Most game endpoints require wallet-based authentication via signed messages:
 
-    1. `POST /api/wallet/challenge` — obtain a challenge string
+    1. `POST /api/wallet/challenge` ΓÇö obtain a challenge string
     2. Sign the challenge with your Stellar wallet (Freighter/Lobstr)
-    3. `POST /api/wallet/verify` — verify the signed challenge, receive a session
+    3. `POST /api/wallet/verify` ΓÇö verify the signed challenge, receive a session
     4. Include these headers in subsequent requests:
-       - `x-player-address` — your Stellar G... public key
-       - `x-auth-signature` — Ed25519 signature (hex or base64)
-       - `x-auth-nonce` — strictly increasing u64 (replay protection)
-       - `x-auth-timestamp` — unix epoch seconds (±300s skew)
+       - `x-player-address` ΓÇö your Stellar G... public key
+       - `x-auth-signature` ΓÇö Ed25519 signature (hex or base64)
+       - `x-auth-nonce` ΓÇö strictly increasing u64 (replay protection)
+       - `x-auth-timestamp` ΓÇö unix epoch seconds (┬▒300s skew)
 
     Signed message format:
     ```
@@ -28,11 +28,15 @@ info:
     ```
 
     ### Admin Auth
-    Admin endpoints use a separate key-based auth under `x-admin-*` headers:
-       - `x-admin-address` — admin's Stellar public key
-       - `x-admin-signature` — Ed25519 signature
-       - `x-admin-nonce` — strictly increasing u64
-       - `x-admin-timestamp` — unix epoch seconds (±300s skew)
+    Every `/api/admin/*` request is verified by a global coordinator middleware
+    before any handler runs. Admin addresses and roles come from the server-side
+    `ADMIN_KEYS` configuration, never from the client bundle. Required headers:
+
+       - `x-admin-address` ΓÇö admin's Stellar public key
+       - `x-admin-signature` ΓÇö Ed25519 signature (hex or base64)
+       - `x-admin-action` ΓÇö action being signed (must match the handler action)
+       - `x-admin-nonce` ΓÇö strictly increasing u64 (replay protection)
+       - `x-admin-timestamp` ΓÇö unix epoch seconds (┬▒300s skew)
 
     Signed message format:
     ```
@@ -41,7 +45,9 @@ info:
 
     Admin roles: `read-only`, `operator`, `super-admin`.
 
-    > **Dev mode**: Set `ALLOW_INSECURE_DEV_AUTH=1` to skip signature verification.
+    `GET /api/whoami` reports whether a wallet is configured as an admin for
+    cosmetic UI gating only. It is unsigned and is **not** an authorization
+    token; unsigned or non-admin `/api/admin/*` calls receive 401/403.
 
     ## Breaking Changes Policy
     Breaking changes are documented per release. See the version changelog
@@ -76,15 +82,17 @@ tags:
     description: MPC session management
   - name: Wallet Auth
     description: Wallet-based authentication
+  - name: Auth
+    description: Cosmetic caller identity for UI gating
   - name: Admin
     description: Admin operations (requires RBAC)
   - name: Metrics
     description: Prometheus metrics
 
 paths:
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Health
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/health:
     get:
       tags: [Health]
@@ -125,9 +133,33 @@ paths:
                     additionalProperties:
                       $ref: "#/components/schemas/RouteMetric"
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Chain Config
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  /api/whoami:
+    get:
+      tags: [Auth]
+      summary: Get caller admin status for UI gating
+      description: |
+        Returns whether the wallet supplied in `x-admin-address` is configured
+        as an admin, plus its role. This endpoint is unsigned and cosmetic;
+        `/api/admin/*` still requires a verified Stellar signed payload.
+      operationId: getWhoAmI
+      parameters:
+        - name: x-admin-address
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Stellar public key to inspect.
+      responses:
+        "200":
+          description: Caller identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoAmIResponse"
+
   /api/chain-config:
     get:
       tags: [Chain]
@@ -146,9 +178,9 @@ paths:
         "503":
           description: Soroban not configured
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Stats
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/stats:
     get:
       tags: [Health]
@@ -165,9 +197,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/StatsResponse"
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Flags
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/flags:
     get:
       tags: [Flags]
@@ -213,9 +245,9 @@ paths:
         "400":
           description: Empty key
 
-  # ──────────────────────────────────────────────
-  # Tables — Create
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Tables ΓÇö Create
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/tables/create:
     post:
       tags: [Tables]
@@ -247,9 +279,9 @@ paths:
         "502":
           description: Soroban/MPC interaction failed
 
-  # ──────────────────────────────────────────────
-  # Tables — List open
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Tables ΓÇö List open
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/tables/open:
     get:
       tags: [Tables]
@@ -266,9 +298,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenTablesResponse"
 
-  # ──────────────────────────────────────────────
-  # Table — Join
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Join
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/join:
     post:
       tags: [Tables]
@@ -298,9 +330,9 @@ paths:
         "409":
           description: Table not in waiting phase or wallet already seated
 
-  # ──────────────────────────────────────────────
-  # Table — Lobby
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Lobby
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/lobby:
     get:
       tags: [Tables]
@@ -324,9 +356,9 @@ paths:
         "404":
           description: Table not found
 
-  # ──────────────────────────────────────────────
-  # Table — Request Deal
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Request Deal
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/request-deal:
     post:
       tags: [Tables]
@@ -362,16 +394,16 @@ paths:
         "502":
           description: MPC or Soroban interaction failed
 
-  # ──────────────────────────────────────────────
-  # Table — Request Reveal
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Request Reveal
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/request-reveal/{phase}:
     post:
       tags: [Tables]
       summary: Request community card reveal
       description: |
         Triggers MPC reveal of community cards for the specified phase.
-        Phase progression: preflop → flop (3 cards) → turn (1 card) → river (1 card).
+        Phase progression: preflop ΓåÆ flop (3 cards) ΓåÆ turn (1 card) ΓåÆ river (1 card).
       operationId: requestReveal
       parameters:
         - name: table_id
@@ -400,9 +432,9 @@ paths:
         "502":
           description: MPC or Soroban interaction failed
 
-  # ──────────────────────────────────────────────
-  # Table — Request Showdown
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Request Showdown
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/request-showdown:
     post:
       tags: [Tables]
@@ -431,9 +463,9 @@ paths:
         "502":
           description: MPC or Soroban interaction failed
 
-  # ──────────────────────────────────────────────
-  # Table — Player Action
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Player Action
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/player-action:
     post:
       tags: [Tables]
@@ -474,9 +506,9 @@ paths:
         "502":
           description: Soroban interaction failed
 
-  # ──────────────────────────────────────────────
-  # Table — Get Player Cards
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Get Player Cards
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/player/{address}/cards:
     get:
       tags: [Tables]
@@ -516,9 +548,9 @@ paths:
         "502":
           description: MPC resolution failed
 
-  # ──────────────────────────────────────────────
-  # Table — Get State
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Table ΓÇö Get State
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/state:
     get:
       tags: [Tables]
@@ -542,9 +574,9 @@ paths:
         "503":
           description: Soroban unavailable
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Committee Status
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/committee/status:
     get:
       tags: [MPC Committee]
@@ -559,9 +591,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/CommitteeStatusResponse"
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # WebSocket Chat
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/table/{table_id}/chat/ws:
     get:
       tags: [Tables]
@@ -584,9 +616,9 @@ paths:
         "400":
           description: Invalid table ID
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Sessions
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/session/{session_id}/status:
     get:
       tags: [Sessions]
@@ -615,7 +647,7 @@ paths:
       tags: [Sessions]
       summary: Cancel MPC session (deprecated)
       description: |
-        **Deprecated** — Use `POST /api/admin/sessions/{session_id}/cancel` instead.
+        **Deprecated** ΓÇö Use `POST /api/admin/sessions/{session_id}/cancel` instead.
 
         Cancel an active MPC session. Kills processes, removes temp files,
         frees the session slot. Requires operator role.
@@ -634,9 +666,9 @@ paths:
         "404":
           description: Session not found
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Wallet Auth
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/wallet/challenge:
     post:
       tags: [Wallet Auth]
@@ -683,9 +715,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/WalletVerifyResponse"
 
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   # Metrics
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /metrics:
     get:
       tags: [Metrics]
@@ -703,9 +735,9 @@ paths:
               schema:
                 type: string
 
-  # ──────────────────────────────────────────────
-  # Admin — Health
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Health
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/health:
     get:
       tags: [Admin]
@@ -726,9 +758,9 @@ paths:
         "401":
           description: Missing or invalid admin headers
 
-  # ──────────────────────────────────────────────
-  # Admin — Sessions
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Sessions
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/sessions:
     get:
       tags: [Admin]
@@ -819,9 +851,9 @@ paths:
                   cancelled:
                     type: boolean
 
-  # ──────────────────────────────────────────────
-  # Admin — Stats
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Stats
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/stats:
     get:
       tags: [Admin]
@@ -840,9 +872,9 @@ paths:
               schema:
                 type: object
 
-  # ──────────────────────────────────────────────
-  # Admin — Config
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Config
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/config/reload:
     post:
       tags: [Admin]
@@ -865,9 +897,9 @@ paths:
                     type: string
                     enum: [reloaded]
 
-  # ──────────────────────────────────────────────
-  # Admin — Rate Limits
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Rate Limits
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/rate-limits:
     get:
       tags: [Admin]
@@ -954,9 +986,9 @@ paths:
         "503":
           description: Database not available
 
-  # ──────────────────────────────────────────────
-  # Admin — CORS
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö CORS
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/cors:
     get:
       tags: [Admin]
@@ -1043,9 +1075,9 @@ paths:
         "503":
           description: Database not available
 
-  # ──────────────────────────────────────────────
-  # Admin — Audit Logs
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Audit Logs
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/audit-logs:
     get:
       tags: [Admin]
@@ -1139,9 +1171,9 @@ paths:
         "503":
           description: Database not available
 
-  # ──────────────────────────────────────────────
-  # Admin — Session Migrations
-  # ──────────────────────────────────────────────
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  # Admin ΓÇö Session Migrations
+  # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   /api/admin/migrations:
     get:
       tags: [Admin]
@@ -1269,6 +1301,526 @@ paths:
         "503":
           description: Database not available
 
+  /api/tables/overview:
+    get:
+      operationId: listTableOverview
+      summary: List Table Overview
+      description: Derived from coordinator route registration (handler list_table_overview).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/stats/player/{address}:
+    get:
+      operationId: getPlayerHudStats
+      summary: Get Player Hud Stats
+      description: Derived from coordinator route registration (handler get_player_hud_stats).
+      tags:
+        - Coordinator
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/ratings/leaderboard:
+    get:
+      operationId: getRatingLeaderboard
+      summary: Get Rating Leaderboard
+      description: Derived from coordinator route registration (handler get_rating_leaderboard).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/transfer-chips:
+    post:
+      operationId: transferChips
+      summary: Transfer Chips
+      description: Derived from coordinator route registration (handler transfer_chips).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/rit-opt-in:
+    post:
+      operationId: ritOptIn
+      summary: Rit Opt In
+      description: Derived from coordinator route registration (handler rit_opt_in).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/players:
+    get:
+      operationId: getPlayersPaginated
+      summary: Get Players Paginated
+      description: Derived from coordinator route registration (handler get_players_paginated).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/hand-history/chunk:
+    get:
+      operationId: getHandHistoryChunk
+      summary: Get Hand History Chunk
+      description: Derived from coordinator route registration (handler get_hand_history_chunk).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/mpc-status:
+    get:
+      operationId: getMpcStatus
+      summary: Get Mpc Status
+      description: Derived from coordinator route registration (handler get_mpc_status).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/table/{table_id}/spectators:
+    get:
+      operationId: getSpectatorCount
+      summary: Get Spectator Count
+      description: Derived from coordinator route registration (handler get_spectator_count).
+      tags:
+        - Coordinator
+      parameters:
+        - name: table_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/readyz:
+    get:
+      operationId: readiness
+      summary: Readiness
+      description: Derived from coordinator route registration (handler readiness).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments:
+    get:
+      operationId: listTournaments
+      summary: List Tournaments
+      description: Derived from coordinator route registration (handler list_tournaments).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    post:
+      operationId: createTournament
+      summary: Create Tournament
+      description: Derived from coordinator route registration (handler create_tournament).
+      tags:
+        - Coordinator
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}:
+    get:
+      operationId: getTournament
+      summary: Get Tournament
+      description: Derived from coordinator route registration (handler get_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/register:
+    post:
+      operationId: registerPlayer
+      summary: Register Player
+      description: Derived from coordinator route registration (handler register_player).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/start:
+    post:
+      operationId: startTournament
+      summary: Start Tournament
+      description: Derived from coordinator route registration (handler start_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-result:
+    post:
+      operationId: recordHandResult
+      summary: Record Hand Result
+      description: Derived from coordinator route registration (handler record_hand_result).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/balancing:
+    get:
+      operationId: getBalancing
+      summary: Get Balancing
+      description: Derived from coordinator route registration (handler get_balancing).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/cancel:
+    post:
+      operationId: cancelTournament
+      summary: Cancel Tournament
+      description: Derived from coordinator route registration (handler cancel_tournament).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-for-hand:
+    post:
+      operationId: setHandForHand
+      summary: Set Hand For Hand
+      description: Derived from coordinator route registration (handler set_hand_for_hand).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/tables/{table}/start-hand:
+    post:
+      operationId: startTableHand
+      summary: Start Table Hand
+      description: Derived from coordinator route registration (handler start_table_hand).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: table
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /api/tournaments/{id}/hand-counts:
+    get:
+      operationId: getTableHandCounts
+      summary: Get Table Hand Counts
+      description: Derived from coordinator route registration (handler get_table_hand_counts).
+      tags:
+        - Coordinator
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
 components:
   securitySchemes:
     WalletAuth:
@@ -1287,7 +1839,22 @@ components:
         `x-admin-signature`, `x-admin-nonce`, `x-admin-timestamp`.
 
   schemas:
-    # ──────────── Health ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Health ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    WhoAmIResponse:
+      type: object
+      required: [address, admin, role]
+      properties:
+        address:
+          type: string
+          nullable: true
+        admin:
+          type: boolean
+          description: True when the address is in the server-side ADMIN_KEYS allowlist. Cosmetic only.
+        role:
+          type: string
+          nullable: true
+          description: Configured admin role, or null for non-admins.
+
     MpcNodeHealth:
       type: object
       required:
@@ -1356,7 +1923,7 @@ components:
       type: object
       description: Global statistics with leaderboard (30s TTL cache)
 
-    # ──────────── Chain ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Chain ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     ChainConfigResponse:
       type: object
       required:
@@ -1375,7 +1942,7 @@ components:
           type: string
           description: Deployed poker-table contract ID
 
-    # ──────────── Flags ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Flags ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     SetFlagBody:
       type: object
       required:
@@ -1384,7 +1951,7 @@ components:
         enabled:
           type: boolean
 
-    # ──────────── Tables ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Tables ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     CreateTableRequest:
       type: object
       properties:
@@ -1697,7 +2264,7 @@ components:
         elapsed_secs:
           type: integer
 
-    # ──────────── Wallet Auth ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Wallet Auth ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     WalletChallengeRequest:
       type: object
       required:
@@ -1740,7 +2307,7 @@ components:
         verified:
           type: boolean
 
-    # ──────────── Admin ────────────
+    # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ Admin ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     UpsertRateLimitRequest:
       type: object
       required:

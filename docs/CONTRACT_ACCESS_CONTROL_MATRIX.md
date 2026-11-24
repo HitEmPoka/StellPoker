@@ -1,4 +1,4 @@
-# Contract Access Control Matrix (Issue #551)
+﻿# Contract Access Control Matrix (Issue #551)
 
 This document specifies which parties can call which functions in the Stellar Poker contracts.
 
@@ -161,7 +161,27 @@ Deal/reveal/showdown operations are driven by the coordinator but signed by the 
 
 **Note on Budget Guards**: Cross-contract calls check remaining budget via `has_sufficient_budget()` to prevent DoS chains that exhaust Soroban's per-invocation limits.
 
-## Configuration Changes and Audit Trail
+## Game Hub lifecycle authorization
+
+`start_game` and `end_game` require authorization from the hub's configured
+reporter. The reporter is initialized to the admin and can be rotated with
+`admin.require_auth()` via `set_game_reporter`. This keeps the existing
+poker-table interface unchanged: when the reporter is the calling table
+contract, the host satisfies the authorization from the call stack. Both
+`GameStarted` and `GameEnded` include the authenticated reporter as `caller`,
+so indexers can verify provenance instead of trusting an unauthenticated field.
+Reporter rotations emit `GameReporterChanged`.
+
+## Token-gated table admission
+
+`token-gated-table::can_join` is fail-closed. A player is admitted only when an
+enabled, unexpired policy exists for the requested SAC token, the player's SAC
+balance meets `min_balance`, and (when configured) the player owns the required
+NFT token id. Unknown, disabled, expired or revoked policies return `false`.
+Policy creation, status changes, revocation and admin rotation all require
+`admin.require_auth()` and emit explicit contract events. `verify_join` is the
+authenticated variant for flows that need the player to prove their identity.
+
 
 Configuration changes to a table (e.g., `set_max_rebuys`, `configure_straddle`) are tracked in the configuration change log (Issue #553):
 

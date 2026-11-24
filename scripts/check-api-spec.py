@@ -36,7 +36,11 @@ import re
 import json
 
 SPEC_PATH = pathlib.Path(__file__).parent.parent / "docs" / "openapi.yaml"
+EXCLUSIONS_PATH = (
+    pathlib.Path(__file__).parent.parent / "docs" / "api" / "route-exclusions.yaml"
+)
 COORDINATOR_URL = os.environ.get("COORDINATOR_URL", "")
+HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,6 +114,16 @@ def validate_spec_structure(spec: dict) -> bool:
 MAIN_RS_PATH = pathlib.Path(__file__).parent.parent / "services" / "coordinator" / "src" / "main.rs"
 
 
+def to_openapi_path(path: str) -> str:
+    """Convert an Axum `:param` path into the `{param}` form used by OpenAPI."""
+    return re.sub(r":([A-Za-z0-9_]+)", r"{\1}", path)
+
+
+def format_route(route) -> str:
+    method, path = route
+    return f"{method.upper()} {path}"
+
+
 def parse_coordinator_routes(content: str) -> dict:
     """Extract Axum .route(...) mappings from coordinator main.rs."""
     routes = {}
@@ -143,49 +157,175 @@ def parse_coordinator_routes(content: str) -> dict:
             if str_match:
                 path = str_match.group(1).strip()
                 handler_expr = str_match.group(2).strip()
-                for method in ("get", "post", "put", "patch", "delete"):
+                for method in HTTP_METHODS:
                     if re.search(r'(?:axum::routing::|\b)' + method + r'\(', handler_expr) or re.search(r'\.' + method + r'\(', handler_expr):
-                        routes[(method, path)] = handler_expr
+                        routes[(method, to_openapi_path(path))] = handler_expr
         idx = pos + 7
     return routes
 
 
+def load_route_exclusions():
+    """
+    Load and validate docs/api/route-exclusions.yaml.
+
+    Returns (set_of_(method, path), category_rationales), or None when the
+    manifest is missing/malformed.
+    """
+    try:
+        import yaml  # PyYAML
+    except ImportError:
+        print("ERROR: PyYAML not installed. Run: pip install pyyaml", file=sys.stderr)
+        return None
+
+    if not EXCLUSIONS_PATH.exists():
+        print(
+            f"[FAIL] Route exclusion manifest missing at {EXCLUSIONS_PATH}",
+            file=sys.stderr,
+        )
+        return None
+
+    with open(EXCLUSIONS_PATH, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+
+    errors = []
+    if not isinstance(doc, dict):
+        print("[FAIL] Route exclusion manifest must be a YAML mapping.", file=sys.stderr)
+        return None
+
+    if doc.get("version") != 1:
+        errors.append("version must be 1")
+
+    categories = doc.get("categories")
+    routes = doc.get("routes")
+    if not isinstance(categories, dict) or not categories:
+        errors.append("categories must be a non-empty mapping of category -> rationale")
+        categories = {}
+    if not isinstance(routes, list):
+        errors.append("routes must be a list")
+        routes = []
+
+    for category, rationale in categories.items():
+        if not isinstance(category, str) or not category.strip():
+            errors.append("category names must be non-empty strings")
+        if not isinstance(rationale, str) or not rationale.strip():
+            errors.append(f"category '{category}' has no written rationale")
+
+    excluded = set()
+    seen = set()
+    for entry in routes:
+        if not isinstance(entry, dict):
+            errors.append(f"invalid exclusion entry: {entry!r}")
+            continue
+        method = str(entry.get("method", "")).strip().lower()
+        path = entry.get("path")
+        category = entry.get("category")
+        handler = entry.get("handler", "<unknown>")
+
+        if method not in HTTP_METHODS:
+            errors.append(f"invalid HTTP method '{method}' for {handler}")
+            continue
+        if not isinstance(path, str) or not path.startswith("/"):
+            errors.append(f"invalid path {path!r} for {handler}")
+            continue
+        if category not in categories:
+            errors.append(f"exclusion {method.upper()} {path} uses unknown category '{category}'")
+
+        key = (method, to_openapi_path(path))
+        if key in seen:
+            errors.append(f"duplicate exclusion: {format_route(key)}")
+        seen.add(key)
+        excluded.add(key)
+
+    if errors:
+        for error in errors:
+            print(f"[EXCLUSION ERROR] {error}", file=sys.stderr)
+        return None
+
+    print(
+        f"[OK] Route exclusion manifest loaded: "
+        f"{len(categories)} categories, {len(excluded)} excluded operations."
+    )
+    return excluded, categories
+
+
 def validate_handler_parity(spec: dict) -> bool:
     """
-    Assert zero drift between OpenAPI spec operations and coordinator Axum routes.
-    Fails when implementation handlers diverge from OpenAPI.
+    Assert zero drift in both directions between OpenAPI operations and the
+    coordinator's production Axum router.
+
+    A registered route must either be present in docs/openapi.yaml or be
+    listed in docs/api/route-exclusions.yaml with a written rationale.
+    Stale spec entries and stale exclusions are also rejected.
     """
     if not MAIN_RS_PATH.exists():
         print(f"[WARN] Coordinator main.rs not found at {MAIN_RS_PATH}; skipping parity check.")
         return True
 
+    exclusions = load_route_exclusions()
+    if exclusions is None:
+        return False
+    excluded_routes, _categories = exclusions
+
     with open(MAIN_RS_PATH, encoding="utf-8") as f:
         main_content = f.read()
 
-    impl_routes = parse_coordinator_routes(main_content)
+    impl_routes = set(parse_coordinator_routes(main_content))
     spec_routes = {}
     for path, path_item in spec.get("paths", {}).items():
-        # OpenAPI parameter format {param} matches Axum format :param
-        axum_path = re.sub(r'\{([^}]+)\}', r':\1', path)
         for method, op in path_item.items():
-            if method.lower() in ("get", "post", "put", "patch", "delete"):
-                spec_routes[(method.lower(), axum_path)] = {
-                    "original_path": path,
-                    "operation_id": op.get("operationId", "unnamed"),
-                }
+            if method.lower() in HTTP_METHODS:
+                spec_routes[(method.lower(), path)] = op.get("operationId", "unnamed")
 
-    missing_in_impl = []
-    for route, meta in spec_routes.items():
-        if route not in impl_routes:
-            missing_in_impl.append(f"{route[0].upper()} {meta['original_path']} (operationId: {meta['operation_id']})")
+    spec_keys = set(spec_routes)
+    failures = []
 
+    missing_in_impl = sorted(
+        route for route in spec_keys if route not in impl_routes
+    )
     if missing_in_impl:
-        print("[FAIL] OpenAPI spec contains operations missing from coordinator implementation:", file=sys.stderr)
-        for missing in missing_in_impl:
-            print(f"  - {missing}", file=sys.stderr)
+        failures.append("OpenAPI operations missing from coordinator router:")
+        for route in missing_in_impl:
+            failures.append(
+                f"  - {format_route(route)} (operationId: {spec_routes[route]})"
+            )
+
+    undocumented = sorted(impl_routes - spec_keys - excluded_routes)
+    if undocumented:
+        failures.append(
+            "Coordinator routes missing from the spec and from the exclusion manifest:"
+        )
+        for route in undocumented:
+            failures.append(f"  - {format_route(route)}")
+
+    stale_spec = sorted(spec_keys - impl_routes)
+    if stale_spec:
+        failures.append("OpenAPI operations whose router registration no longer exists:")
+        for route in stale_spec:
+            failures.append(f"  - {format_route(route)}")
+
+    stale_exclusions = sorted(excluded_routes - impl_routes)
+    if stale_exclusions:
+        failures.append("Stale exclusions whose router registration no longer exists:")
+        for route in stale_exclusions:
+            failures.append(f"  - {format_route(route)}")
+
+    contradictions = sorted(excluded_routes & spec_keys)
+    if contradictions:
+        failures.append("Routes listed both in the spec and in the exclusion manifest:")
+        for route in contradictions:
+            failures.append(f"  - {format_route(route)}")
+
+    if failures:
+        print("[FAIL] Router/spec parity check failed:", file=sys.stderr)
+        for line in failures:
+            print(line, file=sys.stderr)
         return False
 
-    print(f"[OK] Handler parity validated: all {len(spec_routes)} OpenAPI operations match coordinator router.")
+    print(
+        f"[OK] Handler parity validated: {len(spec_routes)} documented operations, "
+        f"{len(excluded_routes)} documented exclusions, "
+        f"{len(impl_routes)} registered operations, zero drift."
+    )
     return True
 
 
@@ -310,7 +450,7 @@ def main() -> int:
 
     print(f"Coordinator API conformance check")
     print(f"  Spec : {SPEC_PATH}")
-    print(f"  Mode : {'live — ' + COORDINATOR_URL if COORDINATOR_URL else 'offline'}")
+    print(f"  Mode : {'live - ' + COORDINATOR_URL if COORDINATOR_URL else 'offline'}")
     print()
 
     spec = load_spec()
