@@ -1,4 +1,4 @@
-# Routes intentionally absent from docs/openapi.yaml.
+﻿# Routes intentionally absent from docs/openapi.yaml.
 #
 # The coordinator's production router is assembled in
 # services/coordinator/src/main.rs. Every registered route must either have an
@@ -13,9 +13,11 @@ categories:
     Internal operator/debug endpoint (dashboard, Prometheus metrics, leader
     state, benchmark state). It is not a public player REST API.
   admin: >-
-    Admin-only control plane authenticated with x-admin-* headers. These are
-    operator actions, not part of the public player API; the separate
-    docs/api/openapi.yaml publishing profile documents them for operators.
+    Admin-only control plane authenticated by a global middleware that verifies
+    a Stellar signed-payload challenge against the server-side ADMIN_KEYS
+    allowlist before any handler runs. These are operator actions, not part of
+    the public player API; the separate docs/api/openapi.yaml publishing profile
+    documents them for operators.
   control-plane: >-
     Coordinator/MPC node control plane used internally by MPC nodes and
     operators (registration, heartbeats, versions, identity, attestation,

@@ -1,4 +1,4 @@
-openapi: "3.0.3"
+﻿openapi: "3.0.3"
 info:
   title: StellPoker Coordinator API
   version: "0.1.0"
@@ -23,6 +23,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+
+  /api/whoami:
+    get:
+      operationId: getWhoAmI
+      summary: Cosmetic caller identity for admin UI gating
+      description: |
+        Returns whether the supplied `x-admin-address` wallet is configured as
+        an admin and its configured role. This endpoint is intentionally
+        unsigned and must never be used as authorization for `/api/admin/*`;
+        those routes require a Stellar signed-payload challenge.
+      parameters:
+        - name: x-admin-address
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Stellar public key to inspect.
+      responses:
+        "200":
+          description: Caller identity (cosmetic only)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoAmIResponse"
 
   /api/stats:
     get:
@@ -960,6 +984,21 @@ components:
           type: integer
         request_metrics:
           type: object
+
+    WhoAmIResponse:
+      type: object
+      required: [address, admin, role]
+      properties:
+        address:
+          type: string
+          nullable: true
+        admin:
+          type: boolean
+          description: True when the address is in the server-side ADMIN_KEYS allowlist. Cosmetic only.
+        role:
+          type: string
+          nullable: true
+          description: Configured admin role, or null for non-admins.
 
     MpcNodeHealth:
       type: object

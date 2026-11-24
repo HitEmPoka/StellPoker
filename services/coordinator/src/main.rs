@@ -1,4 +1,4 @@
-//! Stellar Poker MPC Coordinator Service
+﻿//! Stellar Poker MPC Coordinator Service
 //!
 //! This service orchestrates the MPC committee for:
 //! 1. Distributed share preparation across all MPC nodes (coNoir split-input)
@@ -40,6 +40,7 @@ use sysinfo::{get_current_pid, ProcessesToUpdate, System};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+mod admin_auth_middleware;
 mod anti_dumping;
 mod api;
 mod api_keys;
@@ -178,10 +179,20 @@ struct HealthResponse {
     pub chain_cache: chain_cache::CacheStats,
 }
 
+/// Cosmetic caller identity used by the admin UI. This endpoint is unsigned
+/// and must never be treated as authorization for `/api/admin/*`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct WhoAmIResponse {
+    pub address: Option<String>,
+    pub admin: bool,
+    pub role: Option<String>,
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
         health,
+        whoami,
         get_stats,
         api::get_chain_config,
         api::create_table,
@@ -197,6 +208,7 @@ struct HealthResponse {
         SorobanHealth,
         ContractDeployment,
         HealthResponse,
+        WhoAmIResponse,
         stats::GlobalStats,
         stats::PlayerStats,
         stats::StatsResponse,
@@ -245,6 +257,7 @@ struct HealthResponse {
         (name = "Flags", description = "Runtime feature flags"),
         (name = "Sessions", description = "MPC session management"),
         (name = "Wallet Auth", description = "Wallet-based authentication"),
+        (name = "Auth", description = "Cosmetic caller identity for UI gating"),
         (name = "Admin", description = "Admin operations (requires RBAC)"),
         (name = "Metrics", description = "Prometheus metrics"),
     ),
@@ -532,7 +545,7 @@ struct AppState {
     metrics: MetricsState,
     chat_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     /// Per-table broadcast channels for `/api/table/:table_id/state/ws`
-    /// (Issue #105 — real-time game state push).
+    /// (Issue #105 ΓÇö real-time game state push).
     game_state_channels: Arc<Mutex<HashMap<u32, tokio::sync::broadcast::Sender<String>>>>,
     /// Live anonymous spectator counts per table (Issue #171).
     spectators: spectators::SpectatorRegistry,
@@ -547,7 +560,7 @@ struct AppState {
     enc_key: Arc<crypto::EncryptionKey>,
     /// When true, non-admin API routes reject requests with 503 (drain mode).
     pub maintenance_mode: Arc<AtomicBool>,
-    /// Shared HTTP client used for all coordinator → MPC node calls.
+    /// Shared HTTP client used for all coordinator ΓåÆ MPC node calls.
     mpc_client: reqwest::Client,
     /// Whether this coordinator instance currently holds the leader lock.
     leader_state: leader_election::LeaderState,
@@ -685,7 +698,7 @@ struct TableSession {
     /// Timestamp when the current MPC operation started (epoch secs).
     #[serde(default)]
     mpc_operation_started: Option<u64>,
-    /// Circuit artifact hashes pinned at session start (circuit_name → sha256_hex).
+    /// Circuit artifact hashes pinned at session start (circuit_name ΓåÆ sha256_hex).
     /// Every proof submission verifies these to prevent mid-session artifact changes.
     #[serde(default)]
     pinned_artifact_hashes: HashMap<String, String>,
@@ -719,7 +732,7 @@ async fn main() {
             .init();
     }
     // Initialise tracing + optional OpenTelemetry OTLP pipeline.
-    // The guard must stay alive for the duration of the process — dropping it
+    // The guard must stay alive for the duration of the process ΓÇö dropping it
     // flushes all pending spans to the exporter.
     let _otel_guard = telemetry::init_tracer();
 
@@ -769,7 +782,7 @@ async fn main() {
             soroban_config.poker_table_contract
         );
     } else {
-        tracing::warn!("Soroban not configured — on-chain submission disabled");
+        tracing::warn!("Soroban not configured ΓÇö on-chain submission disabled");
     }
 
     let initial_node_healths = mpc_config
@@ -908,9 +921,9 @@ async fn main() {
         leader_election::spawn(Arc::clone(pool), leader_state.clone());
         tracing::info!("Leader election started (PostgreSQL advisory lock)");
     } else {
-        // No database → single-node mode; this instance is always the leader.
+        // No database ΓåÆ single-node mode; this instance is always the leader.
         leader_state.force_leader();
-        tracing::warn!("No database — running in single-node mode (always leader)");
+        tracing::warn!("No database ΓÇö running in single-node mode (always leader)");
     }
 
     let mut wasm_config = wasmtime::Config::new();
@@ -1332,6 +1345,7 @@ async fn main() {
         .route("/", get(dashboard::dashboard_page))
         .route("/metrics", get(metrics_endpoint))
         .route("/api/health", get(health))
+        .route("/api/whoami", get(whoami))
         .route("/api/admin/deprecations", get(api_version::deprecation_report))
         .route("/api/leader", get(get_leader_status))
         .route("/api/stats", get(get_stats))
@@ -1570,6 +1584,12 @@ async fn main() {
             "/api/tournaments/:id/hand-counts",
             get(api::tournament_api::get_table_hand_counts),
         )
+        // Issue #1010: every /api/admin/* request is authenticated here before
+        // any handler runs. The frontend gate is purely cosmetic.
+        .layer(axum::middleware::from_fn_with_state(
+            api::admin::AdminAuthGuardState::from_app_state(&state),
+            admin_auth_middleware::require_admin_auth,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.idempotency_store.clone(),
             idempotency::idempotency_middleware,
@@ -1639,8 +1659,8 @@ async fn shutdown_signal(
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => tracing::warn!("Received Ctrl+C — beginning graceful shutdown"),
-        _ = terminate => tracing::warn!("Received SIGTERM — beginning graceful shutdown"),
+        _ = ctrl_c => tracing::warn!("Received Ctrl+C ΓÇö beginning graceful shutdown"),
+        _ = terminate => tracing::warn!("Received SIGTERM ΓÇö beginning graceful shutdown"),
     }
 
     let grace = drain::DrainState::grace_secs_from_env();
@@ -1699,6 +1719,49 @@ async fn check_soroban_connectivity(rpc_url: &str) -> bool {
         Ok(r) => r.status().is_success() || r.status() == 200,
         Err(_) => false,
     }
+}
+
+/// GET /api/whoami
+///
+/// Returns the caller's configured admin role for cosmetic UI gating only.
+/// Admin requests must still present a signed payload in `x-admin-*`, which is
+/// verified by the global admin middleware.
+#[utoipa::path(
+    get,
+    path = "/api/whoami",
+    tag = "Auth",
+    description = "Cosmetic caller identity. Pass the wallet address in the x-admin-address header. This response is not an authorization token.",
+    responses(
+        (status = 200, description = "Caller identity", body = WhoAmIResponse)
+    )
+)]
+async fn whoami(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Json<WhoAmIResponse> {
+    let address = headers
+        .get("x-admin-address")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    let role = match address.as_deref() {
+        Some(candidate) if stellar_strkey::ed25519::PublicKey::from_string(candidate).is_ok() => {
+            state
+                .admin_config
+                .read()
+                .await
+                .key_by_address
+                .get(candidate)
+                .map(|admin_role| admin_role.as_str().to_string())
+        }
+        _ => None,
+    };
+
+    Json(WhoAmIResponse {
+        admin: role.is_some(),
+        role,
+        address,
+    })
 }
 
 #[utoipa::path(
@@ -1887,7 +1950,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
     });
 
     // Every frame is validated and sanitized before it is relayed, and each
-    // connection is rate limited (Issue #140) — see `chat.rs`.
+    // connection is rate limited (Issue #140) ΓÇö see `chat.rs`.
     let mut recv_task = tokio::spawn(async move {
         let mut limiter = chat::ChatRateLimiter::default();
         while let Some(Ok(msg)) = ws_receiver.next().await {
@@ -1920,7 +1983,7 @@ async fn handle_chat_socket(socket: WebSocket, table_id: u32, state: AppState) {
 /// Real-time game state push (Issue #105). Sends the connecting client an
 /// immediate snapshot, then a fresh snapshot every time the table's phase,
 /// cards, or on-chain betting state changes (deal/reveal/showdown/player
-/// actions). Server push only — the coordinator does not read anything the
+/// actions). Server push only ΓÇö the coordinator does not read anything the
 /// client sends on this socket. Clients that can't hold a WebSocket open
 /// (or whose upgrade fails) should fall back to polling
 /// `GET /api/table/:table_id/state`.
@@ -2050,7 +2113,7 @@ async fn handle_game_state_socket(
 ///
 /// Anonymous spectator stream (Issue #171). No wallet or auth required.
 /// Delivers the same public game-state snapshots as `/state/ws` (community
-/// cards, phase, on-chain betting state — never hole cards) and counts the
+/// cards, phase, on-chain betting state ΓÇö never hole cards) and counts the
 /// connection towards the table's spectator indicator for as long as it
 /// stays open. Every join/leave broadcasts a `{"type":"spectators"}` frame
 /// on the table's game-state channel.
@@ -2097,7 +2160,7 @@ async fn get_stats(State(state): State<AppState>) -> Json<stats::StatsResponse> 
     Json(stats::get_stats(&state.stats, ttl).await)
 }
 
-/// GET /api/stats/player/:address — HUD stats for seat tooltip (Issue #55).
+/// GET /api/stats/player/:address ΓÇö HUD stats for seat tooltip (Issue #55).
 async fn get_player_hud_stats(
     State(state): State<AppState>,
     axum::extract::Path(address): axum::extract::Path<String>,
@@ -2105,7 +2168,7 @@ async fn get_player_hud_stats(
     Json(stats::get_player_hud(&state.stats, &address).await)
 }
 
-/// GET /api/ratings/leaderboard — on-chain ELO leaderboard cache (Issue #70).
+/// GET /api/ratings/leaderboard ΓÇö on-chain ELO leaderboard cache (Issue #70).
 async fn get_rating_leaderboard(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,

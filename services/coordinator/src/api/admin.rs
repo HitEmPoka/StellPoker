@@ -1,13 +1,10 @@
 use axum::http::{HeaderMap, StatusCode};
-use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-use crate::AppState;
+use crate::{signed_payload, AppState};
 
 const ADMIN_SKEW_SECS: i64 = 300;
 
@@ -50,6 +47,14 @@ pub struct AdminConfig {
 }
 
 impl AdminConfig {
+    /// Empty allowlist used by tests and by a coordinator with no admin keys.
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+            key_by_address: HashMap::new(),
+        }
+    }
+
     pub fn from_env() -> Self {
         let raw = std::env::var("ADMIN_KEYS").unwrap_or_default();
         let entries = if raw.is_empty() {
@@ -113,22 +118,72 @@ impl AdminState {
     }
 }
 
-/// Validate an admin-signed request. Returns the authenticated admin context
-/// with the assigned role from the allowlist.
+/// State needed by the global `/api/admin/*` authorization middleware.
+///
+/// This deliberately carries only the admin allowlist and nonce store so the
+/// middleware can be unit-tested without constructing a full `AppState`.
+#[derive(Clone)]
+pub struct AdminAuthGuardState {
+    pub config: Arc<RwLock<AdminConfig>>,
+    pub nonce_state: AdminState,
+}
+
+impl AdminAuthGuardState {
+    pub fn new(config: AdminConfig) -> Self {
+        Self {
+            config: Arc::new(RwLock::new(config)),
+            nonce_state: AdminState::new(),
+        }
+    }
+
+    pub fn from_app_state(state: &AppState) -> Self {
+        Self {
+            config: state.admin_config.clone(),
+            nonce_state: state.admin_state.clone(),
+        }
+    }
+}
+
+/// The canonical signed-payload challenge format for admin requests.
+pub fn admin_auth_message(address: &str, action: &str, nonce: u64, timestamp: i64) -> String {
+    format!(
+        "stellar-poker-admin|{}|{}|{}|{}",
+        address, action, nonce, timestamp
+    )
+}
+
+/// Read a required header, returning 401 when it is absent or not UTF-8.
+pub(crate) fn header_string(headers: &HeaderMap, key: &str) -> Result<String, StatusCode> {
+    headers
+        .get(key)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_string())
+        .ok_or(StatusCode::UNAUTHORIZED)
+}
+
+/// Parse the replay-protection nonce from `x-admin-nonce`.
+pub fn nonce_from_headers(headers: &HeaderMap) -> Result<u64, StatusCode> {
+    header_string(headers, "x-admin-nonce")?
+        .parse::<u64>()
+        .map_err(|_| StatusCode::UNAUTHORIZED)
+}
+
+/// Verify an admin-signed request without consuming its nonce.
+///
+/// The global middleware calls this before any admin handler runs. Replay
+/// protection is applied once by `consume_admin_nonce`; handlers call
+/// `validate_admin_request` for their own action-scoped signature check.
 ///
 /// Headers:
 ///   x-admin-address: Stellar G... public key
 ///   x-admin-signature: Ed25519 signature (hex or base64)
+///   x-admin-action: action the caller signed (must match the handler action)
 ///   x-admin-nonce: strictly increasing u64 per-address for replay protection
-///   x-admin-timestamp: unix epoch seconds, ±300s skew allowed
-///
-/// The signed message format is:
-///   stellar-poker-admin|{address}|{action}|{nonce}|{timestamp}
-pub async fn validate_admin_request(
-    state: &AppState,
+///   x-admin-timestamp: unix epoch seconds, +/-300s skew allowed
+pub async fn authenticate_admin_request(
+    guard: &AdminAuthGuardState,
     headers: &HeaderMap,
     action: &str,
-    admin_state: &AdminState,
 ) -> Result<AdminAuth, StatusCode> {
     let address = header_string(headers, "x-admin-address")?;
 
@@ -136,25 +191,21 @@ pub async fn validate_admin_request(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Check the address is in the admin allowlist and get its role.
-    let admin_config = state.admin_config.read().await;
-    let role = admin_config
+    // Allowlist comes from ADMIN_KEYS configuration, never from client code.
+    let role = guard
+        .config
+        .read()
+        .await
         .key_by_address
         .get(&address)
         .copied()
         .ok_or(StatusCode::FORBIDDEN)?;
-    drop(admin_config);
-
-    let insecure_auth = allow_insecure_dev_auth();
-    if insecure_auth {
-        return Ok(AdminAuth { address, role });
-    }
 
     let signature_raw = header_string(headers, "x-admin-signature")?;
-    let nonce = header_string(headers, "x-admin-nonce")
-        .and_then(|v| v.parse::<u64>().map_err(|_| StatusCode::UNAUTHORIZED))?;
-    let timestamp = header_string(headers, "x-admin-timestamp")
-        .and_then(|v| v.parse::<i64>().map_err(|_| StatusCode::UNAUTHORIZED))?;
+    let nonce = nonce_from_headers(headers)?;
+    let timestamp = header_string(headers, "x-admin-timestamp")?
+        .parse::<i64>()
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let now = now_unix_secs_i64()?;
     if (now - timestamp).abs() > ADMIN_SKEW_SECS {
@@ -162,18 +213,44 @@ pub async fn validate_admin_request(
     }
 
     let message = admin_auth_message(&address, action, nonce, timestamp);
-    verify_signature(&address, &message, &signature_raw)?;
+    signed_payload::verify_signature(&address, &message, &signature_raw)?;
 
-    // Replay protection: strictly increasing nonces per admin address.
-    let mut nonce_store = admin_state.last_nonce_by_address.write().await;
-    if let Some(last_nonce) = nonce_store.get(&address) {
+    Ok(AdminAuth { address, role })
+}
+
+/// Enforce strictly increasing nonces. Called once per request by the global
+/// admin middleware so replayed signed payloads cannot reach any handler.
+pub async fn consume_admin_nonce(
+    guard: &AdminAuthGuardState,
+    address: &str,
+    nonce: u64,
+) -> Result<(), StatusCode> {
+    let mut nonce_store = guard.nonce_state.last_nonce_by_address.write().await;
+    if let Some(last_nonce) = nonce_store.get(address) {
         if nonce <= *last_nonce {
             return Err(StatusCode::CONFLICT);
         }
     }
-    nonce_store.insert(address.clone(), nonce);
+    nonce_store.insert(address.to_string(), nonce);
+    Ok(())
+}
 
-    Ok(AdminAuth { address, role })
+/// Validate an admin-signed request from a handler.
+///
+/// The global middleware has already authenticated the signature and consumed
+/// the nonce; this re-checks the action-scoped signature so a caller cannot
+/// reuse a signature minted for a different admin operation.
+pub async fn validate_admin_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    action: &str,
+    admin_state: &AdminState,
+) -> Result<AdminAuth, StatusCode> {
+    let guard = AdminAuthGuardState {
+        config: state.admin_config.clone(),
+        nonce_state: admin_state.clone(),
+    };
+    authenticate_admin_request(&guard, headers, action).await
 }
 
 /// Require a minimum admin role. Returns FORBIDDEN if the role is insufficient.
@@ -182,86 +259,6 @@ pub fn require_role(auth: &AdminAuth, min_role: AdminRole) -> Result<(), StatusC
         return Err(StatusCode::FORBIDDEN);
     }
     Ok(())
-}
-
-fn verify_signature(address: &str, message: &str, signature_raw: &str) -> Result<(), StatusCode> {
-    let stellar_pk = stellar_strkey::ed25519::PublicKey::from_string(address)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let verifying_key =
-        VerifyingKey::from_bytes(&stellar_pk.0).map_err(|_| StatusCode::UNAUTHORIZED)?;
-
-    let signature = decode_signature(signature_raw)?;
-
-    if verifying_key.verify(message.as_bytes(), &signature).is_ok() {
-        return Ok(());
-    }
-
-    // SEP-53: SHA256("Stellar Signed Message:\n" + message)
-    let mut hasher = Sha256::new();
-    hasher.update(b"Stellar Signed Message:\n");
-    hasher.update(message.as_bytes());
-    let message_hash: [u8; 32] = hasher.finalize().into();
-
-    verifying_key
-        .verify(&message_hash, &signature)
-        .map_err(|_| StatusCode::UNAUTHORIZED)
-}
-
-fn decode_signature(signature_raw: &str) -> Result<Signature, StatusCode> {
-    let s = signature_raw.trim();
-
-    let decoded = if let Some(hex) = s.strip_prefix("0x") {
-        hex::decode(hex).map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if s.len() == 128 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        hex::decode(s).map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else {
-        base64::engine::general_purpose::STANDARD
-            .decode(s)
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    };
-
-    let normalized: [u8; 64] = if decoded.len() == 64 {
-        decoded
-            .as_slice()
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if decoded.len() == 68 {
-        decoded[4..68]
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else if decoded.len() == 72 && decoded[4..8] == [0, 0, 0, 64] {
-        decoded[8..72]
-            .try_into()
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-    } else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-    Ok(Signature::from_bytes(&normalized))
-}
-
-fn admin_auth_message(address: &str, action: &str, nonce: u64, timestamp: i64) -> String {
-    format!(
-        "stellar-poker-admin|{}|{}|{}|{}",
-        address, action, nonce, timestamp
-    )
-}
-
-fn allow_insecure_dev_auth() -> bool {
-    match std::env::var("ALLOW_INSECURE_DEV_AUTH") {
-        Ok(value) => matches!(
-            value.to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
-        Err(_) => false,
-    }
-}
-
-fn header_string(headers: &HeaderMap, key: &str) -> Result<String, StatusCode> {
-    headers
-        .get(key)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_string())
-        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 fn is_valid_stellar_address(address: &str) -> bool {

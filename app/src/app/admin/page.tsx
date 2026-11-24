@@ -26,16 +26,19 @@ interface MpcNodeHealth {
   lastHeartbeat: string;
 }
 
-// Sample admin wallet whitelist for auth gate (#29)
-const ADMIN_WHITELIST = [
-  "GADMIN11111111111111111111111111111111111111111111111111",
-  "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFXYSFZUK25QG5W2H2MVM",
-];
+/** Cosmetic identity response from the coordinator; never an auth token. */
+interface WhoAmI {
+  address: string | null;
+  admin: boolean;
+  role: string | null;
+}
 
 /** Default */
 export default function AdminDashboardPage() {
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(true);
+  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const [loadingIdentity, setLoadingIdentity] = useState(true);
   const [isContractPaused, setIsContractPaused] = useState(false);
   const [showPanicModal, setShowPanicModal] = useState(false);
 
@@ -69,6 +72,33 @@ export default function AdminDashboardPage() {
       });
   }, []);
 
+  // The browser never decides who is an admin. It asks the coordinator and
+  // uses the response only to hide/show controls; every admin HTTP request is
+  // independently verified server-side from a Stellar signed payload.
+  useEffect(() => {
+    if (!wallet?.address) {
+      setWhoami(null);
+      setLoadingIdentity(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingIdentity(true);
+    fetch("/api/whoami", {
+      headers: { "x-admin-address": wallet.address },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as WhoAmI;
+      })
+      .then(setWhoami)
+      .catch(() => setWhoami(null))
+      .finally(() => setLoadingIdentity(false));
+
+    return () => controller.abort();
+  }, [wallet?.address]);
+
   const walletAddress = wallet?.address;
   const refreshMetrics = useCallback(async () => {
     if (!walletAddress) return;
@@ -96,21 +126,13 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleSimulateAdminLogin = () => {
-    setWallet({
-      address: ADMIN_WHITELIST[0],
-      walletType: "freighter",
-      signMessage: async () => "sig_admin_mock",
-    });
-  };
-
   const togglePanicPause = () => {
     setIsContractPaused((prev) => !prev);
     setShowPanicModal(false);
   };
 
-  const isAuthorized =
-    wallet && (ADMIN_WHITELIST.includes(wallet.address) || wallet.address.startsWith("GADMIN") || wallet.address.length > 0);
+  // Cosmetic only: the coordinator's /api/admin/* middleware is the real gate.
+  const isAuthorized = whoami?.admin === true;
 
   return (
     <div className="min-h-screen bg-[#0d2137] text-[#f5e6c8] p-6 font-mono">
@@ -119,7 +141,7 @@ export default function AdminDashboardPage() {
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b-2 border-[#8b6914] pb-4">
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-[#f1c40f]">
-              🛡️ StellPoker Admin Dashboard
+              ≡ƒ¢í∩╕Å StellPoker Admin Dashboard
             </h1>
             <p className="text-xs text-[#95a5a6] mt-1">
               Table Management & MPC Committee Health Monitor
@@ -131,13 +153,16 @@ export default function AdminDashboardPage() {
               href="/"
               className="text-xs px-3 py-2 bg-[#1a3a5c] border border-[#3498db] text-[#3498db] hover:bg-[#2471a3] hover:text-white transition"
             >
-              ← Back to Game
+              ΓåÉ Back to Game
             </Link>
 
             {wallet ? (
               <div className="text-xs bg-[#1a120c] px-3 py-2 border border-[#8b6914]">
                 <span className="text-[#27ae60]">Connected:</span>{" "}
                 {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+                {whoami?.role ? (
+                  <span className="ml-2 text-[#f1c40f]">({whoami.role})</span>
+                ) : null}
               </div>
             ) : (
               <button
@@ -151,14 +176,14 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Auth Gate Check */}
-        {loadingWallet ? (
+        {loadingWallet || loadingIdentity ? (
           <div className="p-8 text-center text-sm text-[#95a5a6]">
             Verifying admin authorization...
           </div>
         ) : !isAuthorized ? (
           <div className="bg-[#1a120c] border-2 border-[#e74c3c] p-8 text-center space-y-4">
             <h2 className="text-lg font-bold text-[#e74c3c]">
-              ⚠️ Access Restricted: Contract Owner Only
+              ΓÜá∩╕Å Access Restricted: Contract Owner Only
             </h2>
             <p className="text-xs text-[#95a5a6] max-w-md mx-auto">
               You must be connected with an authorized Stellar admin wallet to access table controls and committee health metrics.
@@ -169,12 +194,6 @@ export default function AdminDashboardPage() {
                 className="px-4 py-2 bg-[#27ae60] text-white text-xs font-bold hover:bg-[#2ecc71]"
               >
                 Connect Wallet
-              </button>
-              <button
-                onClick={handleSimulateAdminLogin}
-                className="px-4 py-2 bg-[#3498db] text-white text-xs font-bold hover:bg-[#5dade2]"
-              >
-                Demo Admin Access
               </button>
             </div>
           </div>
@@ -208,7 +227,7 @@ export default function AdminDashboardPage() {
                     : "bg-[#e74c3c] hover:bg-[#c0392b] animate-bounce"
                 }`}
               >
-                {isContractPaused ? "Resume Table Creation" : "🚨 PANIC: Pause All Tables"}
+                {isContractPaused ? "Resume Table Creation" : "≡ƒÜ¿ PANIC: Pause All Tables"}
               </button>
             </div>
 
@@ -251,7 +270,7 @@ export default function AdminDashboardPage() {
             {/* Active Tables Grid */}
             <div className="space-y-3">
               <h2 className="text-sm font-bold text-[#f1c40f] flex items-center gap-2">
-                <span>♠️ Active Poker Tables</span>
+                <span>ΓÖá∩╕Å Active Poker Tables</span>
                 <span className="text-xs text-[#95a5a6]">({tables.length} Total)</span>
               </h2>
 
@@ -286,7 +305,7 @@ export default function AdminDashboardPage() {
             {/* MPC Committee Node Health Monitor */}
             <div className="space-y-3 pt-4">
               <h2 className="text-sm font-bold text-[#f1c40f]">
-                ⚡ ZK-MPC Committee Health Status
+                ΓÜí ZK-MPC Committee Health Status
               </h2>
 
               <div className="bg-[#1a120c] border border-[#8b6914] divide-y divide-[#8b6914]/50">
