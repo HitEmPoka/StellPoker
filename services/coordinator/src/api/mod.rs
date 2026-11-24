@@ -1938,11 +1938,49 @@ pub async fn get_player_cards(
         return Err(StatusCode::BAD_GATEWAY);
     }
 
+    // Issue #882: If client supplies x-session-pubkey (64 hex chars = 32 bytes),
+    // encrypt and sign the private card delivery bound to the player's address.
+    let delivery = if let Some(pk_hex) = headers
+        .get("x-session-pubkey")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| s.len() == 64)
+    {
+        if let Ok(pk_bytes) = hex::decode(pk_hex) {
+            if let Ok(pk_arr) = <[u8; 32]>::try_from(pk_bytes.as_slice()) {
+                let signing_seed: [u8; 32] = std::env::var("COMMITTEE_SIGNING_SEED")
+                    .ok()
+                    .and_then(|s| hex::decode(s.trim()).ok())
+                    .and_then(|b| b.try_into().ok())
+                    .unwrap_or([0x42u8; 32]);
+                let committee_sk = ed25519_dalek::SigningKey::from_bytes(&signing_seed);
+                session::build_authenticated_card_delivery(
+                    &pk_arr,
+                    table_id,
+                    &auth.address,
+                    cards[0],
+                    cards[1],
+                    &salts[0],
+                    &salts[1],
+                    &committee_sk,
+                )
+                .ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     Ok(Json(PlayerCardsResponse {
         card1: cards[0],
         card2: cards[1],
         salt1: salts[0].clone(),
         salt2: salts[1].clone(),
+        delivery,
     }))
 }
 

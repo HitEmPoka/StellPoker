@@ -100,12 +100,25 @@ pub struct TableStateResponse {
     pub state: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, ToSchema)]
+pub struct AuthenticatedCardDelivery {
+    pub table_id: u32,
+    pub recipient_address: String,
+    pub ephemeral_pubkey: String,
+    pub nonce: String,
+    pub ciphertext: String,
+    pub committee_signature: String,
+    pub committee_pubkey: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct PlayerCardsResponse {
     pub card1: u32,
     pub card2: u32,
     pub salt1: String,
     pub salt2: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<AuthenticatedCardDelivery>,
 }
 
 #[derive(Serialize, ToSchema)]

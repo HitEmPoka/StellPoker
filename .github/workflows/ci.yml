@@ -201,6 +201,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            ~/.nargo
             .tmp_tools
             .tmp_nargo_home
           key: ${{ runner.os }}-nargo-1.0.0-beta.17
@@ -217,9 +218,21 @@ jobs:
 
       - name: Install Nargo for tests
         run: |
-          curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
+          if ! command -v nargo >/dev/null 2>&1; then
+            curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
+            $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
+          fi
           echo "$HOME/.nargo/bin" >> $GITHUB_PATH
-          $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
+
+      # Issue #887: Fail CI on unformatted Noir and treat warnings as errors.
+      - name: Check Noir formatting (nargo fmt --check)
+        run: |
+          nargo fmt --check --program-dir circuits/lib
+          for manifest in circuits/*/Nargo.toml; do
+            circuit="$(dirname "${manifest}")"
+            [ "${circuit}" = "circuits/lib" ] && continue
+            nargo fmt --check --program-dir "${circuit}"
+          done
 
       # nargo has no `--all` and there is no workspace manifest, so check the
       # shared library and every circuit directory discovered by globbing
@@ -227,11 +240,11 @@ jobs:
       # automatically — no hardcoded list to keep in sync.
       - name: Check shared library and all circuits
         run: |
-          nargo check --program-dir circuits/lib
+          nargo check --deny-warnings --program-dir circuits/lib
           for manifest in circuits/*/Nargo.toml; do
             circuit="$(dirname "${manifest}")"
             [ "${circuit}" = "circuits/lib" ] && continue
-            nargo check --program-dir "${circuit}"
+            nargo check --deny-warnings --program-dir "${circuit}"
           done
 
       - name: Compile all Noir circuits

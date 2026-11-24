@@ -37,6 +37,12 @@ pub fn is_node_unavailable_error(error: &str) -> bool {
     error.contains("NODE_UNAVAILABLE")
 }
 
+/// Whether an error returned from this module indicates an MPC node phase
+/// budget timeout (Issue #885), allowing the coordinator to retry or reassign.
+pub fn is_phase_timeout_error(error: &str) -> bool {
+    error.contains("MPC_TIMEOUT:") || error.contains("timeout:")
+}
+
 // ── TLS client factory ────────────────────────────────────────────────────────
 
 /// Build the shared `reqwest::Client` used for all coordinator → MPC node calls.
@@ -992,6 +998,15 @@ async fn trigger_and_collect_proof(
                 });
             }
             s if s.starts_with("failed") => {
+                if s.contains("timeout:") {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        node = %proof_node,
+                        reason = %s,
+                        "MPC node aborted proving session due to phase timeout; eligible for retry/reassign"
+                    );
+                    return Err(format!("MPC_TIMEOUT: {}", s));
+                }
                 return Err(format!("proof generation failed: {}", s));
             }
             _ => {}

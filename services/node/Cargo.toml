@@ -36,6 +36,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 # Already in the lockfile via ed25519-dalek, so this adds no new crate.
 curve25519-dalek = "4"
 stellar-strkey = "0.0.13"
+aes-gcm = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
