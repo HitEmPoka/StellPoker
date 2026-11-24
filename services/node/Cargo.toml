@@ -28,7 +28,7 @@ sha2 = "0.10"
 tower = { version = "0.4", features = ["util"] }
 zeroize = { version = "1", features = ["derive"] }
 prometheus = "0.14"
-sysinfo = "0.37"
+sysinfo = "0.39"
 # Key enrollment ceremony CLI (`mpc-enroll`, Issue #247)
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
