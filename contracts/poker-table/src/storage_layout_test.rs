@@ -80,6 +80,9 @@ const EXPECTED_LAYOUT: &[(&str, u32, bool)] = &[
     ("SevenDeuceBounty", 1, false),
     ("BombPotConfig", 1, false),
     ("RabbitHunt", 1, false),
+    ("SitOutNextBb", 1, false),
+    ("LastAggressor", 1, false),
+    ("ColorUpSchedule", 1, false),
 ];
 
 /// Construct every `DataKey` variant once so a removal/rename is a
@@ -138,6 +141,9 @@ fn construct_all(env: &Env, table_id: u32, player: &Address) -> std::vec::Vec<Da
         DataKey::SevenDeuceBounty(table_id),
         DataKey::BombPotConfig(table_id),
         DataKey::RabbitHunt(table_id),
+        DataKey::SitOutNextBb(table_id),
+        DataKey::LastAggressor(table_id),
+        DataKey::ColorUpSchedule(table_id),
     ]
 }
 
@@ -195,6 +201,9 @@ fn variant_name(key: &DataKey) -> &'static str {
         DataKey::SevenDeuceBounty(_) => "SevenDeuceBounty",
         DataKey::BombPotConfig(_) => "BombPotConfig",
         DataKey::RabbitHunt(_) => "RabbitHunt",
+        DataKey::SitOutNextBb(_) => "SitOutNextBb",
+        DataKey::LastAggressor(_) => "LastAggressor",
+        DataKey::ColorUpSchedule(_) => "ColorUpSchedule",
     }
 }
 
@@ -240,13 +249,17 @@ fn variant_arity(key: &DataKey) -> u32 {
         | DataKey::ContractMigration(_)
         | DataKey::SevenDeuceBounty(_)
         | DataKey::BombPotConfig(_)
-        | DataKey::RabbitHunt(_) => 1,
+        | DataKey::RabbitHunt(_)
+        | DataKey::SitOutNextBb(_)
+        | DataKey::LastAggressor(_)
+        | DataKey::ColorUpSchedule(_) => 1,
         DataKey::PlayerActionCounter(_, _)
         | DataKey::HandRecord(_, _)
         | DataKey::TimeBank(_, _)
         | DataKey::JackpotClaim(_, _)
         | DataKey::ConfigChangeLog(_, _)
-        | DataKey::RakeHistory(_, _) => 2,
+        | DataKey::RakeHistory(_, _)
+        | DataKey::ShownCards(_, _) => 2,
         DataKey::ActionCommitment(_, _, _)
         | DataKey::ActionCommitmentHash(_, _, _)
         | DataKey::ActionCommitmentNonce(_, _, _) => 3,

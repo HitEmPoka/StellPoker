@@ -33,6 +33,13 @@ pub fn process_action(
     }
 
     let pot_before = table.pot;
+    table.action_reopened = false;
+    table.acted_seats |= 1u32 << seat;
+    if matches!(table.phase, GamePhase::Preflop)
+        && game::big_blind_seat(table).ok() == Some(seat)
+    {
+        table.bb_action_taken = true;
+    }
 
     match action {
         Action::Fold => {
@@ -104,84 +111,63 @@ pub fn process_action(
             p.committed += *amount;
             table.pot += *amount;
             table.last_raise_size = *amount;
+            table.last_full_raise_size = *amount;
+            table.action_reopened = true;
+            table.acted_seats = 1u32 << seat;
 
             if p.stack == 0 {
                 p.all_in = true;
             }
             table.players.set(seat, p.clone());
         }
-        Action::Raise(amount) => {
-            // Enforce straddle re-raise rights: when the active straddle is live-only
-            // but `allow_reraise` is false, the straddler cannot re-raise.
-            if env
-                .storage()
-                .instance()
-                .get::<DataKey, ActiveStraddle>(&DataKey::ActiveStraddleState(table.id))
-                .map(|a| a.seat == seat && !a.allow_reraise)
-                .unwrap_or(false)
-            {
-                // Only allow the forced reraise restriction during Preflop where the straddle matters
-                if matches!(table.phase, GamePhase::Preflop) {
-                    return Err(PokerTableError::RaiseTooSmall);
-                }
-            }
-            let to_call = current_bet - p.bet_this_round;
-            // `amount` comes straight from the caller, so the sum can overflow;
-            // an amount that large is simply more chips than anyone has.
-            let total_needed = to_call
-                .checked_add(*amount)
-                .ok_or(PokerTableError::NotEnoughChips)?;
-            // Standard poker minimum-raise rule: the raise increment must be at
-            // least as large as the previous bet or raise in this round, or the
-            // current blind level's big blind if no raise has happened yet.
-            let current_big_blind = game::current_blind_level(table)?.big_blind;
-            let min_raise = core::cmp::max(table.last_raise_size, current_big_blind);
-            if *amount < min_raise {
-                return Err(PokerTableError::RaiseTooSmall);
-            }
-            if total_needed > p.stack {
-                return Err(PokerTableError::NotEnoughChips);
-            }
-
-            match table.config.betting_structure {
-                BettingStructure::NoLimit => {}
-                BettingStructure::PotLimit => {
-                    let max_raise = table.pot.saturating_add(to_call);
-                    if *amount > max_raise {
-                        return Err(PokerTableError::ExceedsPotLimit);
-                    }
-                }
-                BettingStructure::FixedLimit(ref cfg) => {
-                    let allowed_bet = match table.phase {
-                        GamePhase::Preflop | GamePhase::Flop => cfg.small_bet,
-                        _ => cfg.big_bet,
-                    };
-                    if *amount != allowed_bet {
-                        return Err(PokerTableError::InvalidFixedLimitBet);
-                    }
-                }
-            }
-
-            p.stack -= total_needed;
-            p.bet_this_round += total_needed;
-            p.committed += total_needed;
-            table.pot += total_needed;
-            table.last_raise_size = *amount;
-
-            if p.stack == 0 {
-                p.all_in = true;
-            }
-            table.players.set(seat, p.clone());
+        Action::Raise(_) => {
+            return Err(PokerTableError::AmbiguousRaiseIntent);
+        }
+        Action::RaiseBy(increment) => {
+            apply_raise(env, table, seat, &mut p, current_bet, *increment)?;
+        }
+        Action::RaiseTo(total) => {
+            let increment = total
+                .checked_sub(current_bet)
+                .ok_or(PokerTableError::IllegalRaiseIncrement)?;
+            apply_raise(env, table, seat, &mut p, current_bet, increment)?;
         }
         Action::AllIn => {
             let amount = p.stack;
+            let previous_bet = current_bet;
+            p.stack = 0;
             p.bet_this_round += amount;
             p.committed += amount;
             table.pot += amount;
-            p.stack = 0;
             p.all_in = true;
+            let effective_increment = p.bet_this_round - previous_bet;
+            if effective_increment > 0 {
+                table.last_raise_size = effective_increment;
+                let full_raise = core::cmp::max(
+                    table.last_full_raise_size,
+                    game::current_blind_level(table)?.big_blind,
+                );
+                if effective_increment >= full_raise {
+                    table.last_full_raise_size = effective_increment;
+                    table.action_reopened = true;
+                    table.acted_seats = 1u32 << seat;
+                } else {
+                    table.action_reopened = false;
+                }
+            } else {
+                table.action_reopened = false;
+            }
             table.players.set(seat, p.clone());
         }
+    }
+
+    // A river bet, raise or all-in that tops the highest bet makes this seat
+    // the one to show first at showdown (#866).
+    if matches!(table.phase, GamePhase::River) && p.bet_this_round > current_bet {
+        env.storage().instance().set(
+            &DataKey::LastAggressor(table.id),
+            &(table.hand_number, seat),
+        );
     }
 
     // Emit a per-action event so the frontend can react without polling. The
@@ -199,6 +185,95 @@ pub fn process_action(
     advance_turn(env, table, round_max)
 }
 
+/// Validate and apply a raise with an explicit `increment` over `current_bet` (#868).
+fn apply_raise(
+    env: &Env,
+    table: &mut TableState,
+    seat: u32,
+    p: &mut PlayerState,
+    current_bet: i128,
+    increment: i128,
+) -> Result<(), PokerTableError> {
+    // Enforce straddle re-raise rights: when the active straddle is live-only
+    // but `allow_reraise` is false, the straddler cannot re-raise.
+    if env
+        .storage()
+        .instance()
+        .get::<DataKey, ActiveStraddle>(&DataKey::ActiveStraddleState(table.id))
+        .map(|a| a.seat == seat && !a.allow_reraise)
+        .unwrap_or(false)
+    {
+        // Only allow the forced reraise restriction during Preflop where the straddle matters
+        if matches!(table.phase, GamePhase::Preflop) {
+            return Err(PokerTableError::RaiseTooSmall);
+        }
+    }
+    if increment <= 0 {
+        return Err(PokerTableError::IllegalRaiseIncrement);
+    }
+    let to_call = current_bet - p.bet_this_round;
+    // `increment` comes straight from the caller, so the sum can overflow;
+    // an amount that large is simply more chips than anyone has.
+    let total_needed = to_call
+        .checked_add(increment)
+        .ok_or(PokerTableError::NotEnoughChips)?;
+    // Branch validation on whether the current street has an outstanding bet:
+    // on a bet-less street the minimum opening bet is one big blind,
+    // whereas a raise over an existing bet must be at least the last
+    // full raise size (or one big blind if no raise has happened yet).
+    let current_big_blind = game::current_blind_level(table)?.big_blind;
+    let min_raise = if current_bet == 0 {
+        current_big_blind
+    } else {
+        core::cmp::max(table.last_raise_size, current_big_blind)
+    };
+    if increment < min_raise {
+        return Err(PokerTableError::RaiseTooSmall);
+    }
+    if total_needed > p.stack {
+        return Err(PokerTableError::NotEnoughChips);
+    }
+
+    match table.config.betting_structure {
+        BettingStructure::NoLimit => {}
+        BettingStructure::PotLimit => {
+            let max_raise = table.pot.saturating_add(to_call);
+            if increment > max_raise {
+                return Err(PokerTableError::ExceedsPotLimit);
+            }
+        }
+        BettingStructure::FixedLimit(ref cfg) => {
+            let allowed_bet = match table.phase {
+                GamePhase::Preflop | GamePhase::Flop => cfg.small_bet,
+                _ => cfg.big_bet,
+            };
+            if increment != allowed_bet {
+                return Err(PokerTableError::InvalidFixedLimitBet);
+            }
+        }
+    }
+
+    p.stack -= total_needed;
+    p.bet_this_round += total_needed;
+    p.committed += total_needed;
+    table.pot += total_needed;
+    table.last_raise_size = increment;
+    let full_raise = core::cmp::max(table.last_full_raise_size, current_big_blind);
+    if increment >= full_raise {
+        table.last_full_raise_size = increment;
+        table.action_reopened = true;
+        table.acted_seats = 1u32 << seat;
+    } else {
+        table.action_reopened = false;
+    }
+
+    if p.stack == 0 {
+        p.all_in = true;
+    }
+    table.players.set(seat, p.clone());
+    Ok(())
+}
+
 /// Publish a `player_action` event describing a betting move. Topic carries the
 /// action type symbol; data is `(player, amount_added)`.
 fn emit_action(env: &Env, table: &TableState, player: &Address, action: &Action, amount: i128) {
@@ -207,7 +282,7 @@ fn emit_action(env: &Env, table: &TableState, player: &Address, action: &Action,
         Action::Check => "check",
         Action::Call => "call",
         Action::Bet(_) => "bet",
-        Action::Raise(_) => "raise",
+        Action::Raise(_) | Action::RaiseTo(_) | Action::RaiseBy(_) => "raise",
         Action::AllIn => "all_in",
     };
     env.events().publish(
@@ -230,6 +305,10 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
         },
         _ => game::current_blind_level(table)?.big_blind,
     };
+    table.last_full_raise_size = table.last_raise_size;
+    table.acted_seats = 0;
+    table.action_reopened = false;
+    table.bb_action_taken = false;
 
     let num_players = table.players.len() as u32;
     if num_players == 0 {
@@ -312,6 +391,22 @@ fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<()
     let mut next: Option<u32> = None;
     let mut round_complete = true;
 
+    if matches!(table.phase, GamePhase::Preflop) {
+        if let Ok(bb_seat) = game::big_blind_seat(table) {
+            if let Some(bb) = table.players.get(bb_seat) {
+                if !bb.folded
+                    && !bb.all_in
+                    && !bb.sitting_out
+                    && bb.stack > 0
+                    && !table.bb_action_taken
+                {
+                    round_complete = false;
+                    next = Some(bb_seat);
+                }
+            }
+        }
+    }
+
     for _ in 0..num_players {
         let p = table
             .players
@@ -320,8 +415,14 @@ fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<()
         if next.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
             next = Some(seat);
         }
+        let has_acted = (table.acted_seats & (1u32 << seat)) != 0;
         let matched_or_out =
-            p.folded || p.all_in || p.sitting_out || p.stack == 0 || p.owes_dead_blind || p.bet_this_round == round_max;
+            p.folded
+                || p.all_in
+                || p.sitting_out
+                || p.stack == 0
+                || p.bet_this_round == round_max
+                || (!table.action_reopened && has_acted);
         if !matched_or_out {
             round_complete = false;
         }

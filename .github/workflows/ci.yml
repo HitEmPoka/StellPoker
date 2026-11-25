@@ -167,6 +167,30 @@ jobs:
       - name: Enforce minimum line coverage
         run: cargo llvm-cov report --fail-under-lines ${{ matrix.min-lines }} --ignore-filename-regex "$COV_IGNORE"
 
+  services-test:
+    name: Coordinator & MPC node unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Test coordinator and node
+        run: cargo test -p coordinator -p mpc-node
+
   circuits:
     name: Noir circuits
     runs-on: ubuntu-latest
@@ -177,6 +201,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            ~/.nargo
             .tmp_tools
             .tmp_nargo_home
           key: ${{ runner.os }}-nargo-1.0.0-beta.17
@@ -193,17 +218,33 @@ jobs:
 
       - name: Install Nargo for tests
         run: |
-          curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
+          if ! command -v nargo >/dev/null 2>&1; then
+            curl -L https://raw.githubusercontent.com/noir-lang/noirup/refs/heads/main/install | bash
+            $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
+          fi
           echo "$HOME/.nargo/bin" >> $GITHUB_PATH
-          $HOME/.nargo/bin/noirup -v 1.0.0-beta.17
+
+      # Issue #887: Fail CI on unformatted Noir and treat warnings as errors.
+      - name: Check Noir formatting (nargo fmt --check)
+        run: |
+          nargo fmt --check --program-dir circuits/lib
+          for manifest in circuits/*/Nargo.toml; do
+            circuit="$(dirname "${manifest}")"
+            [ "${circuit}" = "circuits/lib" ] && continue
+            nargo fmt --check --program-dir "${circuit}"
+          done
 
       # nargo has no `--all` and there is no workspace manifest, so check the
-      # shared library and each circuit scripts/compile-circuits.sh maintains.
-      # (Six unmaintained circuit directories do not compile and are not built.)
-      - name: Check shared library and maintained circuits
+      # shared library and every circuit directory discovered by globbing
+      # circuits/*/Nargo.toml. Adding a new circuit directory gets it checked
+      # automatically — no hardcoded list to keep in sync.
+      - name: Check shared library and all circuits
         run: |
-          for circuit in lib deal_valid reveal_board_valid showdown_valid burn_card_valid side_pot_valid deck_complete time_bank_valid batched_hand_packing; do
-            nargo check --program-dir "circuits/${circuit}"
+          nargo check --deny-warnings --program-dir circuits/lib
+          for manifest in circuits/*/Nargo.toml; do
+            circuit="$(dirname "${manifest}")"
+            [ "${circuit}" = "circuits/lib" ] && continue
+            nargo check --deny-warnings --program-dir "${circuit}"
           done
 
       - name: Compile all Noir circuits
@@ -412,6 +453,56 @@ jobs:
 
       - name: Check i18n key parity
         run: cd app && npm run test:i18n
+
+  frontend-test:
+    name: Frontend unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-modules-
+
+      - name: Install dependencies
+        run: cd app && npm ci
+
+      - name: Run frontend unit tests with coverage
+        working-directory: app
+        run: |
+          set -o pipefail
+          npm run test:coverage | tee ../coverage-summary.txt
+
+      - name: Publish coverage summary
+        run: |
+          {
+            echo "### Coverage: frontend (vitest)"
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Retained per run so coverage can be tracked over time.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: |
+            coverage-summary.txt
+            app/coverage/**
+          retention-days: 90
+          if-no-files-found: warn
 
   frontend-build:
     name: Frontend build

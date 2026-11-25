@@ -325,6 +325,10 @@ fn showdown_table(env: &Env, gen: &[GenPlayer]) -> (TableState, i128) {
         rit_state: OptionalRitState::None,
         jackpot_balance: 0,
         last_raise_size: 0,
+        last_full_raise_size: 0,
+        acted_seats: 0,
+        action_reopened: false,
+        bb_action_taken: false,
         current_blind_level: 0,
         level_started_at: 0,
         break_ends_at: 0,
@@ -375,10 +379,12 @@ proptest! {
         gen in players_strategy(),
         rake_bps in 0u32..=MAX_RAKE_BPS,
         tie_mask in 1u32..64,
+        dealer_offset in 0u32..6,
     ) {
         let env = Env::default();
         env.cost_estimate().budget().reset_unlimited();
         let (mut table, total) = showdown_table(&env, &gen);
+        table.dealer_seat = dealer_offset % table.players.len();
 
         let pots = calculate_side_pots(&env, &table).unwrap();
         prop_assert_eq!(sum_pots(&pots), total);
@@ -458,13 +464,17 @@ fn tied_split_hands_out_every_odd_chip() {
                 )
                 .unwrap();
 
-                let stacks: StdVec<i128> = (0..winners as u32)
-                    .map(|s| table.players.get(s).unwrap().stack)
+                // Odd chips go clockwise starting from the first seat left of the button (dealer_seat = 0).
+                let clockwise_stacks: StdVec<i128> = (1..=winners as u32)
+                    .map(|offset| table.players.get(offset % winners as u32).unwrap().stack)
                     .collect();
-                assert_eq!(stacks.iter().sum::<i128>(), pot_amount);
-                assert!(stacks.iter().max().unwrap() - stacks.iter().min().unwrap() <= 1);
-                // Odd chips go to the earliest seats, never the latest.
-                assert!(stacks.windows(2).all(|w| w[0] >= w[1]));
+                assert_eq!(clockwise_stacks.iter().sum::<i128>(), pot_amount);
+                assert!(
+                    clockwise_stacks.iter().max().unwrap()
+                        - clockwise_stacks.iter().min().unwrap()
+                        <= 1
+                );
+                assert!(clockwise_stacks.windows(2).all(|w| w[0] >= w[1]));
             }
         }
     }
@@ -533,7 +543,7 @@ fn oversized_raise_is_rejected_not_overflowed() {
         let (mut table, actor) = preflop_table(&env, 1_000, BettingStructure::NoLimit);
         // to_call is 10, so `to_call + raise` exceeds i128::MAX for these.
         assert_eq!(
-            act(&env, &mut table, &actor, Action::Raise(raise)),
+            act(&env, &mut table, &actor, Action::RaiseBy(raise)),
             Err(PokerTableError::NotEnoughChips),
             "raise={raise}"
         );
@@ -577,13 +587,13 @@ fn pot_limit_raise_math_survives_a_near_max_pot() {
     table.pot = MAX / 2;
     // A raise above `pot + to_call` is refused; one at the limit goes through.
     assert_eq!(
-        act(&env, &mut table, &actor, Action::Raise(MAX / 2 + 11)),
+        act(&env, &mut table, &actor, Action::RaiseBy(MAX / 2 + 11)),
         Err(PokerTableError::NotEnoughChips)
     );
     let (mut table, actor) = preflop_table(&env, MAX / 8, BettingStructure::PotLimit);
     table.pot = MAX / 2;
     assert_eq!(
-        act(&env, &mut table, &actor, Action::Raise(MAX / 8 - 10)),
+        act(&env, &mut table, &actor, Action::RaiseBy(MAX / 8 - 10)),
         Ok(())
     );
     assert_eq!(table.players.get(0).unwrap().stack, 0);

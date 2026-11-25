@@ -1,7 +1,9 @@
 #![no_std]
 #![allow(deprecated)]
 
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, Symbol, Vec,
+};
 
 mod constant_time;
 
@@ -130,6 +132,9 @@ pub enum RegistryKey {
     DelegationCooldown,
     /// Stake unbonding request: (node).
     StakeUnbonding(Address),
+    /// SHA-256 transcript hash of a member's Feldman key-ceremony commitments
+    /// (#884): (member). Set once per registration by `set_commitment_hash`.
+    CommitmentHash(Address),
 }
 
 /// A delegation from a delegator to an MPC node.
@@ -394,6 +399,13 @@ impl CommitteeRegistryContract {
             .persistent()
             .set(&RegistryKey::Member(member.clone()), &member_state);
 
+        // A fresh registration comes with a fresh key ceremony: forget the
+        // transcript hash of any earlier one so it cannot be mistaken for the new
+        // node's (#884).
+        env.storage()
+            .persistent()
+            .remove(&RegistryKey::CommitmentHash(member.clone()));
+
         // Maintain list of all members for discovery
         let mut all_members: Vec<Address> = env
             .storage()
@@ -434,6 +446,49 @@ impl CommitteeRegistryContract {
         env.storage()
             .persistent()
             .set(&RegistryKey::Member(member.clone()), &m);
+    }
+
+    /// Record the transcript hash of the member's key-ceremony commitments
+    /// (#884).
+    ///
+    /// `mpc-enroll generate` shares the node key with Feldman's verifiable
+    /// scheme and binds the public commitments, the node id, the member address
+    /// and the share count into one SHA-256 hash. Storing that hash here makes
+    /// the ceremony transcript queryable on-chain (`get_commitment_hash`), so a
+    /// node can confirm at session start that the commitments it holds are the
+    /// ones the member enrolled with before it checks its share against them.
+    ///
+    /// The hash can be set once per registration: a hash that could be swapped
+    /// later would let a member present commitments for shares they never
+    /// dealt. Re-enrolling goes through `deregister_member` or a fresh
+    /// `register_member`, both of which clear it.
+    pub fn set_commitment_hash(env: Env, member: Address, hash: BytesN<32>) {
+        member.require_auth();
+        Self::require_not_paused(&env);
+
+        assert!(
+            env.storage()
+                .persistent()
+                .has(&RegistryKey::Member(member.clone())),
+            "member not registered"
+        );
+
+        let key = RegistryKey::CommitmentHash(member.clone());
+        assert!(
+            !env.storage().persistent().has(&key),
+            "commitment hash already set"
+        );
+        env.storage().persistent().set(&key, &hash);
+
+        env.events()
+            .publish((Symbol::new(&env, "commitment_set"), member), hash);
+    }
+
+    /// The commitment transcript hash recorded for `member`, if any (#884).
+    pub fn get_commitment_hash(env: Env, member: Address) -> Option<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&RegistryKey::CommitmentHash(member))
     }
 
     /// Withdraw stake and deregister (only when not in active epoch).
@@ -479,6 +534,11 @@ impl CommitteeRegistryContract {
         env.storage()
             .persistent()
             .set(&RegistryKey::Member(member.clone()), &m);
+
+        // The node's key ceremony ends with its membership (#884).
+        env.storage()
+            .persistent()
+            .remove(&RegistryKey::CommitmentHash(member.clone()));
 
         env.events()
             .publish((Symbol::new(&env, "member_deregistered"),), member);
@@ -1923,6 +1983,129 @@ mod test {
             .track_game_phase(&s.admin, &7, &GamePhase::Showdown, &players);
 
         s.client.report_timeout(&7, &s.member);
+    }
+
+    // ── Commitment transcript hash (#884) ───────────────────────────────────
+
+    fn commitment_hash(env: &Env, byte: u8) -> BytesN<32> {
+        BytesN::from_array(env, &[byte; 32])
+    }
+
+    #[test]
+    fn commitment_hash_is_unset_until_the_member_records_it() {
+        let s = setup();
+        assert_eq!(s.client.get_commitment_hash(&s.member), None);
+    }
+
+    #[test]
+    fn member_can_record_and_query_the_commitment_hash() {
+        let s = setup();
+        let hash = commitment_hash(&s.env, 7);
+        s.client.set_commitment_hash(&s.member, &hash);
+        assert_eq!(s.client.get_commitment_hash(&s.member), Some(hash));
+    }
+
+    #[test]
+    fn recording_the_hash_requires_the_members_authorization() {
+        let s = setup();
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(&s.env, 7));
+        let auths = s.env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, s.member);
+    }
+
+    #[test]
+    fn commitment_hashes_are_kept_per_member() {
+        let s = setup();
+        let env = &s.env;
+        let other = Address::generate(env);
+        StellarAssetClient::new(env, &s.token.address).mint(&other, &2_000);
+        s.client.register_member(
+            &other,
+            &1_000,
+            &soroban_sdk::String::from_str(env, "node-1"),
+            &soroban_sdk::String::from_str(env, "eu-west-1"),
+            &0,
+        );
+
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(env, 1));
+        assert_eq!(s.client.get_commitment_hash(&other), None);
+
+        s.client.set_commitment_hash(&other, &commitment_hash(env, 2));
+        assert_eq!(
+            s.client.get_commitment_hash(&s.member),
+            Some(commitment_hash(env, 1))
+        );
+        assert_eq!(
+            s.client.get_commitment_hash(&other),
+            Some(commitment_hash(env, 2))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "commitment hash already set")]
+    fn commitment_hash_cannot_be_overwritten() {
+        let s = setup();
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(&s.env, 1));
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(&s.env, 2));
+    }
+
+    #[test]
+    #[should_panic(expected = "member not registered")]
+    fn an_unregistered_address_cannot_record_a_commitment_hash() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        s.client
+            .set_commitment_hash(&stranger, &commitment_hash(&s.env, 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "contract paused")]
+    fn the_commitment_hash_cannot_be_recorded_while_paused() {
+        let s = setup();
+        s.client.pause(&s.admin);
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(&s.env, 1));
+    }
+
+    #[test]
+    fn deregistering_clears_the_commitment_hash() {
+        let s = setup();
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(&s.env, 1));
+
+        s.client.deregister_member(&s.member);
+
+        assert_eq!(s.client.get_commitment_hash(&s.member), None);
+    }
+
+    #[test]
+    fn re_registering_clears_the_previous_commitment_hash() {
+        let s = setup();
+        let env = &s.env;
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(env, 1));
+
+        // Fresh registration, fresh ceremony: the old hash must not carry over.
+        s.client.register_member(
+            &s.member,
+            &1_000,
+            &soroban_sdk::String::from_str(env, "node-0-new-endpoint"),
+            &soroban_sdk::String::from_str(env, "us-east-1"),
+            &0,
+        );
+        assert_eq!(s.client.get_commitment_hash(&s.member), None);
+
+        s.client
+            .set_commitment_hash(&s.member, &commitment_hash(env, 9));
+        assert_eq!(
+            s.client.get_commitment_hash(&s.member),
+            Some(commitment_hash(env, 9))
+        );
     }
 }
 

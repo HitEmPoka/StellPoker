@@ -28,7 +28,7 @@ pub fn record_action(env: &Env, table: &mut TableState, seat: u32, action: &Acti
         Action::Check => ActionKind::Check,
         Action::Call => ActionKind::Call,
         Action::Bet(_) => ActionKind::Bet,
-        Action::Raise(_) => ActionKind::Raise,
+        Action::Raise(_) | Action::RaiseTo(_) | Action::RaiseBy(_) => ActionKind::Raise,
         Action::AllIn => ActionKind::AllIn,
     };
     table.hand_actions.push_back(ActionRecord {
@@ -222,4 +222,43 @@ fn load_record(env: &Env, table_id: u32, slot: u32) -> Option<HandRecord> {
         ttl::bump_persistent(env, &key, ttl::HISTORY);
     }
     record
+}
+
+/// Record a single voluntarily disclosed card for `(table_id, hand_number)`.
+/// Rejects a second reveal from the same seat so only one card is ever stored.
+pub fn record_shown_card(
+    env: &Env,
+    table_id: u32,
+    hand_number: u32,
+    entry: ShownCardRecord,
+) -> Result<(), PokerTableError> {
+    let key = DataKey::ShownCards(table_id, hand_number);
+    let mut records: Vec<ShownCardRecord> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+
+    for i in 0..records.len() {
+        if let Some(existing) = records.get(i) {
+            if existing.seat == entry.seat {
+                return Err(PokerTableError::CardAlreadyShown);
+            }
+        }
+    }
+
+    records.push_back(entry);
+    env.storage().persistent().set(&key, &records);
+    ttl::bump_persistent(env, &key, ttl::HISTORY);
+    Ok(())
+}
+
+/// Return all voluntarily shown single cards for `(table_id, hand_number)`.
+pub fn get_shown_cards(env: &Env, table_id: u32, hand_number: u32) -> Vec<ShownCardRecord> {
+    let key = DataKey::ShownCards(table_id, hand_number);
+    let records: Option<Vec<ShownCardRecord>> = env.storage().persistent().get(&key);
+    if records.is_some() {
+        ttl::bump_persistent(env, &key, ttl::HISTORY);
+    }
+    records.unwrap_or_else(|| Vec::new(env))
 }

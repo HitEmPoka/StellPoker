@@ -36,6 +36,20 @@ pub fn compute_action_hash(
         Action::AllIn => {
             preimage.push_back(5u8);
         }
+        Action::RaiseTo(_) => {
+            preimage.push_back(6u8);
+            let amount_bytes = amount.to_be_bytes();
+            for byte in amount_bytes {
+                preimage.push_back(byte);
+            }
+        }
+        Action::RaiseBy(_) => {
+            preimage.push_back(7u8);
+            let amount_bytes = amount.to_be_bytes();
+            for byte in amount_bytes {
+                preimage.push_back(byte);
+            }
+        }
     }
 
     for i in 0..nonce.len() {

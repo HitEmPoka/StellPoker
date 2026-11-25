@@ -431,6 +431,20 @@ pub(crate) async fn select_mpc_nodes(
             })?
     };
 
+    if !state.soroban_config.committee_registry_contract.is_empty() {
+        let epoch = soroban::fetch_current_epoch_from_registry(&state.soroban_config)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch committee epoch: {}", e);
+                StatusCode::SERVICE_UNAVAILABLE
+            })?
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        soroban::validate_epoch_members(&epoch, &all_nodes).map_err(|e| {
+            tracing::error!("Committee membership mismatch: {}", e);
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    }
+
     let healths = state.metrics.node_healths.lock().await;
     let mut healthy_members: Vec<soroban::CommitteeMember> = all_nodes
         .into_iter()
@@ -570,4 +584,261 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 100, "all 100 IDs must be unique");
     }
+
+    #[test]
+    fn authenticated_card_delivery_blocks_malicious_coordinator_swap() {
+        use ed25519_dalek::SigningKey;
+        let committee_sk = SigningKey::from_bytes(&[7u8; 32]);
+        let committee_vk = committee_sk.verifying_key();
+
+        let player_a_secret = [11u8; 32];
+        let player_a_pub = derive_session_pubkey(&player_a_secret);
+        let player_b_secret = [22u8; 32];
+        let player_b_pub = derive_session_pubkey(&player_b_secret);
+
+        let addr_a = "GA_PLAYER_A_TEST";
+        let addr_b = "GB_PLAYER_B_TEST";
+
+        let delivery_a = build_authenticated_card_delivery(
+            &player_a_pub,
+            1,
+            addr_a,
+            14,
+            27,
+            "salt_a1",
+            "salt_a2",
+            &committee_sk,
+        )
+        .unwrap();
+
+        let _delivery_b = build_authenticated_card_delivery(
+            &player_b_pub,
+            1,
+            addr_b,
+            2,
+            3,
+            "salt_b1",
+            "salt_b2",
+            &committee_sk,
+        )
+        .unwrap();
+
+        // Honest decryption by Player A succeeds
+        let cards_a = verify_and_decrypt_card_delivery(
+            &delivery_a,
+            1,
+            addr_a,
+            &player_a_secret,
+            &committee_vk,
+        )
+        .unwrap();
+        assert_eq!(cards_a, (14, 27, "salt_a1".to_string(), "salt_a2".to_string()));
+
+        // Player B cannot decrypt Player A's delivery
+        let err_wrong_key = verify_and_decrypt_card_delivery(
+            &delivery_a,
+            1,
+            addr_a,
+            &player_b_secret,
+            &committee_vk,
+        )
+        .unwrap_err();
+        assert!(err_wrong_key.contains("decrypt"), "{err_wrong_key}");
+
+        // Malicious coordinator routes delivery_a to Player B without altering envelope
+        let err_misaddressed = verify_and_decrypt_card_delivery(
+            &delivery_a,
+            1,
+            addr_b,
+            &player_b_secret,
+            &committee_vk,
+        )
+        .unwrap_err();
+        assert!(err_misaddressed.contains("mis-addressed"), "{err_misaddressed}");
+
+        // Malicious coordinator swaps ciphertext into Player B's envelope
+        let mut swapped = delivery_a.clone();
+        swapped.recipient_address = addr_b.to_string();
+        let err_swapped = verify_and_decrypt_card_delivery(
+            &swapped,
+            1,
+            addr_b,
+            &player_b_secret,
+            &committee_vk,
+        )
+        .unwrap_err();
+        assert!(err_swapped.contains("signature"), "{err_swapped}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #882: Authenticated Private Card Delivery (Coordinator Side)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Derive a 32-byte session public key from a 32-byte session secret key.
+pub fn derive_session_pubkey(secret: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"STELLPOKER_SESSION_PK_V1:");
+    h.update(secret);
+    h.finalize().into()
+}
+
+/// Compute the canonical signing payload for committee threshold signature binding.
+pub fn card_delivery_signing_bytes(
+    table_id: u32,
+    recipient_address: &str,
+    ephemeral_pubkey_hex: &str,
+    nonce_hex: &str,
+    ciphertext_hex: &str,
+) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"STELLPOKER_CARD_DELIVERY_V1:");
+    h.update(&table_id.to_le_bytes());
+    h.update(recipient_address.as_bytes());
+    h.update(ephemeral_pubkey_hex.as_bytes());
+    h.update(nonce_hex.as_bytes());
+    h.update(ciphertext_hex.as_bytes());
+    h.finalize().to_vec()
+}
+
+/// Encrypt hole cards to a player's session public key and sign with committee key.
+#[allow(clippy::too_many_arguments)]
+pub fn build_authenticated_card_delivery(
+    recipient_session_pubkey: &[u8; 32],
+    table_id: u32,
+    recipient_address: &str,
+    card1: u32,
+    card2: u32,
+    salt1: &str,
+    salt2: &str,
+    committee_sk: &ed25519_dalek::SigningKey,
+) -> Result<super::types::AuthenticatedCardDelivery, String> {
+    use aes_gcm::{
+        aead::{Aead, KeyInit, OsRng},
+        Aes256Gcm, Key, Nonce,
+    };
+    use ed25519_dalek::Signer;
+    use rand::RngCore;
+    use sha2::{Digest, Sha256};
+
+    let mut ephemeral_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut ephemeral_bytes);
+    let ephemeral_hex = hex::encode(ephemeral_bytes);
+
+    let mut key_hasher = Sha256::new();
+    key_hasher.update(b"STELLPOKER_CARD_ENC_KEY_V1:");
+    key_hasher.update(recipient_session_pubkey);
+    key_hasher.update(&ephemeral_bytes);
+    key_hasher.update(&table_id.to_le_bytes());
+    key_hasher.update(recipient_address.as_bytes());
+    let aes_key_bytes: [u8; 32] = key_hasher.finalize().into();
+
+    let plaintext = serde_json::json!({
+        "card1": card1,
+        "card2": card2,
+        "salt1": salt1,
+        "salt2": salt2,
+    })
+    .to_string();
+
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce_hex = hex::encode(nonce_bytes);
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key_bytes));
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_bytes())
+        .map_err(|e| format!("encryption failed: {}", e))?;
+    let ciphertext_hex = hex::encode(ciphertext);
+
+    let signing_msg = card_delivery_signing_bytes(
+        table_id,
+        recipient_address,
+        &ephemeral_hex,
+        &nonce_hex,
+        &ciphertext_hex,
+    );
+    let sig = committee_sk.sign(&signing_msg);
+
+    Ok(super::types::AuthenticatedCardDelivery {
+        table_id,
+        recipient_address: recipient_address.to_string(),
+        ephemeral_pubkey: ephemeral_hex,
+        nonce: nonce_hex,
+        ciphertext: ciphertext_hex,
+        committee_signature: hex::encode(sig.to_bytes()),
+        committee_pubkey: hex::encode(committee_sk.verifying_key().to_bytes()),
+    })
+}
+
+/// Verify committee signature, recipient address, and decrypt hole cards.
+pub fn verify_and_decrypt_card_delivery(
+    delivery: &super::types::AuthenticatedCardDelivery,
+    expected_table_id: u32,
+    expected_recipient: &str,
+    player_session_secret: &[u8; 32],
+    committee_vk: &ed25519_dalek::VerifyingKey,
+) -> Result<(u32, u32, String, String), String> {
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Key, Nonce,
+    };
+    use ed25519_dalek::Verifier;
+    use sha2::{Digest, Sha256};
+
+    if delivery.table_id != expected_table_id {
+        return Err(format!("table_id mismatch: {}", delivery.table_id));
+    }
+    if delivery.recipient_address != expected_recipient {
+        return Err(format!(
+            "mis-addressed delivery: expected {}, got {}",
+            expected_recipient, delivery.recipient_address
+        ));
+    }
+
+    let signing_msg = card_delivery_signing_bytes(
+        delivery.table_id,
+        &delivery.recipient_address,
+        &delivery.ephemeral_pubkey,
+        &delivery.nonce,
+        &delivery.ciphertext,
+    );
+    let sig_bytes: [u8; 64] = hex::decode(&delivery.committee_signature)
+        .map_err(|e| format!("invalid signature hex: {}", e))?
+        .try_into()
+        .map_err(|_| "signature must be 64 bytes".to_string())?;
+    committee_vk
+        .verify(&signing_msg, &ed25519_dalek::Signature::from_bytes(&sig_bytes))
+        .map_err(|e| format!("committee signature invalid: {}", e))?;
+
+    let recipient_pub = derive_session_pubkey(player_session_secret);
+    let ephemeral_bytes = hex::decode(&delivery.ephemeral_pubkey)
+        .map_err(|e| format!("invalid ephemeral pubkey: {}", e))?;
+    let mut key_hasher = Sha256::new();
+    key_hasher.update(b"STELLPOKER_CARD_ENC_KEY_V1:");
+    key_hasher.update(recipient_pub);
+    key_hasher.update(&ephemeral_bytes);
+    key_hasher.update(&delivery.table_id.to_le_bytes());
+    key_hasher.update(delivery.recipient_address.as_bytes());
+    let aes_key_bytes: [u8; 32] = key_hasher.finalize().into();
+
+    let nonce_bytes = hex::decode(&delivery.nonce).map_err(|e| format!("invalid nonce: {}", e))?;
+    let ciphertext_bytes =
+        hex::decode(&delivery.ciphertext).map_err(|e| format!("invalid ciphertext: {}", e))?;
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&aes_key_bytes));
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext_bytes.as_ref())
+        .map_err(|_| "failed to decrypt payload: wrong key or corrupted ciphertext".to_string())?;
+
+    let parsed: serde_json::Value = serde_json::from_slice(&plaintext)
+        .map_err(|e| format!("invalid decrypted JSON: {}", e))?;
+    Ok((
+        parsed["card1"].as_u64().ok_or("missing card1")? as u32,
+        parsed["card2"].as_u64().ok_or("missing card2")? as u32,
+        parsed["salt1"].as_str().ok_or("missing salt1")?.to_string(),
+        parsed["salt2"].as_str().ok_or("missing salt2")?.to_string(),
+    ))
 }

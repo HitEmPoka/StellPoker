@@ -124,6 +124,13 @@ fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+/// Returns the committee-shared MAC key used for share batch integrity checks (Issue #883).
+pub fn share_integrity_mac_key() -> Vec<u8> {
+    std::env::var("SHARE_INTEGRITY_MAC_KEY")
+        .unwrap_or_else(|_| "stellpoker-default-share-mac-key-v1".to_string())
+        .into_bytes()
+}
+
 /// A session is "active" until it reaches a terminal state (complete or failed).
 /// Only active sessions count against the concurrency limit.
 pub fn is_active(status: &SessionStatus) -> bool {

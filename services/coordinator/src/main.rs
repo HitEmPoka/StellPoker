@@ -1558,6 +1558,18 @@ async fn main() {
             "/api/tournaments/:id/cancel",
             post(api::tournament_api::cancel_tournament),
         )
+        .route(
+            "/api/tournaments/:id/hand-for-hand",
+            post(api::tournament_api::set_hand_for_hand),
+        )
+        .route(
+            "/api/tournaments/:id/tables/:table/start-hand",
+            post(api::tournament_api::start_table_hand),
+        )
+        .route(
+            "/api/tournaments/:id/hand-counts",
+            get(api::tournament_api::get_table_hand_counts),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.idempotency_store.clone(),
             idempotency::idempotency_middleware,

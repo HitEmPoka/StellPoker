@@ -713,7 +713,7 @@ mod test {
 
         // Player raises by 20 on top of calling the big blind
         s.client
-            .player_action(&table_id, &raiser.address, &1u32, &Action::Raise(20));
+            .player_action(&table_id, &raiser.address, &1u32, &Action::RaiseBy(20));
 
         // Other player calls the raise
         let table = s.client.get_table(&table_id);
@@ -1023,8 +1023,10 @@ mod test {
             .player_action(&table_id, &folder.address, &1u32, &Action::Fold);
 
         let table = s.client.get_table(&table_id);
-        // 5% of 300 = 15 rake; winner receives the remaining 285.
-        let expected_rake = 15;
+        // SB committed 100 and folded; BB committed 200, so 100 uncalled excess
+        // is returned before rake (#869). Contested pot = 200; 5% of 200 = 10 rake;
+        // winner receives 100 uncalled + 190 net pot = 290.
+        let expected_rake = 10;
         assert_eq!(table.rake_balance, expected_rake);
         let winner_after = table.players.get(other_seat).unwrap();
         assert_eq!(
@@ -1363,7 +1365,7 @@ mod test {
         let table = s.client.get_table(&table_id);
         let raiser = table.players.get(table.current_turn).unwrap();
         s.client
-            .player_action(&table_id, &raiser.address, &1u32, &Action::Raise(200));
+            .player_action(&table_id, &raiser.address, &1u32, &Action::RaiseBy(200));
 
         let table = s.client.get_table(&table_id);
         let folder = table.players.get(table.current_turn).unwrap();
@@ -1382,10 +1384,12 @@ mod test {
         assert_eq!(fold.kind, ActionKind::Fold);
         assert_eq!(fold.amount, 0);
 
-        // Pot is 600 (SB 100 + BB 200 + the 300 raise); rake is 5%.
-        assert_eq!(record.total_pot, 600);
-        assert_eq!(record.rake, 30);
-        assert_eq!(record.payouts.get(0).unwrap().amount, 570);
+        // SB committed 400 (100 SB + 300 raise) and BB committed 200 before folding.
+        // 200 uncalled excess is returned to SB before rake (#869), leaving a
+        // contested pot of 400; 5% rake = 20, payout = 380.
+        assert_eq!(record.total_pot, 400);
+        assert_eq!(record.rake, 20);
+        assert_eq!(record.payouts.get(0).unwrap().amount, 380);
     }
 
     // ---------------------------------------------------------------------------
@@ -1995,7 +1999,12 @@ mod test {
         tie_mask: u32,
         holes: &[(u32, u32)],
     ) {
-        let (hole_cards, salts, public_inputs) = showdown_inputs(s, winner, tie_mask, holes);
+        let (seat_cards, salts, public_inputs) = showdown_inputs(s, winner, tie_mask, holes);
+        // The contract takes the cards in showdown reveal order (#866).
+        let mut hole_cards: Vec<(u32, u32)> = Vec::new(&s.env);
+        for seat in s.client.get_showdown_order(&table_id).iter() {
+            hole_cards.push_back(seat_cards.get(seat).unwrap());
+        }
         s.client.submit_showdown(
             &table_id,
             &s.committee,
@@ -2414,5 +2423,327 @@ mod test {
             Err(PokerTableError::RabbitHuntNotAvailable),
             "showdown hands have a full board"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Between-hands guard (#860, #861), sit-out (#859), showdown order (#866)
+    // ---------------------------------------------------------------------------
+
+    /// The player whose turn it is takes `action`.
+    fn act(s: &TestSetup, table_id: u32, seqs: &mut [u32; 6], action: Action) {
+        let table = s.client.get_table(&table_id);
+        let seat = table.current_turn;
+        seqs[seat as usize] += 1;
+        let p = table.players.get(seat).unwrap();
+        s.client
+            .player_action(&table_id, &p.address, &seqs[seat as usize], &action);
+    }
+
+    /// Call or check (and reveal each street) until the hand reaches `stop`.
+    fn call_down_to(s: &TestSetup, table_id: u32, seqs: &mut [u32; 6], stop: GamePhase) {
+        loop {
+            let table = s.client.get_table(&table_id);
+            if table.phase == stop {
+                return;
+            }
+            match table.phase {
+                GamePhase::Preflop | GamePhase::Flop | GamePhase::Turn | GamePhase::River => {
+                    let max_bet = table
+                        .players
+                        .iter()
+                        .map(|p| p.bet_this_round)
+                        .max()
+                        .unwrap();
+                    let p = table.players.get(table.current_turn).unwrap();
+                    let action = if p.bet_this_round < max_bet {
+                        Action::Call
+                    } else {
+                        Action::Check
+                    };
+                    act(s, table_id, seqs, action);
+                }
+                GamePhase::DealingFlop | GamePhase::DealingTurn | GamePhase::DealingRiver => {
+                    reveal_next_street(s, table_id)
+                }
+                phase => panic!("unexpected phase {:?}", phase),
+            }
+        }
+    }
+
+    /// Contract token balance equals every stack plus the pot and rake.
+    fn assert_chips_conserved(s: &TestSetup, table_id: u32) {
+        let table = s.client.get_table(&table_id);
+        let stacks: i128 = table.players.iter().map(|p| p.stack).sum();
+        assert_eq!(
+            s.token.balance(&s.client.address),
+            stacks + table.pot + table.rake_balance
+        );
+    }
+
+    /// `player`'s seat view at `table_id`.
+    fn position(s: &TestSetup, table_id: u32, player: &Address) -> PlayerPosition {
+        let ids = Vec::from_array(&s.env, [table_id]);
+        s.client.get_player_positions(player, &ids).get(0).unwrap()
+    }
+
+    #[test]
+    fn test_rebuy_rejected_in_every_live_phase_and_chips_conserved() {
+        let s = setup();
+        let table_id = rebuy_table(&s, 0);
+        let p1 = Address::generate(&s.env);
+        join_player(&s, table_id, &p1, 200);
+        join_player(&s, table_id, &Address::generate(&s.env), 200);
+        s.token_admin_client.mint(&p1, &100);
+
+        let assert_rejected = |s: &TestSetup| {
+            let stack = s.client.get_table(&table_id).players.get(0).unwrap().stack;
+            assert_eq!(
+                s.client.try_rebuy(&table_id, &p1, &100),
+                Err(Ok(PokerTableError::CannotRebuyDuringActiveHand))
+            );
+            assert_eq!(
+                s.client.get_table(&table_id).players.get(0).unwrap().stack,
+                stack
+            );
+            assert_eq!(s.token.balance(&p1), 100);
+            assert_chips_conserved(s, table_id);
+        };
+
+        s.client.start_hand(&table_id);
+        assert_rejected(&s); // Dealing
+        commit_mock_deal(&s, table_id, 2);
+        let mut seqs = [0u32; 6];
+        for phase in [
+            GamePhase::Preflop,
+            GamePhase::DealingFlop,
+            GamePhase::Flop,
+            GamePhase::DealingTurn,
+            GamePhase::Turn,
+            GamePhase::DealingRiver,
+            GamePhase::River,
+            GamePhase::Showdown,
+        ] {
+            call_down_to(&s, table_id, &mut seqs, phase);
+            assert_rejected(&s);
+        }
+
+        // Between hands the same top-up goes through.
+        mock_showdown(&s, table_id, 0, 0, &[(0, 1), (2, 3)]);
+        let stack = s.client.get_table(&table_id).players.get(0).unwrap().stack;
+        assert_eq!(s.client.rebuy(&table_id, &p1, &100), stack + 100);
+        assert_chips_conserved(&s, table_id);
+    }
+
+    #[test]
+    fn test_folded_player_cannot_leave_mid_hand_and_their_chips_stay_in_the_pot() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let players = [(); 3].map(|_| Address::generate(&s.env));
+        for p in &players {
+            join_player(&s, table_id, p, 500);
+        }
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 3);
+
+        // Button (seat 1) raises to 30, small blind (seat 2) re-raises to 70,
+        // big blind (seat 0) calls, and the button folds with 30 committed.
+        let mut seqs = [0u32; 6];
+        assert_eq!(s.client.get_table(&table_id).current_turn, 1);
+        act(&s, table_id, &mut seqs, Action::RaiseBy(20));
+        act(&s, table_id, &mut seqs, Action::RaiseBy(40));
+        act(&s, table_id, &mut seqs, Action::Call);
+        act(&s, table_id, &mut seqs, Action::Fold);
+        let folder = s.client.get_table(&table_id).players.get(1).unwrap();
+        assert!(folder.folded);
+        assert_eq!((folder.stack, folder.committed), (470, 30));
+
+        // No chips leave while the hand is live.
+        assert_eq!(
+            s.client.try_leave_table(&table_id, &players[1]),
+            Err(Ok(PokerTableError::CannotLeaveDuringActiveHand))
+        );
+        assert_eq!(s.token.balance(&players[1]), 0);
+        assert_eq!(s.client.get_table(&table_id).pot, 170);
+        assert_chips_conserved(&s, table_id);
+
+        // Seat 0 wins at showdown and takes the folder's 30 as dead money.
+        call_down_to(&s, table_id, &mut seqs, GamePhase::Showdown);
+        mock_showdown(&s, table_id, 0, 0, &[(0, 1), (2, 3), (4, 6)]);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::Settlement);
+        assert_eq!(table.pot, 0);
+        let stack = |seat: u32| table.players.get(seat).unwrap().stack;
+        assert_eq!([stack(0), stack(1), stack(2)], [600, 470, 430]);
+        assert_chips_conserved(&s, table_id);
+
+        // After settlement the folder leaves with their stack only.
+        assert_eq!(s.client.leave_table(&table_id, &players[1]), 470);
+        assert_eq!(s.token.balance(&players[1]), 470);
+        assert_chips_conserved(&s, table_id);
+    }
+
+    #[test]
+    fn test_sit_out_next_big_blind_skips_one_hand_and_returns_with_a_dead_blind() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let players = [(); 3].map(|_| Address::generate(&s.env));
+        for p in &players {
+            join_player(&s, table_id, p, 500);
+        }
+        s.client.sit_out_next_big_blind(&table_id, &players[0]);
+        assert!(position(&s, table_id, &players[0]).sit_out_next_bb);
+
+        // Hand 1: the button is seat 1, so the big blind would be seat 0. Seat 0
+        // sits out and seats 1 and 2 play it heads-up (seat 1 small, seat 2 big).
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        let p0 = table.players.get(0).unwrap();
+        assert!(p0.sitting_out && p0.folded);
+        assert_eq!((p0.stack, p0.committed), (500, 0));
+        assert_eq!(table.players.len(), 3, "the seat is kept");
+        assert_eq!(table.pot, 15);
+        assert_eq!(table.players.get(2).unwrap().bet_this_round, 10);
+        let pos = position(&s, table_id, &players[0]);
+        assert!(pos.seated && pos.sitting_out);
+
+        // The sitting-out seat never gets the turn; one fold ends the hand.
+        commit_mock_deal(&s, table_id, 3);
+        assert_ne!(s.client.get_table(&table_id).current_turn, 0);
+        let mut seqs = [0u32; 6];
+        act(&s, table_id, &mut seqs, Action::Fold);
+        let table = s.client.get_table(&table_id);
+        assert_eq!(table.phase, GamePhase::Settlement);
+        assert_eq!(table.players.get(0).unwrap().stack, 500);
+
+        // Hand 2: seat 0 is dealt back in as small blind and also posts the
+        // skipped big blind dead: pot = 5 + 10 (big blind) + 10 (dead).
+        s.client.start_hand(&table_id);
+        let table = s.client.get_table(&table_id);
+        let p0 = table.players.get(0).unwrap();
+        assert!(!p0.sitting_out && !p0.folded);
+        assert_eq!((p0.stack, p0.committed, p0.bet_this_round), (485, 15, 5));
+        assert_eq!(table.players.get(1).unwrap().bet_this_round, 10);
+        assert_eq!(table.pot, 25);
+        let pos = position(&s, table_id, &players[0]);
+        assert!(!pos.sitting_out && !pos.sit_out_next_bb);
+        assert_chips_conserved(&s, table_id);
+    }
+
+    #[test]
+    fn test_sit_out_next_big_blind_moves_first_preflop_action_with_the_blind() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let players = [(); 4].map(|_| Address::generate(&s.env));
+        for p in &players {
+            join_player(&s, table_id, p, 500);
+        }
+        s.client.sit_out_next_big_blind(&table_id, &players[3]);
+
+        // Button seat 1, small blind seat 2. Seat 3 sits out, so seat 0 posts the
+        // big blind and the button, not the big blind, opens the betting.
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 4);
+        let table = s.client.get_table(&table_id);
+        assert!(table.players.get(3).unwrap().sitting_out);
+        assert_eq!(table.players.get(0).unwrap().bet_this_round, 10);
+        assert_eq!(table.current_turn, 1);
+    }
+
+    #[test]
+    fn test_sit_out_next_big_blind_waits_while_heads_up() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p0 = Address::generate(&s.env);
+        join_player(&s, table_id, &p0, 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.sit_out_next_big_blind(&table_id, &p0);
+
+        // Seat 0 is the big blind, but sitting out would leave one player.
+        s.client.start_hand(&table_id);
+        let p = s.client.get_table(&table_id).players.get(0).unwrap();
+        assert!(!p.sitting_out && !p.folded);
+        assert_eq!(p.committed, 10);
+        let pos = position(&s, table_id, &p0);
+        assert!(pos.sit_out_next_bb, "the request is still pending");
+    }
+
+    #[test]
+    fn test_sit_out_request_is_dropped_when_the_player_leaves() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        let p0 = Address::generate(&s.env);
+        join_player(&s, table_id, &p0, 500);
+        s.client.sit_out_next_big_blind(&table_id, &p0);
+        s.client.leave_table(&table_id, &p0);
+
+        join_player(&s, table_id, &p0, 500);
+        assert!(!position(&s, table_id, &p0).sit_out_next_bb);
+    }
+
+    #[test]
+    fn test_showdown_last_river_aggressor_reveals_first() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        join_player(&s, table_id, &Address::generate(&s.env), 500);
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 2);
+
+        // River: seat 0 (left of the button) bets, seat 1 raises, seat 0 calls.
+        let mut seqs = [0u32; 6];
+        call_down_to(&s, table_id, &mut seqs, GamePhase::River);
+        assert_eq!(s.client.get_table(&table_id).current_turn, 0);
+        act(&s, table_id, &mut seqs, Action::Bet(20));
+        act(&s, table_id, &mut seqs, Action::RaiseBy(20));
+        act(&s, table_id, &mut seqs, Action::Call);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Showdown);
+        assert_eq!(
+            s.client.get_showdown_order(&table_id),
+            Vec::from_array(&s.env, [1, 0])
+        );
+
+        // Seat order puts seat 0 first: rejected.
+        let holes = [(0, 1), (2, 3)];
+        let (seat_order, salts, public_inputs) = showdown_inputs(&s, 1, 0, &holes);
+        assert_eq!(
+            s.client.try_submit_showdown(
+                &table_id,
+                &s.committee,
+                &seat_order,
+                &salts,
+                &soroban_sdk::Bytes::new(&s.env),
+                &public_inputs,
+                &Vec::new(&s.env),
+            ),
+            Err(Ok(PokerTableError::HoleCardMismatch))
+        );
+
+        // The aggressor first is accepted.
+        mock_showdown(&s, table_id, 1, 0, &holes);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
+    }
+
+    #[test]
+    fn test_showdown_order_starts_left_of_button_when_river_is_checked() {
+        let s = setup();
+        let table_id = create_default_table(&s);
+        for _ in 0..3 {
+            join_player(&s, table_id, &Address::generate(&s.env), 500);
+        }
+        s.client.start_hand(&table_id);
+        commit_mock_deal(&s, table_id, 3);
+
+        // A flop bet does not count: only river aggression sets the order.
+        let mut seqs = [0u32; 6];
+        call_down_to(&s, table_id, &mut seqs, GamePhase::Flop);
+        act(&s, table_id, &mut seqs, Action::Bet(20));
+        call_down_to(&s, table_id, &mut seqs, GamePhase::Showdown);
+        assert_eq!(s.client.get_table(&table_id).dealer_seat, 1);
+        assert_eq!(
+            s.client.get_showdown_order(&table_id),
+            Vec::from_array(&s.env, [2, 0, 1])
+        );
+        mock_showdown(&s, table_id, 2, 0, &[(0, 1), (2, 3), (4, 6)]);
+        assert_eq!(s.client.get_table(&table_id).phase, GamePhase::Settlement);
     }
 }

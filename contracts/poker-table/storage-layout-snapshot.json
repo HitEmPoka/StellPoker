@@ -69,6 +69,12 @@
       "description": "Most recent on-chain chip-dumping evidence report (issue #506). Reserved."
     },
     {
+      "name": "ColorUpSchedule",
+      "arity": 1,
+      "domain": "instance",
+      "description": "Per-table tournament color-up schedule (#870)."
+    },
+    {
       "name": "ConfigChangeLog",
       "arity": 2,
       "domain": "persistent",
@@ -159,6 +165,12 @@
       "description": "Jackpot verifier contract per table."
     },
     {
+      "name": "LastAggressor",
+      "arity": 1,
+      "domain": "instance",
+      "description": "New key (describe me)."
+    },
+    {
       "name": "LastUpgrade",
       "arity": 1,
       "domain": "persistent",
@@ -241,6 +253,12 @@
       "arity": 1,
       "domain": "instance",
       "description": "Unclaimed seven-deuce bounty per table, escrowed outside the pot (#856)."
+    },
+    {
+      "name": "SitOutNextBb",
+      "arity": 1,
+      "domain": "instance",
+      "description": "New key (describe me)."
     },
     {
       "name": "StraddleConfig",

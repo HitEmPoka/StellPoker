@@ -367,6 +367,185 @@ mod blinds_schedule_test {
         let config = config_with_schedule(&s, BlindsSchedule { levels });
         s.client.create_table(&s.admin, &config);
     }
+
+    #[test]
+    fn ante_only_all_in_clamps_stack_marks_all_in_and_skips_preflop_turn() {
+        let s = setup();
+        let mut levels = Vec::new(&s.env);
+        levels.push_back(BlindLevel {
+            small_blind: 50,
+            big_blind: 100,
+            ante: crate::types::AnteMode::Fixed(150),
+            duration_seconds: 0,
+            break_seconds: 0,
+        });
+        let config = config_with_schedule(&s, BlindsSchedule { levels });
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        // Seat 0: micro-stack (100 < ante 150) — goes all-in from partial ante.
+        // Seat 1 & 2: deep stacks (10_000).
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 100);
+        join(&s, table_id, &p1, 10_000);
+        join(&s, table_id, &p2, 10_000);
+
+        s.client.start_hand(&table_id);
+
+        let table = s.client.get_table(&table_id);
+        let s0 = table.players.get(0).unwrap();
+        assert_eq!(s0.stack, 0);
+        assert!(s0.all_in, "player exhausted by ante must be marked all-in");
+        assert_eq!(s0.committed, 100, "committed must equal partial ante only");
+
+        // Total pot = partial ante (100) + 2 full antes (300) + SB (50) + BB (100) = 550.
+        assert_eq!(table.pot, 550);
+
+        // Commit deal and verify preflop turn skips any all-in seat.
+        commit_mock_deal(&s, table_id, 3);
+        let after_deal = s.client.get_table(&table_id);
+        assert_eq!(after_deal.phase, GamePhase::Preflop);
+        let turn_player = after_deal.players.get(after_deal.current_turn).unwrap();
+        assert!(
+            !turn_player.all_in && turn_player.stack > 0,
+            "preflop current_turn must skip ante-all-in player"
+        );
+    }
+
+    #[test]
+    fn exact_ante_all_in_marks_player_all_in_without_underflow() {
+        let s = setup();
+        let mut levels = Vec::new(&s.env);
+        levels.push_back(BlindLevel {
+            small_blind: 50,
+            big_blind: 100,
+            ante: crate::types::AnteMode::Fixed(100),
+            duration_seconds: 0,
+            break_seconds: 0,
+        });
+        let config = config_with_schedule(&s, BlindsSchedule { levels });
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        // Seat 0 has stack == ante (100), Seat 1 and Seat 2 have 10_000.
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 100);
+        join(&s, table_id, &p1, 10_000);
+        join(&s, table_id, &p2, 10_000);
+
+        s.client.start_hand(&table_id);
+
+        let table = s.client.get_table(&table_id);
+        let s0 = table.players.get(0).unwrap();
+        assert_eq!(s0.stack, 0);
+        assert!(s0.all_in, "player with stack == ante must be marked all-in");
+        assert_eq!(s0.committed, 100);
+        assert_eq!(s0.bet_this_round, 0);
+        // Pot = 3 * 100 (antes) + 50 (SB) + 100 (BB) = 450.
+        assert_eq!(table.pot, 450);
+    }
+
+    #[test]
+    fn color_up_conserves_total_chips_with_mixed_odd_stacks() {
+        use crate::game::apply_color_up;
+        use crate::types::{ColorUpRounding, ColorUpRule};
+        use soroban_sdk::testutils::Events as _;
+
+        let s = setup();
+        let mut levels = Vec::new(&s.env);
+        levels.push_back(BlindLevel {
+            small_blind: 5,
+            big_blind: 10,
+            ante: AnteMode::None,
+            duration_seconds: 60,
+            break_seconds: 0,
+        });
+        levels.push_back(BlindLevel {
+            small_blind: 25,
+            big_blind: 50,
+            ante: AnteMode::None,
+            duration_seconds: 0,
+            break_seconds: 0,
+        });
+        let config = config_with_schedule(&s, BlindsSchedule { levels });
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        let p3 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 103);
+        join(&s, table_id, &p1, 217);
+        join(&s, table_id, &p2, 109);
+        join(&s, table_id, &p3, 301);
+        // Total chips in play: 103 + 217 + 109 + 301 = 730.
+        // Remainders mod 10: [3, 7, 9, 1], sum = 20 -> 2 chips of 10, 0 residual.
+        let total_before = 730i128;
+
+        let mut table = s.client.get_table(&table_id);
+        table.dealer_seat = 0;
+
+        // HighestRemainderClockwise: remainders are seat 2 (9), seat 1 (7), seat 0 (3), seat 3 (1).
+        // Seats 2 and 1 each win a 10-chip color-up.
+        let rule = ColorUpRule {
+            level_index: 1,
+            denomination: 10,
+            rounding: ColorUpRounding::HighestRemainderClockwise,
+        };
+        apply_color_up(&s.env, &mut table, &rule).unwrap();
+
+        let s0 = table.players.get(0).unwrap().stack;
+        let s1 = table.players.get(1).unwrap().stack;
+        let s2 = table.players.get(2).unwrap().stack;
+        let s3 = table.players.get(3).unwrap().stack;
+        assert_eq!(s0, 100);
+        assert_eq!(s1, 220);
+        assert_eq!(s2, 110);
+        assert_eq!(s3, 300);
+        assert_eq!(s0 + s1 + s2 + s3, total_before);
+
+        // Verify color_up event was emitted.
+        let events = s.env.events().all();
+        assert!(!events.is_empty());
+    }
+
+    #[test]
+    fn color_up_clockwise_from_button_and_residual_conservation() {
+        use crate::game::apply_color_up;
+        use crate::types::{ColorUpRounding, ColorUpRule};
+
+        let s = setup();
+        let config = config_with_schedule(&s, BlindsSchedule::fixed(&s.env, 5, 10));
+        let table_id = s.client.create_table(&s.admin, &config);
+
+        let p0 = Address::generate(&s.env);
+        let p1 = Address::generate(&s.env);
+        let p2 = Address::generate(&s.env);
+        join(&s, table_id, &p0, 103);
+        join(&s, table_id, &p1, 104);
+        join(&s, table_id, &p2, 105);
+        // Total = 312. Remainders mod 10: [3, 4, 5], sum = 12 -> 1 chip of 10 + 2 residual.
+        let mut table = s.client.get_table(&table_id);
+        table.dealer_seat = 1; // Clockwise from 1 is: 2, 0, 1.
+
+        let rule = ColorUpRule {
+            level_index: 1,
+            denomination: 10,
+            rounding: ColorUpRounding::ClockwiseFromButton,
+        };
+        apply_color_up(&s.env, &mut table, &rule).unwrap();
+
+        let s0 = table.players.get(0).unwrap().stack;
+        let s1 = table.players.get(1).unwrap().stack;
+        let s2 = table.players.get(2).unwrap().stack;
+        // Seat 2 (first left of button 1) receives the 10-chip + 2 residual = 112.
+        assert_eq!(s2, 112);
+        assert_eq!(s0, 100);
+        assert_eq!(s1, 100);
+        assert_eq!(s0 + s1 + s2, 312);
+    }
 }
 
     #[test]

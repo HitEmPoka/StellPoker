@@ -504,11 +504,9 @@ fn budget_ceiling_submit_showdown() {
     let mut hole_cards: Vec<(u32, u32)> = Vec::new(&b.env);
     let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&b.env);
     let mut winner = None;
-    for i in 0..table.players.len() {
+    // Hole cards go in showdown reveal order (#866).
+    for i in b.client.get_showdown_order(&table_id).iter() {
         let p = table.players.get(i).unwrap();
-        if p.folded {
-            continue;
-        }
         winner.get_or_insert(p.seat_index);
         let base = 30 + p.seat_index;
         let off1 = (13 + p.seat_index) * 32 + 28;

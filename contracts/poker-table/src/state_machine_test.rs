@@ -240,6 +240,10 @@ fn build_preflop_state(
         rit_state: OptionalRitState::None,
         jackpot_balance: 0,
         last_raise_size: big_blind,
+        last_full_raise_size: big_blind,
+        acted_seats: 0,
+        action_reopened: false,
+        bb_action_taken: false,
         current_blind_level: 0,
         level_started_at: 0,
         break_ends_at: 0,
@@ -383,7 +387,7 @@ fn synthesize_legal_action(table: &TableState, intent: Intent) -> Action {
                 // Need a raise whose amount is at least `bb` and whose
                 // total committed (`to_call + amount`) does not exceed stack.
                 if curr.stack > to_call + bb {
-                    Action::Raise(bb)
+                    Action::RaiseBy(bb)
                 } else if curr.stack > 0 {
                     // Cannot raise; stay in with whatever is left.
                     Action::Call

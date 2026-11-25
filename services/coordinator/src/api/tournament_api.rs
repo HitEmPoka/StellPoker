@@ -18,14 +18,15 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::tournament::{
-    CreateTournamentRequest, HandResultRequest, RegisterPlayerRequest, Tournament,
+    CreateTournamentRequest, HandResultRequest, RegisterPlayerRequest, TableHandCount, Tournament,
     TournamentDetail, TournamentError, TournamentStatus, TournamentSummary,
 };
 use crate::AppState;
 
 fn tournament_err_status(e: &TournamentError) -> StatusCode {
     match e {
-        TournamentError::NotFound => StatusCode::NOT_FOUND,
+        TournamentError::NotFound | TournamentError::TableNotFound => StatusCode::NOT_FOUND,
+        TournamentError::HandForHandWaiting => StatusCode::CONFLICT,
         TournamentError::RegistrationClosed
         | TournamentError::TournamentFull
         | TournamentError::AlreadyRegistered
@@ -166,4 +167,52 @@ pub async fn cancel_tournament(
     }
     t.status = TournamentStatus::Cancelled;
     Ok(Json(TournamentDetail::from(&*t)))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct HandForHandToggleRequest {
+    pub enabled: bool,
+}
+
+/// POST /api/tournaments/:id/hand-for-hand
+pub async fn set_hand_for_hand(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<HandForHandToggleRequest>,
+) -> Result<Json<TournamentDetail>, (StatusCode, String)> {
+    let mut store = state.tournaments.write().await;
+    let t = store
+        .get_mut(&id)
+        .ok_or((StatusCode::NOT_FOUND, "tournament not found".to_string()))?;
+    t.set_hand_for_hand(req.enabled);
+    Ok(Json(TournamentDetail::from(&*t)))
+}
+
+/// POST /api/tournaments/:id/tables/:table/start-hand
+pub async fn start_table_hand(
+    State(state): State<AppState>,
+    Path((id, table)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut store = state.tournaments.write().await;
+    let t = store
+        .get_mut(&id)
+        .ok_or((StatusCode::NOT_FOUND, "tournament not found".to_string()))?;
+    let hand_number = t
+        .start_hand(&table)
+        .map_err(|e| (tournament_err_status(&e), e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "table_contract": table,
+        "hand_number": hand_number,
+        "hand_for_hand": t.hand_for_hand,
+    })))
+}
+
+/// GET /api/tournaments/:id/hand-counts
+pub async fn get_table_hand_counts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TableHandCount>>, StatusCode> {
+    let store = state.tournaments.read().await;
+    let t = store.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(t.table_hand_counts()))
 }

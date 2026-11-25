@@ -29,6 +29,13 @@ DEFAULT_CIRCUITS = (
     "side_pot_valid",
     "split_pot_valid",
     "fold_valid",
+    # Issue #889: the 64-bit chip-domain checks add explicit bit
+    # decomposition constraints to these circuits, so track their budgets too.
+    "pot_calculation",
+    "chip_consistency",
+    # Issue #891: the P-256 wallet signature gadget adds explicit curve and
+    # Blake2s constraints to the action-order circuit.
+    "action_order",
 )
 
 

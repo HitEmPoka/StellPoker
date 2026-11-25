@@ -289,7 +289,7 @@ fn choose_action(table: &TableState, mv: &FuzzMove) -> Action {
                 .expect("valid blind level")
                 .big_blind;
             if to_call > 0 && p.stack > to_call + big_blind {
-                Action::Raise(big_blind)
+                Action::RaiseBy(big_blind)
             } else if to_call > 0 {
                 Action::Call
             } else if p.stack >= big_blind {

@@ -144,11 +144,9 @@ impl T<'_> {
         let mut hole_cards: Vec<(u32, u32)> = Vec::new(&self.env);
         let mut salts: Vec<(BytesN<32>, BytesN<32>)> = Vec::new(&self.env);
         let mut winner = None;
-        for i in 0..table.players.len() {
+        // Hole cards go in showdown reveal order (#866).
+        for i in self.client.get_showdown_order(&self.table_id).iter() {
             let p = table.players.get(i).unwrap();
-            if p.folded {
-                continue;
-            }
             winner.get_or_insert(p.seat_index);
             write_u32_field(&mut public_inputs, 13 + p.seat_index, 30 + p.seat_index);
             write_u32_field(&mut public_inputs, 19 + p.seat_index, 40 + p.seat_index);
@@ -279,7 +277,7 @@ fn emitted_events_match_their_schemas() {
     t.client.start_hand(&t.table_id);
     t.capture();
     t.deal();
-    t.act(|_| Action::Raise(100));
+    t.act(|_| Action::RaiseBy(100));
     t.act(|_| Action::Fold);
     t.act(|_| Action::Fold);
     assert_eq!(t.phase(), GamePhase::Settlement);

@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Symbol, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::constant_time;
 use crate::game_hub;
@@ -9,6 +9,31 @@ use crate::types::*;
 /// Initialize state for a new hand.
 pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     table.hand_number += 1;
+
+    // A player who sat out the last hand for the big blind is dealt back in
+    // and owes that blind (#859). Seats are bits: at most 6 seats.
+    let mut requests = sit_out_requests(env, table.id);
+    let mut returning: u32 = 0;
+    for i in 0..table.players.len() {
+        let mut p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        if !p.sitting_out {
+            continue;
+        }
+        if let Some(r) = requests.first_index_of(&p.address) {
+            requests.remove(r);
+            p.sitting_out = false;
+            returning |= 1 << i;
+            table.players.set(i, p);
+        }
+    }
+    if returning != 0 {
+        env.storage()
+            .instance()
+            .set(&DataKey::SitOutNextBb(table.id), &requests);
+    }
 
     // Rotate dealer button
     let previous_dealer = table.dealer_seat;
@@ -29,14 +54,15 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
             .players
             .get(i)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        p.folded = false;
+        // A sitting-out seat is not dealt into the hand.
+        p.folded = p.sitting_out;
         p.all_in = false;
         p.bet_this_round = 0;
         p.committed = 0;
         table.players.set(i, p);
     }
 
-    advance_blind_level_if_due(env, table);
+    advance_blind_level_if_due(env, table)?;
 
     // Check if a break is active — if so, deny starting a new hand.
     if table.break_ends_at > 0 {
@@ -58,6 +84,7 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
                 (Symbol::new(env, "level_up"), table.id),
                 table.current_blind_level,
             );
+            apply_color_up_if_due(env, table)?;
         }
     }
 
@@ -65,6 +92,23 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
     let bomb_ante = bomb_pot_ante(env, table);
 
     let num_players = table.players.len() as u32;
+
+    // The big blind skips a player who asked to sit it out (#859), as long as
+    // two other players are left to play the hand.
+    loop {
+        let (_, bb) = blind_seats(table)?;
+        let mut p = table
+            .players
+            .get(bb)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        // The request stays listed while they sit out, marking them as returning.
+        if !requests.contains(&p.address) || active_player_count_for_new_hand(table) < 3 {
+            break;
+        }
+        p.sitting_out = true;
+        p.folded = true;
+        table.players.set(bb, p);
+    }
 
     // Collect antes from every seated player before blinds. Antes go
     // straight to the pot and do not count toward `bet_this_round` (unlike
@@ -85,23 +129,8 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         post_antes(table, ante_amount)?;
     }
 
-    // Post blinds first to determine who the big blind is
-    let active_players = active_player_count_for_new_hand(table);
-    if active_players < 2 {
-        return Err(PokerTableError::NotEnoughPlayers);
-    }
-
-    let is_heads_up = active_players == 2;
-    let sb_seat;
-    let bb_seat;
-
-    if is_heads_up {
-        sb_seat = table.dealer_seat;
-        bb_seat = next_active_seat(table, table.dealer_seat).unwrap();
-    } else {
-        sb_seat = next_active_seat(table, table.dealer_seat).unwrap();
-        bb_seat = next_active_seat(table, sb_seat).unwrap();
-    }
+    // Post blinds
+    let (sb_seat, bb_seat) = blind_seats(table)?;
 
     match bomb_ante {
         // Bomb pot: every player antes instead of posting blinds, and no straddle.
@@ -109,6 +138,23 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         None => {
             post_blind(table, sb_seat, level.small_blind)?;
             post_blind(table, bb_seat, level.big_blind)?;
+        }
+    }
+    // commit_deal opens preflop left of here when a seat sits out (#859).
+    table.bb_action_taken = false;
+    table.acted_seats = 0;
+    table.action_reopened = false;
+    table.current_turn = if active_player_count_for_new_hand(table) == 2 {
+        sb_seat
+    } else {
+        bb_seat
+    };
+
+    // A returning player posts the big blind they skipped, dead (into the pot,
+    // not their bet), unless they post it as the big blind now (#859).
+    for seat in 0..num_players {
+        if returning & (1 << seat) != 0 && (bomb_ante.is_some() || seat != bb_seat) {
+            post_ante(table, seat, level.big_blind)?;
         }
     }
 
@@ -312,14 +358,14 @@ pub(crate) fn current_blind_level(table: &TableState) -> Result<BlindLevel, Poke
 /// enters a break period instead of immediately advancing. During the
 /// break no hands may be started; the next hand triggers the actual
 /// level advance.
-fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
+fn advance_blind_level_if_due(env: &Env, table: &mut TableState) -> Result<(), PokerTableError> {
     let num_levels = table.config.blinds_schedule.levels.len();
     if table.current_blind_level + 1 >= num_levels {
-        return;
+        return Ok(());
     }
     // Already in a break — do not double-advance.
     if table.break_ends_at > 0 {
-        return;
+        return Ok(());
     }
     let level = match table
         .config
@@ -328,10 +374,10 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
         .get(table.current_blind_level)
     {
         Some(l) => l,
-        None => return,
+        None => return Ok(()),
     };
     if level.duration_seconds == 0 {
-        return;
+        return Ok(());
     }
     let now = env.ledger().timestamp();
     if now >= table.level_started_at + level.duration_seconds {
@@ -354,8 +400,149 @@ fn advance_blind_level_if_due(env: &Env, table: &mut TableState) {
                 (Symbol::new(env, "level_up"), table.id),
                 (table.current_blind_level, current_blind_level(table)),
             );
+            apply_color_up_if_due(env, table)?;
         }
     }
+    Ok(())
+}
+
+/// Apply any configured tournament color-up rule matching `table.current_blind_level` (#870).
+pub(crate) fn apply_color_up_if_due(
+    env: &Env,
+    table: &mut TableState,
+) -> Result<(), PokerTableError> {
+    let schedule = env
+        .storage()
+        .instance()
+        .get::<DataKey, ColorUpSchedule>(&DataKey::ColorUpSchedule(table.id));
+    if let Some(sched) = schedule {
+        for i in 0..sched.rules.len() {
+            if let Some(rule) = sched.rules.get(i) {
+                if rule.level_index == table.current_blind_level {
+                    apply_color_up(env, table, &rule)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Execute a deterministic tournament chip-race and color-up on `table` (#870).
+///
+/// Every seated player's stack is floored to a multiple of `rule.denomination`.
+/// All fractional remainders are pooled and converted into whole chips of
+/// `rule.denomination`, awarded one each according to `rule.rounding`, with any
+/// sub-denomination residual awarded to the first eligible seat so that total
+/// chips in play are conserved exactly. Emits a `color_up` event containing
+/// `(level_index, denomination, before_stacks, after_stacks)`.
+pub fn apply_color_up(
+    env: &Env,
+    table: &mut TableState,
+    rule: &ColorUpRule,
+) -> Result<(), PokerTableError> {
+    if rule.denomination <= 0 {
+        return Err(PokerTableError::InvalidColorUpConfig);
+    }
+    let n = table.players.len();
+    if n == 0 {
+        return Ok(());
+    }
+
+    let mut before_stacks: Vec<(u32, i128)> = Vec::new(env);
+    let mut remainders: Vec<i128> = Vec::new(env);
+    let mut total_remainder: i128 = 0;
+
+    for i in 0..n {
+        let mut p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        before_stacks.push_back((p.seat_index, p.stack));
+        let rem = p.stack % rule.denomination;
+        p.stack -= rem;
+        total_remainder += rem;
+        remainders.push_back(rem);
+        table.players.set(i, p);
+    }
+
+    if total_remainder > 0 {
+        // Order candidates with nonzero remainder clockwise from the button.
+        let mut candidates: Vec<(u32, i128)> = Vec::new(env);
+        for offset in 1..=n {
+            let idx = (table.dealer_seat + offset) % n;
+            let rem = remainders.get(idx).unwrap_or(0);
+            if rem > 0 {
+                candidates.push_back((idx, rem));
+            }
+        }
+
+        if matches!(rule.rounding, ColorUpRounding::HighestRemainderClockwise) {
+            // Stable insertion sort by remainder descending; clockwise order is
+            // preserved for equal remainders.
+            for i in 1..candidates.len() {
+                let mut j = i;
+                while j > 0 {
+                    let prev = candidates.get(j - 1).unwrap();
+                    let curr = candidates.get(j).unwrap();
+                    if curr.1 > prev.1 {
+                        candidates.set(j - 1, curr);
+                        candidates.set(j, prev);
+                        j -= 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut full_chips = total_remainder / rule.denomination;
+        let residual = total_remainder % rule.denomination;
+        let cand_len = candidates.len();
+
+        for ci in 0..cand_len {
+            if full_chips <= 0 {
+                break;
+            }
+            let (idx, _) = candidates.get(ci).unwrap();
+            let mut p = table
+                .players
+                .get(idx)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            p.stack += rule.denomination;
+            table.players.set(idx, p);
+            full_chips -= 1;
+        }
+
+        if residual > 0 && cand_len > 0 {
+            let (idx, _) = candidates.get(0).unwrap();
+            let mut p = table
+                .players
+                .get(idx)
+                .ok_or(PokerTableError::InvalidPlayerIndex)?;
+            p.stack += residual;
+            table.players.set(idx, p);
+        }
+    }
+
+    let mut after_stacks: Vec<(u32, i128)> = Vec::new(env);
+    for i in 0..n {
+        let p = table
+            .players
+            .get(i)
+            .ok_or(PokerTableError::InvalidPlayerIndex)?;
+        after_stacks.push_back((p.seat_index, p.stack));
+    }
+
+    env.events().publish(
+        (Symbol::new(env, "color_up"), table.id),
+        (
+            rule.level_index,
+            rule.denomination,
+            before_stacks,
+            after_stacks,
+        ),
+    );
+    Ok(())
 }
 
 /// Collect `amount` as an ante from every player who has chips.
@@ -374,6 +561,7 @@ fn post_antes(table: &mut TableState, amount: i128) -> Result<(), PokerTableErro
 
 /// Collect an ante from a seat: deducted from stack straight into the pot,
 /// without affecting `bet_this_round` (see call site for why).
+/// Clamps to the remaining stack and marks the player all-in when exhausted.
 fn post_ante(table: &mut TableState, seat: u32, amount: i128) -> Result<(), PokerTableError> {
     let mut player = table
         .players
@@ -399,7 +587,7 @@ fn post_blind(table: &mut TableState, seat: u32, amount: i128) -> Result<(), Pok
         .players
         .get(seat)
         .ok_or(PokerTableError::InvalidPlayerIndex)?;
-    let actual = if player.stack < amount {
+    let actual = if player.stack <= amount {
         player.all_in = true;
         player.stack
     } else {
@@ -455,6 +643,60 @@ pub(crate) fn active_player_count_for_new_hand(table: &TableState) -> u32 {
     count
 }
 
+/// Players at `table_id` who asked to sit out the next big blind (#859).
+pub(crate) fn sit_out_requests(env: &Env, table_id: u32) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::SitOutNextBb(table_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Small- and big-blind seats for a new hand: heads-up the button posts the
+/// small blind, otherwise the two active seats after the button do.
+fn blind_seats(table: &TableState) -> Result<(u32, u32), PokerTableError> {
+    let active_players = active_player_count_for_new_hand(table);
+    if active_players < 2 {
+        return Err(PokerTableError::NotEnoughPlayers);
+    }
+    let sb_seat = if active_players == 2 {
+        table.dealer_seat
+    } else {
+        next_active_seat(table, table.dealer_seat).ok_or(PokerTableError::NotEnoughPlayers)?
+    };
+    let bb_seat = next_active_seat(table, sb_seat).ok_or(PokerTableError::NotEnoughPlayers)?;
+    Ok((sb_seat, bb_seat))
+}
+
+pub(crate) fn big_blind_seat(table: &TableState) -> Result<u32, PokerTableError> {
+    let (_, bb_seat) = blind_seats(table)?;
+    Ok(bb_seat)
+}
+
+/// Seats in the order they show their hole cards at showdown (#866): the last
+/// bettor or raiser on the river first or, when the river was checked through,
+/// the first player left of the button; then clockwise, skipping folded seats.
+pub(crate) fn showdown_order(env: &Env, table: &TableState) -> Vec<u32> {
+    let num_players = table.players.len();
+    let first = match env
+        .storage()
+        .instance()
+        .get::<DataKey, (u32, u32)>(&DataKey::LastAggressor(table.id))
+    {
+        Some((hand, seat)) if hand == table.hand_number => seat,
+        _ => table.dealer_seat + 1,
+    };
+    let mut order = Vec::new(env);
+    for k in 0..num_players {
+        let seat = (first + k) % num_players;
+        if let Some(p) = table.players.get(seat) {
+            if !p.folded {
+                order.push_back(seat);
+            }
+        }
+    }
+    order
+}
+
 pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32> {
     let num_players = table.players.len() as u32;
     if num_players == 0 {
@@ -465,6 +707,24 @@ pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32
         if let Some(p) = table.players.get(seat) {
             // Players who owe dead blinds are not active until they pay
             if !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
+                return Some(seat);
+            }
+        }
+    }
+    None
+}
+
+/// Like `next_active_seat`, but also includes players who are already `all_in`
+/// for the current hand (e.g. from posting an ante that exhausted their stack).
+pub(crate) fn next_in_hand_seat(table: &TableState, from_seat: u32) -> Option<u32> {
+    let num_players = table.players.len() as u32;
+    if num_players == 0 {
+        return None;
+    }
+    for i in 1..=num_players {
+        let seat = (from_seat + i) % num_players;
+        if let Some(p) = table.players.get(seat) {
+            if !p.sitting_out && (p.stack > 0 || p.all_in) {
                 return Some(seat);
             }
         }
@@ -501,6 +761,9 @@ pub fn settle_showdown(
         return Err(PokerTableError::ContractPaused);
     }
 
+    // Return any uncalled bet excess before pot construction and rake (#869)
+    // so rake is only charged on contested chips.
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
 
     // Compute the main pot and any side pots from cumulative contributions,
@@ -787,6 +1050,7 @@ pub fn settle_fold_win(env: &Env, table: &mut TableState) -> Result<(), PokerTab
     }
 
     if let Some(winner_seat) = last_player_standing(table) {
+        pot::return_uncalled_bets(table)?;
         let total_pot = table.pot;
         let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
         let winnings = total_pot - rake;
@@ -843,6 +1107,7 @@ pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableErr
         .as_ref()
         .ok_or(PokerTableError::RunItTwiceNotEnabled)?;
 
+    pot::return_uncalled_bets(table)?;
     let total_pot = table.pot;
     let rake = (total_pot * table.config.rake_bps as i128) / 10_000;
     let net_pot = total_pot - rake;

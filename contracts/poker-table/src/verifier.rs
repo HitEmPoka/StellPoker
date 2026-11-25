@@ -38,6 +38,9 @@ pub trait ZkVerifier {
         board_indices: Vec<u32>,
         deck_root: BytesN<32>,
     ) -> Result<bool, soroban_sdk::Error>;
+
+    /// VK version recorded by the verifier for a successful proof (Issue #890).
+    fn get_proof_vk_version(env: Env, proof_hash: BytesN<32>) -> Option<u32>;
 }
 
 /// Mock implementation for tests. In production, the real zk-verifier
@@ -76,5 +79,9 @@ impl ZkVerifierContract {
         _deck_root: BytesN<32>,
     ) -> Result<bool, soroban_sdk::Error> {
         Ok(true)
+    }
+
+    pub fn get_proof_vk_version(_env: Env, _proof_hash: BytesN<32>) -> Option<u32> {
+        Some(1)
     }
 }
