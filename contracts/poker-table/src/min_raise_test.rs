@@ -87,6 +87,8 @@ fn two_player_table(
             seat_index: i as u32,
             total_buy_in: stack,
             rebuy_count: 0,
+            last_blind_posted: None,
+            owes_dead_blind: false,
         });
     }
 

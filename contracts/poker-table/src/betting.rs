@@ -324,7 +324,7 @@ pub fn reset_round(env: &Env, table: &mut TableState) -> Result<(), PokerTableEr
             .players
             .get(seat)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if first_to_act.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+        if first_to_act.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
             first_to_act = Some(seat);
         }
         if p.bet_this_round != 0 {
@@ -412,7 +412,7 @@ fn advance_turn(env: &Env, table: &mut TableState, round_max: i128) -> Result<()
             .players
             .get(seat)
             .ok_or(PokerTableError::InvalidPlayerIndex)?;
-        if next.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 {
+        if next.is_none() && !p.folded && !p.all_in && !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
             next = Some(seat);
         }
         let has_acted = (table.acted_seats & (1u32 << seat)) != 0;

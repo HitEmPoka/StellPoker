@@ -190,6 +190,8 @@ fn build_preflop_state(
             seat_index: seat as u32,
             total_buy_in: bi,
             rebuy_count: 0,
+            last_blind_posted: None,
+            owes_dead_blind: false,
         });
     }
 

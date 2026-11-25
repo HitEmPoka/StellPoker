@@ -158,6 +158,47 @@ pub fn start_new_hand(env: &Env, table: &mut TableState) -> Result<(), PokerTabl
         }
     }
 
+    // Update last_blind_posted for small and big blind
+    if let Some(mut p) = table.players.get(sb_seat) {
+        p.last_blind_posted = Some(table.current_blind_level);
+        table.players.set(sb_seat, p);
+    }
+    if let Some(mut p) = table.players.get(bb_seat) {
+        p.last_blind_posted = Some(table.current_blind_level);
+        table.players.set(bb_seat, p);
+    }
+
+    // Collect antes based on ante mode. Antes go straight to the pot and do
+    // not count toward `bet_this_round` (unlike blinds), matching standard
+    // tournament ante semantics: they aren't part of what a player must call
+    // to stay in the hand.
+    match level.ante {
+        AnteMode::None => {
+            // No ante to collect
+        }
+        AnteMode::PerPlayer { amount } => {
+            if amount > 0 {
+                for i in 0..table.players.len() {
+                    if let Some(p) = table.players.get(i) {
+                        if !p.sitting_out && p.stack > 0 {
+                            post_ante(table, p.seat_index, amount)?;
+                        }
+                    }
+                }
+            }
+        }
+        AnteMode::BigBlind { amount } => {
+            // Big-blind ante: only the big blind posts the ante
+            if amount > 0 {
+                if let Some(p) = table.players.get(bb_seat) {
+                    if !p.sitting_out && p.stack > 0 {
+                        post_ante(table, bb_seat, amount)?;
+                    }
+                }
+            }
+        }
+    }
+
     env.storage()
         .instance()
         .remove(&DataKey::ActiveStraddleSeat(table.id));
@@ -593,7 +634,8 @@ pub(crate) fn active_player_count_for_new_hand(table: &TableState) -> u32 {
     let mut count = 0;
     for i in 0..table.players.len() {
         if let Some(p) = table.players.get(i) {
-            if !p.sitting_out && p.stack > 0 {
+            // Players who owe dead blinds are not counted as active until they pay
+            if !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
                 count += 1;
             }
         }
@@ -663,7 +705,8 @@ pub(crate) fn next_active_seat(table: &TableState, from_seat: u32) -> Option<u32
     for i in 1..=num_players {
         let seat = (from_seat + i) % num_players;
         if let Some(p) = table.players.get(seat) {
-            if !p.sitting_out && p.stack > 0 {
+            // Players who owe dead blinds are not active until they pay
+            if !p.sitting_out && p.stack > 0 && !p.owes_dead_blind {
                 return Some(seat);
             }
         }
@@ -1131,5 +1174,73 @@ pub fn settle_rit(env: &Env, table: &mut TableState) -> Result<(), PokerTableErr
         );
     }
 
+    Ok(())
+}
+
+/// Detect players who have returned after sitting out and missed blind levels.
+/// Mark them as owing a dead blind before they can be dealt in again.
+fn detect_and_mark_missed_blinds(table: &mut TableState) {
+    let current_level = table.current_blind_level;
+    
+    for i in 0..table.players.len() {
+        if let Some(mut p) = table.players.get(i) {
+            // Skip players who are sitting out or already owe a dead blind
+            if p.sitting_out || p.owes_dead_blind {
+                continue;
+            }
+            
+            // If player has posted blinds before and the current level is higher,
+            // they missed blind levels and owe a dead blind
+            if let Some(last_posted) = p.last_blind_posted {
+                if last_posted < current_level {
+                    p.owes_dead_blind = true;
+                    table.players.set(i, p);
+                }
+            }
+        }
+    }
+}
+
+/// Post a dead blind for a returning player. Dead blinds are added to the pot
+/// but do NOT count toward the player's committed amount (they cannot win
+/// money they didn't commit to the hand). This satisfies the blind obligation
+/// without giving the player equity in the pot.
+pub fn post_dead_blind(
+    table: &mut TableState,
+    seat: u32,
+) -> Result<(), PokerTableError> {
+    let mut player = table
+        .players
+        .get(seat)
+        .ok_or(PokerTableError::InvalidPlayerIndex)?;
+    
+    if !player.owes_dead_blind {
+        return Ok(()); // Nothing to post
+    }
+    
+    // Dead blind amount is the big blind at the current level
+    let level = current_blind_level(table)?;
+    let dead_blind_amount = level.big_blind;
+    
+    let actual = if player.stack < dead_blind_amount {
+        // Player can only post what they have
+        player.all_in = true;
+        player.stack
+    } else {
+        dead_blind_amount
+    };
+    
+    if actual > 0 {
+        player.stack -= actual;
+        table.pot += actual;
+        // Note: we do NOT add to player.committed — dead blinds are not
+        // eligible to win back. They're essentially a penalty for missing blinds.
+    }
+    
+    // Clear the obligation
+    player.owes_dead_blind = false;
+    player.last_blind_posted = Some(table.current_blind_level);
+    table.players.set(seat, player);
+    
     Ok(())
 }

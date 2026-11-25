@@ -616,6 +616,8 @@ mod pot_test {
             seat_index: seat,
             total_buy_in: 0,
             rebuy_count: 0,
+            last_blind_posted: None,
+            owes_dead_blind: false,
         }
     }
 
