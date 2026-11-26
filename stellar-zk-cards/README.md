@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/stellar-zk-cards)](https://crates.io/crates/stellar-zk-cards)
 [![Docs.rs](https://docs.rs/stellar-zk-cards/badge.svg)](https://docs.rs/stellar-zk-cards)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 
 Reusable ZK card-game primitives for [Stellar Soroban](https://soroban.stellar.org) smart contracts.
 
@@ -89,4 +89,4 @@ if rank.beats(&other) {
 
 ## License
 
-[MIT](../../LICENSE)
+[MIT](../LICENSE)

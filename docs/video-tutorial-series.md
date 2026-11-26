@@ -44,7 +44,7 @@ cd app && npm ci && npm run dev
 
 - [Repository README](https://github.com/HitEmPoka/StellPoker#readme)
 - [Docker Compose setup](https://github.com/HitEmPoka/StellPoker/blob/main/docker-compose.yml)
-- [Soroban RPC documentation](docs/soroban-rpc-node.md)
+- [Soroban RPC documentation](soroban-rpc-node.md)
 
 ---
 
@@ -92,7 +92,7 @@ stellar contract deploy \
 ### Links
 
 - [Soroban contract development guide](https://developers.stellar.org/docs/soroban/contract-development)
-- [poker-table contract source](contracts/poker-table/src/)
+- [poker-table contract source](../contracts/poker-table/src/)
 
 ---
 
@@ -138,7 +138,7 @@ nargo verify -p <proof-name>
 
 - [Noir language documentation](https://noir-lang.org/docs)
 - [Noir standard library](https://noir-lang.org/docs/standard-library)
-- [StellPoker circuit source](circuits/lib/src/)
+- [StellPoker circuit source](../circuits/lib/src/)
 
 ---
 
@@ -186,9 +186,9 @@ curl -X POST http://localhost:8080/api/create-table \
 
 ### Links
 
-- [Coordinator API reference](docs/api/README.md)
-- [OpenAPI specification](docs/api/openapi.yaml)
-- [API conformance tests](scripts/check-api-spec.py)
+- [Coordinator API reference](api/README.md)
+- [OpenAPI specification](api/openapi.yaml)
+- [API conformance tests](../scripts/check-api-spec.py)
 
 ---
 
@@ -244,9 +244,9 @@ docker run -p 3000:3000 \
 
 ### Links
 
-- [Frontend state management documentation](docs/frontend-state-management.md)
+- [Frontend state management documentation](frontend-state-management.md)
 - [Next.js deployment guide](https://nextjs.org/docs/app/building-your-application/deploying)
-- [Component source code](app/src/components/)
+- [Component source code](../app/src/components/)
 
 ---
 
