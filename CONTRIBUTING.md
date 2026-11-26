@@ -76,7 +76,7 @@ git commit --no-verify
 1. Fork the repository and create a branch from `main`.
 2. Make your changes. Run the relevant tests before opening a PR.
 3. Pre-commit hooks will run automatically — fix any issues they report.
-4. Open a pull request with a clear description of what changed and why.
+4. Open a pull request. The [pull request template](.github/pull_request_template.md) auto-populates the description; first-time contributors should fill out every section, especially "Linked issue(s)" and "How it was tested".
 
 How a PR is reviewed and merged — required status checks, the merge queue,
 label triage, and review SLAs — is documented for maintainers in
